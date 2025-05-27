@@ -4,3 +4,7 @@ PyQt5-Qt5==5.15.16
 PyQt5_sip==12.17.0
 pyqtgraph==0.13.3
 pyvisa==1.13.0
+numpy==2.2.6
+PyOpenGL==3.1.9
+pyserial==3.5
+typing-extensions==4.13.2
