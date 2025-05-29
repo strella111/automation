@@ -189,7 +189,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         # --- Консоль логов ---
         self.console = QtWidgets.QTextEdit()
         self.console.setReadOnly(True)
-        self.console.setStyleSheet('background: #fff; color: #000; font-family: monospace;')
+        self.console.setStyleSheet('background: #fff; color: #000; font-family: "PT Mono";')
         self.console.setFixedHeight(200)
         self.right_layout.addWidget(self.console, stretch=1)
 

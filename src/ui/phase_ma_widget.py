@@ -12,6 +12,7 @@ from core.devices.psn import PSN
 from utils.logger import setup_logging
 from core.measurements.phase.phase_ma import PhaseMaMeas
 from core.common.enums import Channel, Direction
+from core.common.coordinate_system import CoordinateSystemManager
 from pyqtgraph.Qt import QtGui
 import pyqtgraph.opengl as gl
 from pyqtgraph.colormap import ColorMap
@@ -164,6 +165,13 @@ class PhaseMaWidget(QtWidgets.QWidget):
         self.meas_tab_layout.addRow('Номер ППМ:', QtWidgets.QSpinBox())
         self.meas_tab_layout.addRow('Шаг:', QtWidgets.QSpinBox())
         self.meas_tab_layout.addRow('Кол-во точек:', QtWidgets.QSpinBox())
+        
+        # Добавляем выбор системы координат
+        self.coord_system_manager = CoordinateSystemManager()
+        self.coord_system_combo = QtWidgets.QComboBox()
+        self.coord_system_combo.addItems(self.coord_system_manager.get_system_names())
+        self.meas_tab_layout.addRow('Система координат:', self.coord_system_combo)
+        
         self.param_tabs.addTab(self.meas_tab, 'Meas')
         self.left_layout.addWidget(self.param_tabs, 1)
 
@@ -204,7 +212,7 @@ class PhaseMaWidget(QtWidgets.QWidget):
         # --- Консоль логов ---
         self.console = QtWidgets.QTextEdit()
         self.console.setReadOnly(True)
-        self.console.setStyleSheet('background: #fff; color: #000; font-family: monospace;')
+        self.console.setStyleSheet('background: #fff; color: #000; font-family: "PT Mono";')
         self.console.setFixedHeight(200)
         self.right_layout.addWidget(self.console, stretch=1)
 
@@ -282,6 +290,9 @@ class PhaseMaWidget(QtWidgets.QWidget):
         self.ppm_num = self.meas_tab_layout.itemAt(1).widget().value()
         self.step = self.meas_tab_layout.itemAt(3).widget().value()
         self.n_points = self.meas_tab_layout.itemAt(5).widget().value()
+        # Система координат
+        coord_system_name = self.coord_system_combo.currentText()
+        self.coord_system = self.coord_system_manager.get_system_by_name(coord_system_name)
         logger.info('Параметры успешно применены')
 
     def start_phase_meas(self):
@@ -316,8 +327,15 @@ class PhaseMaWidget(QtWidgets.QWidget):
                     self.psn.preset()
                     self.psn.preset_axis(0)
                     self.psn.preset_axis(1)
-                    x_offset = float(self.device_settings.get('psn_x_offset', 0))
-                    y_offset = float(self.device_settings.get('psn_y_offset', 0))
+                    
+                    # Используем смещения из выбранной системы координат
+                    if self.coord_system:
+                        x_offset = self.coord_system.x_offset
+                        y_offset = self.coord_system.y_offset
+                    else:
+                        x_offset = float(self.device_settings.get('psn_x_offset', 0))
+                        y_offset = float(self.device_settings.get('psn_y_offset', 0))
+                    
                     self.psn.set_offset(x_offset, y_offset)
                     speed_x = int(self.device_settings.get('psn_speed_x', 0))
                     speed_y = int(self.device_settings.get('psn_speed_y', 0))
@@ -327,7 +345,7 @@ class PhaseMaWidget(QtWidgets.QWidget):
                     self.psn.set_speed(1, speed_y)
                     self.psn.set_acc(0, acc_x)
                     self.psn.set_acc(1, acc_y)
-                    logger.info('Параметры PSN успешно применены перед измерением')
+                    logger.info(f'Параметры PSN успешно применены перед измерением (смещения: x={x_offset}, y={y_offset})')
                 except Exception as e:
                     logger.error(f'Ошибка применения параметров PSN перед измерением: {e}')
             
