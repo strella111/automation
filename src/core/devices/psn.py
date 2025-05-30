@@ -57,6 +57,7 @@ class PSN:
         """Отключение от сканера"""
         if self.mode == 0 and self.connection:
             self.connection.close()
+            logger.info('Соединение с PSN закрыто')
         elif self.mode == 0 and not self.connection:
             logger.error('Не обнаружено подключение к PSN')
             raise WrongInstrumentError('При попытке обращения к connection PSN произошла ошибка')
@@ -66,34 +67,33 @@ class PSN:
         """Write string to the instrument."""
         if self.mode == 0:
             self.connection.write(string)
+            logger.debug(f'На PSN - {string}')
         else:
-            logger.info(f'Вызов метода psn.write. command="{string}"')
+            logger.debug(f'На PSN - {string}')
             time.sleep(0.01)
 
     def read(self) -> str:
         """Read string from the instrument."""
         if self.mode == 0:
             response = self.connection.read().strip()
+            logger.debug(f'От PSN - {response}')
             return response
         else:
-            logger.info('Вызов метода psn.read')
+            logger.debug(f'От PSN - 0')
             time.sleep(0.01)
             return "0"
 
     def query(self, string: str) -> str:
         """Makes a request to the device and returns a response"""
-        if self.mode == 0:
+        if self.mode == 0: 
+            logger.debug(f'На PSN - {string}')
             response = self.connection.query(string)
+            logger.debug(f'От PSN - {response}')
             return response
         else:
-            logger.info(f'Вызов метода psn.query. command="{string}"')
             time.sleep(0.01)
-            if "STAT:OP?" in string:
-                return "0"
-            elif "STAT:UPOS?" in string:
-                return "0.0"
-            elif "SYST:ERR?" in string:
-                return "No error"
+            logger.debug(f'На PSN - {string}')
+            logger.debug(f'От PSN - 0')
             return "0"
 
     def move(self, x: float, y: float) -> None:
@@ -105,13 +105,13 @@ class PSN:
             y: Координата Y
         """
         try:
+            logger.info(f'Перемещение сканера в точку ({x}, {y})')
             res = self.query("AXIS0:STAT:OP?")
             if res != "0":
                 logger.error("Ошибка в оси X планарного сканера.")
                 raise PlanarScannerError(f'Ошибка оси X: Статус {res}')
             res = self.query("AXIS0:STAT:UPOS?")
             current_x_pos = float(res) - self.x_offset
-
             res = self.query("AXIS1:STAT:OP?")
             if res != "0":
                 logger.error("Ошибка в оси Y планарного сканера.")
@@ -130,7 +130,6 @@ class PSN:
             probe_speed = 14
             min_time = 1.2
             delay = dist / probe_speed + min_time
-            logger.info(f'PSN move to ({x}, {y})')
             time.sleep(delay)
         except Exception as e:
             logger.error(f'Ошибка при перемещении планарного сканера в точку ({x}, {y}): {e}')
@@ -139,6 +138,7 @@ class PSN:
     def check_errors(self) -> None:
         """Проверка ошибок сканера"""
         err_check = self.query('SYST:ERR?')
+
         if 'No error' not in err_check:
             logger.error(f'Обнаружена ошибка в планарном сканере. {err_check}')
             raise PlanarScannerError(err_check)
@@ -150,11 +150,11 @@ class PSN:
             axis: Ось (0: x, 1: y)
             value: Скорость в см/сек
         """
-        if 1 <= value <= 50:
+        if 1 <= value <= 600:
             self.write(f'AXIS{axis}:USPE {value}')
             logger.info(f'Для AXIS{axis} установлена скорость {value} см/сек')
         else:
-            logger.error(f'Недопустимое значение скорости: {value}. Диапазон: 1–50.')
+            logger.error(f'Недопустимое значение скорости: {value}. Диапазон: 1–600.')
             raise ValueError('Скорость должна быть в диапазоне от 1 до 50 см/сек')
 
     def set_acc(self, axis: int, value: int) -> None:
@@ -170,7 +170,7 @@ class PSN:
     def preset(self) -> None:
         """Сброс прибора"""
         self.write('*CLS')
-        logger.info('Preset PSN')
+        logger.info('Сброс PSN')
 
     def preset_axis(self, axis: int) -> None:
         """
@@ -179,4 +179,4 @@ class PSN:
             axis: Ось (0: x, 1: y)
         """
         self.write(f'AXIS{axis}:PRESET')
-        logger.debug(f'Сброс AXIS{axis}') 
+        logger.info(f'Сброс оси {axis}') 

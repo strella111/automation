@@ -192,7 +192,6 @@ class PhaseMaMeas:
                         logger.info("Измерение остановлено пользователем")
                         return
 
-                    # Проверяем флаг паузы
                     while self.pause_flag and self.pause_flag.is_set():
                         if self.stop_flag and self.stop_flag.is_set():
                             break
@@ -201,32 +200,26 @@ class PhaseMaMeas:
                     ppm_num = i * 8 + j + 1
                     logger.info(f"Фазировка ППМ№ {ppm_num}")
                     
-                    # Перемещаемся к ППМ
                     try:
                         self.psn.move(self.x_cords[i], self.y_cords[j])
                     except Exception as e:
                         raise PlanarScannerError(f"Ошибка перемещения к ППМ {ppm_num}: {e}")
                     
-                    # Измеряем начальную фазу
                     amp, phase_zero = self._measure_phase(ppm_num)
                     if self.point_callback:
                         self.point_callback(i, j, self.x_cords[i], self.y_cords[j], amp, phase_zero)
                     
-                    # Находим оптимальное значение фазы
                     best_value = self._find_best_phase(ppm_num, phase_zero, i, j, amp)
                     
-                    # Устанавливаем оптимальное значение
                     self.ma.set_phase_shifter(ppm_num=ppm_num,
                                             channel=self.channel,
                                             direction=self.direction,
                                             value=best_value)
                     
-                    # Выключаем ППМ
                     self.ma.turn_off_ppm(ppm_num=ppm_num, 
                                        channel=self.channel, 
                                        direction=self.direction)
 
-            # Завершаем работу
             try:
                 self.pna.power_off()
             except Exception as e:
@@ -237,7 +230,6 @@ class PhaseMaMeas:
 
         except Exception as e:
             logger.error(f"Ошибка при выполнении измерений: {e}")
-            # Пытаемся безопасно завершить работу
             try:
                 self.pna.power_off()
             except Exception as e:

@@ -46,6 +46,10 @@ class PhaseMaWidget(QtWidgets.QWidget):
         # Подключение сигнала к слоту
         self.update_gui_signal.connect(self.on_measurement_update)
 
+        # Инициализация менеджера систем координат
+        self.coord_system_manager = CoordinateSystemManager("config/coordinate_systems.json")
+        self.coord_system = None
+        
         self.btn_style_disconnected = '''
             QPushButton {
                 background: #e74c3c;
@@ -167,7 +171,6 @@ class PhaseMaWidget(QtWidgets.QWidget):
         self.meas_tab_layout.addRow('Кол-во точек:', QtWidgets.QSpinBox())
         
         # Добавляем выбор системы координат
-        self.coord_system_manager = CoordinateSystemManager()
         self.coord_system_combo = QtWidgets.QComboBox()
         self.coord_system_combo.addItems(self.coord_system_manager.get_system_names())
         self.meas_tab_layout.addRow('Система координат:', self.coord_system_combo)

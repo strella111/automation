@@ -2,6 +2,7 @@ import math
 import random
 import time
 import pyvisa
+import socket
 from typing import Tuple, Optional, Union
 from loguru import logger
 from ..common.enums import Channel, Direction
@@ -17,80 +18,146 @@ class PNA:
             visa_name: A Visa Resource ID, like 'TCPIP0::10.0.0.2::50000::SOCKET'
             mode: Режим работы (0 - реальный, 1 - тестовый)
         """
-        self.visa_name = f'TCPIP0::{ip}::{port}::SOCKET'
-        self.connection = None
+        self.ip = ip
+        self.port = port
         self.mode = mode
+        self.connection = None
 
     def connect(self) -> None:
         """Подключение к PNA"""
         try:
-            if self.mode == 0:
-                rm = pyvisa.ResourceManager()
-                self.connection = rm.open_resource(self.visa_name)
-                self.connection.read_termination = '\n'
-                self.connection.write_termination = '\n'
-                response = self.query('*IDN?')
-                if not response or 'Agilent Technologies' not in response:
-                    logger.error(f'Неверный ответ от устройства: {response}')
-                    raise WrongInstrumentError(
-                        f'Wrote "ID" Expected "Agilent Technologies" got "{response}"')
-            else:
-                time.sleep(0.2)
+            if self.mode == 0:  # Реальный режим
+                self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.connection.connect((self.ip, self.port))
+                self.connection.settimeout(3)
+                logger.debug(f"PNA подключен к {self.ip}:{self.port}")
+                logger.info('Произведено подлючение к PNA')
+            else:  # Тестовый режим
+                logger.info("PNA работает в тестовом режиме")
                 self.connection = True
-            logger.info('Произведено подключение к PNA')
-        except pyvisa.VisaIOError as e:
-            logger.error(f'Ошибка подключения к PNA - ошибка ввода/вывода: {e}')
-            raise WrongInstrumentError('Ошибка ввода/вывода при подключении к PNA') from e
         except Exception as e:
-            logger.error(f'Неизвестная ошибка подключения к PNA: {e}')
-            raise WrongInstrumentError('Неизвестная ошибка подключения к PNA') from e
+            logger.error(f"Ошибка подключения к PNA: {e}")
+            raise
 
     def disconnect(self) -> None:
         """Отключение от PNA"""
-        if self.mode == 0 and self.connection:
-            self.connection.close()
-        elif self.mode == 0 and not self.connection:
-            logger.error('Не обнаружен подключение к PNA')
-            raise WrongInstrumentError('При попытке обращения к connection pna произошла ошибка')
-        logger.info('Подключение к PNA закрыто')
+        if self.connection:
+            if self.mode == 0:
+                self.connection.close()
+            self.connection = None
+            logger.info("PNA отключен")
 
-    def write(self, data: str) -> None:
-        """Write string to the instrument."""
-        if self.connection and self.mode == 0:
-            self.connection.write(data)
-        elif self.mode == 0 and not self.connection:
-            logger.error('Не обнаружено подключение к pna при попытки отправки данных')
-            raise WrongInstrumentError('При попытке обращения к connection pna произошла ошибка')
-        logger.info(f'Отправлена команда "{data}" на PNA')
+    def _send_command(self, command: str) -> str:
+        """Отправка команды в PNA"""
+        if not self.connection:
+            logger.error('При отправке команды на PNA произошла ошибка: не обнаружено подлючение к PNA')
+            raise ConnectionError("PNA не подключен")
+        if self.mode == 0:  # Реальный режим
+            try:
+                self.connection.sendall((command + '\n').encode())
+                logger.debug(f'На PNA - {command}')
+                response = self.connection.recv(4096).decode().strip()
+                logger.debug(f'От PNA - {response}')
+                return response
+            except Exception as e:
+                logger.error(f"Ошибка отправки команды в PNA: {e}")
+                raise 
+        else:  # Тестовый режим
+            logger.debug(f'На PNA - {command}')
+            logger.debug(f'От PNA - 0')
+            return "0"
 
-    def read(self) -> str:
-        """Read string from the instrument."""
-        if self.mode == 0 and self.connection:
-            response = self.connection.read().strip()
-            logger.info(f'Считаны данные с PNA: "{response}"')
-            return response
-        elif self.mode == 0 and not self.connection:
-            logger.error('Не обнаружено подключение к pna при попытке чтения данных')
-            raise WrongInstrumentError('Не обнаружено подключение к PNA')
-        logger.info('Произведено чтения дынных из PNA')
-        return ""
+    def preset(self) -> None:
+        """Сброс PNA в начальное состояние"""
+        try:
+            self._send_command("*RST")
+            logger.info("PNA сброшен в начальное состояние")
+        except Exception as e:
+            logger.error(f"Ошибка сброса PNA: {e}")
+            raise
 
-    def query(self, string: str) -> str:
-        """Makes a request to the device and returns a response"""
-        if self.mode == 0 and self.connection:
-            response = self.connection.query(string)
-            logger.info(f'Отправлена команда "{string}" на PNA')
-            return response
-        elif self.mode == 0 and not self.connection:
-            logger.error('Не обнаружено подключение к pna при попытке чтения данных')
-            raise WrongInstrumentError('Не обнаружено подключение к PNA')
-        logger.info(f'Отправлена команда "{string}" на PNA')
-        return ""
+    def set_s_param(self, s_param: str):
+        """Установка S-параметра"""
+        try:
+            self._send_command(f"CALC:PAR:SEL 'CH1_{s_param}_1'")
+            logger.info(f"Установлен S-параметр {s_param}")
+        except Exception as e:
+            logger.error(f"Ошибка установки S-параметра: {e}")
+            raise
 
-    def set_power(self, port: int, value: float) -> None:
-        """Установка мощности {value} дБм на порт номер {port}"""
-        self.write(f'SOUR:POW{port} {value}')
-        logger.info(f'Задано {value} дБм на порт №{port}')
+    def set_power(self, power: float, port: int = 1):
+        """Установка мощности"""
+        try:
+            self._send_command(f"SOUR:POW{port} {power}")
+            logger.info(f"Установлена мощность {power} дБм на порту {port}")
+        except Exception as e:
+            logger.error(f"Ошибка установки мощности: {e}")
+            raise
+
+    def set_freq_start(self, freq: float):
+        """Установка начальной частоты"""
+        try:
+            self._send_command(f"SENS:FREQ:STAR {freq}")
+            logger.info(f"Установлена начальная частота {freq} Гц")
+        except Exception as e:
+            logger.error(f"Ошибка установки начальной частоты: {e}")
+            raise
+
+    def set_freq_stop(self, freq: float):
+        """Установка конечной частоты"""
+        try:
+            self._send_command(f"SENS:FREQ:STOP {freq}")
+            logger.info(f"Установлена конечная частота {freq} Гц")
+        except Exception as e:
+            logger.error(f"Ошибка установки конечной частоты: {e}")
+            raise
+
+    def set_points(self, points: int):
+        """Установка количества точек измерения"""
+        try:
+            self._send_command(f"SENS:SWE:POIN {points}")
+            logger.info(f"Установлено количество точек измерения {points}")
+        except Exception as e:
+            logger.error(f"Ошибка установки количества точек: {e}")
+            raise
+
+    def measure(self) -> tuple[float, float]:
+        """Измерение амплитуды и фазы"""
+        try:
+            # Измеряем амплитуду
+            self._send_command("CALC:PAR:SEL 'CH1_S11_1'")
+            amp_result = self._send_command("CALC:MARK2:Y?")
+            amp = float(amp_result.split(',')[0])
+            
+            # Измеряем фазу
+            self._send_command("CALC:PAR:SEL 'CH1_S12_2'")
+            phase_result = self._send_command("CALC:MARK2:Y?")
+            phase = float(phase_result.split(',')[0])
+            
+            logger.debug(f"Измерение: amp={amp:.2f} дБ, phase={phase:.1f}°")
+            return amp, phase
+            
+        except Exception as e:
+            logger.error(f"Ошибка измерения: {e}")
+            raise
+
+    def set_output(self, state: bool):
+        """Включение/выключение выхода"""
+        try:
+            self._send_command(f"OUTP {'ON' if state else 'OFF'}")
+            logger.info(f"Выход PNA {'включен' if state else 'выключен'}")
+        except Exception as e:
+            logger.error(f"Ошибка управления выходом PNA: {e}")
+            raise
+
+    def load_state(self, filename: str):
+        """Загрузка состояния из файла"""
+        try:
+            self._send_command(f'MMEM:LOAD "{filename}"')
+            logger.info(f"Загружено состояние из файла {filename}")
+        except Exception as e:
+            logger.error(f"Ошибка загрузки состояния: {e}")
+            raise
 
     def get_data(self) -> Tuple[list, list]:
         """Получение данных измерений"""
@@ -106,89 +173,69 @@ class PNA:
 
     def select_par(self, number: int) -> None:
         """Выбор параметра измерения"""
-        self.write(f'CALC:PAR:MNUM {number}')
+        self._send_command(f'CALC:PAR:MNUM {number}')
         logger.debug(f'Выбрано измерение №{number} на pna')
 
     def imm(self) -> None:
         """Запуск немедленного измерения"""
-        self.write('INIT:IMM')
+        self._send_command('INIT:IMM')
         logger.debug('Запущен триггер на измерение одного экрана pna')
 
     def set_ascii_data(self) -> None:
         """Установка формата данных ASCII"""
-        self.write('FORM:DATA ascii')
+        self._send_command('FORM:DATA ascii')
         logger.debug('Установление формат данных ASCII на pna')
-
-    def set_freq_start(self, value: int) -> None:
-        """Установка начальной частоты в Гц"""
-        self.write(f'SENS:FREQ:STAR {value}')
-        logger.debug(f'Установлена начальная частота {value}Гц')
-
-    def set_freq_stop(self, value: int) -> None:
-        """Установка конечной частоты в Гц"""
-        self.write(f'SENS:FREQ:STOP {value}')
-        logger.info(f'Установлена конечная частота {value}Гц')
-
-    def set_freq_points(self, value: int) -> None:
-        """Установка количества частотных точек"""
-        self.write(f'SENS:SWE:POIN {value}')
-        logger.info(f'Установлено {value} частотных точек')
-
-    def preset(self) -> None:
-        """Сброс прибора"""
-        self.write('*RST')
-        logger.info('Произведен preset pna')
 
     def normalize(self) -> None:
         """Нормализация измерений"""
-        self.write('CALC:MATH:MEM')
-        self.write('CALC:MATH:FUNC DIV')
+        self._send_command('CALC:MATH:MEM')
+        self._send_command('CALC:MATH:FUNC DIV')
         logger.debug('Отнормировано текущее измерение на pna')
 
     def load_settings_file(self, filepath: str = None) -> None:
         """Загрузка файла настроек"""
         if self.mode == 0:
-            self.write(f'MMEM:LOAD "{filepath}"')
+            self._send_command(f'MMEM:LOAD "{filepath}"')
             logger.debug(f'Подгружен файл настроек pna {filepath}')
         else:
             logger.info('Эмуляция загрузки файла настроек PNA (dev-режим)')
 
     def power_off(self) -> None:
         """Выключение питания"""
-        self.write('OUTP OFF')
+        self._send_command('OUTP OFF')
         logger.debug('Выключено СВЧ PNA')
 
     def get_mean_value(self) -> float:
         """Получение среднего значения"""
-        self.write('CALC:FUNC:TYPE MEAN')
-        result = float(self.query('CALC:FUNC:DATA?'))
+        self._send_command('CALC:FUNC:TYPE MEAN')
+        result = float(self._send_command('CALC:FUNC:DATA?'))
         logger.debug('Запрошено среднее значение текущего измерения pna')
         return result
 
     def set_unwrapped_phase_type(self) -> None:
         """Установка типа фазы unwrapped"""
-        self.write('CALC:FORM UPH')
+        self._send_command('CALC:FORM UPH')
         logger.debug('Установлен формат unwrapped phase на pna')
 
     def set_delay_type(self) -> None:
         """Установка типа задержки"""
-        self.write('CALC:FROM GDEL')
+        self._send_command('CALC:FROM GDEL')
         logger.debug('Установлен формат group delay на pna')
 
     def set_mlog_type(self) -> None:
         """Установка типа логарифмической шкалы"""
-        self.write('CALC:FROM MLOG')
+        self._send_command('CALC:FROM MLOG')
         logger.debug('Установлен формат LogM на pna')
 
     def power_on(self) -> None:
         """Включение питания"""
-        self.write('OUTP ON')
+        self._send_command('OUTP ON')
         logger.debug('Включено СВЧ PNA')
 
     def get_files_in_dir(self, folder: str = None) -> list:
         """Получение списка файлов в директории"""
         command = f'MMEM:CAT? \"{folder}\"'
-        result = self.query(command)
+        result = self._send_command(command)
         result_list = result[1:len(result)-1].split(',')
         print(result_list)
         logger.debug(f'Запрошены файлы pna в folder={folder}')
@@ -198,11 +245,11 @@ class PNA:
         """Измерение амплитуды и фазы"""
         if self.mode == 0:
             #TODO Сделать создание маркеров на нужной частоте при настройке измерений
-            self.write('CALC:PAR:SEL "CH1_S11_1"')
-            amp = self.query('CALC:MARK2:Y?')
+            self._send_command('CALC:PAR:SEL "CH1_S11_1"')
+            amp = self._send_command('CALC:MARK2:Y?')
             amp = float(amp.split(',')[0])
-            self.write('CALC:PAR:SEL "CH1_S12_1"')
-            phase = self.query('CALC:MARK2:X?')
+            self._send_command('CALC:PAR:SEL "CH1_S12_1"')
+            phase = self._send_command('CALC:MARK2:X?')
             phase = float(phase.split(',')[0])
             logger.info(f'Измерены амплитуда и фаза: amp={amp:.2f}, phase={phase:.2f}')
             return [amp, phase]

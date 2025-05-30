@@ -8,3 +8,5 @@ numpy==2.2.6
 PyOpenGL==3.1.9
 pyserial==3.5
 typing-extensions==4.13.2
+pyvisa-py==0.8.0
+

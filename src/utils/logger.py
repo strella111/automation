@@ -4,7 +4,7 @@ from loguru import logger
 
 def setup_logging(log_file: str = "logs/app.log"):
     """
-    Настройка логирования с использованием loguru.
+    Настройка логирования
     
     Args:
         log_file (str): Путь к файлу логов относительно корня проекта
@@ -20,7 +20,7 @@ def setup_logging(log_file: str = "logs/app.log"):
     logger.add(
         sys.stderr,
         format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
-        level="INFO"
+        level="DEBUG"
     )
     
     # Добавляем обработчик для записи в файл
