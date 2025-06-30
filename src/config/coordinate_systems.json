@@ -1,12 +1,12 @@
 {
     "coordinate_systems": [
         {
-            "name": "Система 1",
+            "name": "Система 1(0,0)",
             "x_offset": 0,
             "y_offset": 0
         },
         {
-            "name": "Система 2",
+            "name": "Система 2(10, 5)",
             "x_offset": 10,
             "y_offset": 5
         }

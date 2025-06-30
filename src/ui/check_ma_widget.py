@@ -1,14 +1,13 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
 from PyQt5.QtGui import QTextCursor
 from loguru import logger
-import sys
 import threading
 import numpy as np
 from core.devices.ma import MA
 from core.devices.pna import PNA
 from core.devices.psn import PSN
 from core.measurements.check.check_ma import CheckMA
-from core.common.enums import Channel, Direction
+from src.core.common.enums import Channel, Direction, PpmState
 from core.common.coordinate_system import CoordinateSystemManager
 
 class QTextEditLogHandler(QtCore.QObject):
@@ -33,8 +32,7 @@ class QTextEditLogHandler(QtCore.QObject):
 class CheckMaWidget(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
-        
-        # Инициализация менеджера систем координат
+
         self.coord_system_manager = CoordinateSystemManager("config/coordinate_systems.json")
         self.coord_system = None
         
@@ -68,24 +66,20 @@ class CheckMaWidget(QtWidgets.QWidget):
 
         self.layout = QtWidgets.QHBoxLayout(self)
 
-        # --- Левая панель ---
         self.left_panel = QtWidgets.QWidget()
         self.left_panel.setFixedWidth(400)
         self.left_layout = QtWidgets.QVBoxLayout(self.left_panel)
         self.layout.addWidget(self.left_panel)
 
-        # --- Правая панель (широкая) ---
         self.right_panel = QtWidgets.QWidget()
         self.right_layout = QtWidgets.QVBoxLayout(self.right_panel)
         self.layout.addWidget(self.right_panel, stretch=3)
 
-        # --- Блок подключения устройств ---
         self.connect_group = QtWidgets.QGroupBox('Подключение устройств')
         self.connect_layout = QtWidgets.QVBoxLayout(self.connect_group)
         self.connect_layout.setContentsMargins(10, 10, 10, 10)
         self.connect_layout.setSpacing(10)
 
-        # PNA
         pna_widget = QtWidgets.QWidget()
         pna_layout = QtWidgets.QHBoxLayout(pna_widget)
         pna_layout.setContentsMargins(0, 0, 0, 0)
@@ -95,7 +89,6 @@ class CheckMaWidget(QtWidgets.QWidget):
         pna_layout.addWidget(self.pna_connect_btn)
         self.connect_layout.addWidget(pna_widget)
 
-        # PSN
         psn_widget = QtWidgets.QWidget()
         psn_layout = QtWidgets.QHBoxLayout(psn_widget)
         psn_layout.setContentsMargins(0, 0, 0, 0)
@@ -105,7 +98,6 @@ class CheckMaWidget(QtWidgets.QWidget):
         psn_layout.addWidget(self.psn_connect_btn)
         self.connect_layout.addWidget(psn_widget)
 
-        # MA
         ma_widget = QtWidgets.QWidget()
         ma_layout = QtWidgets.QHBoxLayout(ma_widget)
         ma_layout.setContentsMargins(0, 0, 0, 0)
@@ -117,49 +109,57 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.connect_layout.addWidget(ma_widget)
         self.left_layout.addWidget(self.connect_group)
 
-        # --- Tabs для параметров устройств и измерения ---
         self.param_tabs = QtWidgets.QTabWidget()
-        
-        # MA tab
+
         self.ma_tab = QtWidgets.QWidget()
         self.ma_tab_layout = QtWidgets.QFormLayout(self.ma_tab)
-        self.ma_tab_layout.addRow('Номер МА:', QtWidgets.QLineEdit())
 
-        self.ma_addr_combo = QtWidgets.QComboBox()
-        self.ma_addr_combo.addItems([str(i) for i in range(1, 41)])
-        self.ma_tab_layout.addRow('Адрес БУ:', self.ma_addr_combo)
-        
-        # Выбор канала
         self.channel_combo = QtWidgets.QComboBox()
         self.channel_combo.addItems(['Приемник', 'Передатчик'])
         self.ma_tab_layout.addRow('Канал:', self.channel_combo)
-        
-        # Выбор поляризации
+
         self.direction_combo = QtWidgets.QComboBox()
         self.direction_combo.addItems(['Горизонтальная', 'Вертикальная'])
         self.ma_tab_layout.addRow('Поляризация:', self.direction_combo)
         
         self.param_tabs.addTab(self.ma_tab, 'MA')
-        
-        # PNA tab
+
         self.pna_tab = QtWidgets.QWidget()
         self.pna_tab_layout = QtWidgets.QFormLayout(self.pna_tab)
-        self.pna_tab_layout.addRow('S-параметр:', QtWidgets.QComboBox())
-        self.pna_tab_layout.addRow('Входная мощность:', QtWidgets.QDoubleSpinBox())
-        self.pna_tab_layout.addRow('Нач. частота (Гц):', QtWidgets.QSpinBox())
-        self.pna_tab_layout.addRow('Кон. частота (Гц):', QtWidgets.QSpinBox())
-        self.pna_tab_layout.addRow('Точек:', QtWidgets.QSpinBox())
+
+        self.s_param_combo = QtWidgets.QComboBox()
+        self.s_param_combo.addItems(['S21', 'S12', 'S11', 'S22'])
+        self.pna_tab_layout.addRow('S-параметр:', self.s_param_combo)
+
+        self.pna_power = QtWidgets.QDoubleSpinBox()
+        self.pna_power.setRange(-20, 18)
+        self.pna_power.setSingleStep(1)
+        self.pna_power.setDecimals(0)
+        self.pna_tab_layout.addRow('Входная мощность:',  self.pna_power)
+
+        only_float = QtGui.QDoubleValidator()
+        only_float.setDecimals(2)
+        self.pna_start_freq = QtWidgets.QLineEdit()
+        self.pna_start_freq.setText('9300')
+        self.pna_start_freq.setValidator(only_float)
+        self.pna_tab_layout.addRow('Нач. частота (МГц):', self.pna_start_freq)
+
+        self.pna_stop_freq = QtWidgets.QLineEdit()
+        self.pna_stop_freq.setText('9300')
+        self.pna_stop_freq.setValidator(only_float)
+        self.pna_tab_layout.addRow('Кон. частота (МГц):', self.pna_stop_freq)
+
+        self.pna_number_of_points = QtWidgets.QComboBox()
+        self.pna_number_of_points.addItems(['3', '11', '101', '201'])
+        self.pna_tab_layout.addRow('Кол-во точек:', self.pna_number_of_points)
+
         self.pna_tab_layout.addRow('Файл настроек:', QtWidgets.QLineEdit())
         self.param_tabs.addTab(self.pna_tab, 'PNA')
         
         # Meas tab
         self.meas_tab = QtWidgets.QWidget()
         self.meas_tab_layout = QtWidgets.QFormLayout(self.meas_tab)
-        self.meas_tab_layout.addRow('Номер ППМ:', QtWidgets.QSpinBox())
-        self.meas_tab_layout.addRow('Шаг:', QtWidgets.QSpinBox())
-        self.meas_tab_layout.addRow('Кол-во точек:', QtWidgets.QSpinBox())
-        
-        # Добавляем выбор системы координат
+
         self.coord_system_combo = QtWidgets.QComboBox()
         self.coord_system_combo.addItems(self.coord_system_manager.get_system_names())
         self.meas_tab_layout.addRow('Система координат:', self.coord_system_combo)
@@ -167,7 +167,6 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.param_tabs.addTab(self.meas_tab, 'Meas')
         self.left_layout.addWidget(self.param_tabs, 1)
 
-        # --- Кнопки управления ---
         self.apply_btn = QtWidgets.QPushButton('Применить параметры')
         self.left_layout.addWidget(self.apply_btn)
         self.btns_layout = QtWidgets.QHBoxLayout()
@@ -180,7 +179,6 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.left_layout.addLayout(self.btns_layout)
         self.left_layout.addStretch()
 
-        # --- Таблица результатов ---
         self.results_table = QtWidgets.QTableWidget()
         self.results_table.setColumnCount(12)
         self.results_table.setHorizontalHeaderLabels(['ППМ', 
@@ -195,20 +193,18 @@ class CheckMaWidget(QtWidgets.QWidget):
                                                       'ФВ 45',
                                                       'ФВ 90',
                                                       'ФВ 180'])
+
         self.right_layout.addWidget(self.results_table, stretch=2)
 
-        # --- Консоль логов ---
         self.console = QtWidgets.QTextEdit()
         self.console.setReadOnly(True)
         self.console.setStyleSheet('background: #fff; color: #000; font-family: "PT Mono";')
         self.console.setFixedHeight(200)
         self.right_layout.addWidget(self.console, stretch=1)
 
-        # --- Логирование ---
         self.log_handler = QTextEditLogHandler(self.console)
         logger.add(self.log_handler, format="{time:HH:mm:ss} | {level} | {message}")
 
-        # --- Устройства и параметры ---
         self.ma = None
         self.pna = None
         self.psn = None
@@ -216,7 +212,6 @@ class CheckMaWidget(QtWidgets.QWidget):
         self._stop_flag = threading.Event()
         self._pause_flag = threading.Event()
 
-        # --- Сигналы ---
         self.ma_connect_btn.clicked.connect(self.connect_ma)
         self.pna_connect_btn.clicked.connect(self.connect_pna)
         self.psn_connect_btn.clicked.connect(self.connect_psn)
@@ -241,22 +236,17 @@ class CheckMaWidget(QtWidgets.QWidget):
     def apply_params(self):
         """Сохраняет параметры из вкладок"""
         # MA
-        self.bu_addr = self.ma_addr_combo.currentText()
-        self.ma_num = self.ma_tab_layout.itemAt(1).widget().text()
         self.channel = self.channel_combo.currentText()
         self.direction = self.direction_combo.currentText()
         # PNA
         self.s_param = self.pna_tab_layout.itemAt(1).widget().currentText()
         self.power = self.pna_tab_layout.itemAt(3).widget().value()
-        self.freq_start = self.pna_tab_layout.itemAt(5).widget().value()
-        self.freq_stop = self.pna_tab_layout.itemAt(7).widget().value()
-        self.freq_points = self.pna_tab_layout.itemAt(9).widget().value()
+        self.freq_start = self.pna_tab_layout.itemAt(5).widget().text()
+        self.freq_stop = self.pna_tab_layout.itemAt(7).widget().text()
+        self.freq_points = self.pna_tab_layout.itemAt(9).widget().currentText()
         self.settings_file = self.pna_tab_layout.itemAt(11).widget().text()
-        # Meas
-        self.ppm_num = self.meas_tab_layout.itemAt(1).widget().value()
-        self.step = self.meas_tab_layout.itemAt(3).widget().value()
-        self.n_points = self.meas_tab_layout.itemAt(5).widget().value()
-        # Система координат
+
+
         coord_system_name = self.coord_system_combo.currentText()
         self.coord_system = self.coord_system_manager.get_system_by_name(coord_system_name)
         logger.info('Параметры успешно применены')
@@ -304,7 +294,6 @@ class CheckMaWidget(QtWidgets.QWidget):
         logger.info('Проверка остановлена.')
 
     def _run_check(self):
-        """Выполняет проверку МА"""
         try:
             channel = Channel.Receiver if self.channel_combo.currentText()== 'Приемник' else Channel.Transmitter
             direction = Direction.Horizontal if self.direction_combo.currentText()=='Горизонтальная' else Direction.Vertical
@@ -316,12 +305,8 @@ class CheckMaWidget(QtWidgets.QWidget):
                     self.psn.preset_axis(0)
                     self.psn.preset_axis(1)
 
-                    if self.coord_system:
-                        x_offset = self.coord_system.x_offset
-                        y_offset = self.coord_system.y_offset
-                    else:
-                        x_offset = float(self.device_settings.get('psn_x_offset', 0))
-                        y_offset = float(self.device_settings.get('psn_y_offset', 0))
+                    x_offset = self.coord_system.x_offset if self.coord_system else 0
+                    y_offset = self.coord_system.y_offset if self.coord_system else 0
                     
                     self.psn.set_offset(x_offset, y_offset)
                     speed_x = int(self.device_settings.get('psn_speed_x', 0))
@@ -336,17 +321,14 @@ class CheckMaWidget(QtWidgets.QWidget):
                 except Exception as e:
                     logger.error(f'Ошибка применения параметров PSN перед измерением: {e}')
 
-            # Создаем экземпляр класса проверки, передавая события
             check = CheckMA(ma=self.ma, psn=self.psn, pna=self.pna, 
                           stop_event=self._stop_flag, pause_event=self._pause_flag)
-            
-            # Запускаем проверку
+
             results = check.start(channel=channel, direction=direction)
-            
-            # Обновляем таблицу результатов
+
             for ppm_num, (result, measurements, fv_data) in results:
                 if self._stop_flag.is_set():
-                    logger.info('Обновление таблицы остановлено пользователем')
+                    logger.info('Проверка МА остановлена пользователем')
                     break
 
                 while self._pause_flag.is_set() and not self._stop_flag.is_set():
@@ -354,19 +336,16 @@ class CheckMaWidget(QtWidgets.QWidget):
 
                 amp, phase = measurements
                 row = ppm_num - 1
-                
-                # Обновляем номер ППМ
+
                 self.results_table.setItem(row, 0, QtWidgets.QTableWidgetItem(str(ppm_num)))
-                
-                # Обновляем амплитуду и фазу
+
                 if np.isnan(amp) or np.isnan(phase):
                     self.results_table.setItem(row, 1, QtWidgets.QTableWidgetItem("---"))
                     self.results_table.setItem(row, 2, QtWidgets.QTableWidgetItem("---"))
                 else:
                     self.results_table.setItem(row, 1, QtWidgets.QTableWidgetItem(f"{amp:.2f}"))
                     self.results_table.setItem(row, 2, QtWidgets.QTableWidgetItem(f"{phase:.1f}"))
-                
-                # Обновляем статусы
+
                 status = "OK" if result else "FAIL"
                 status_item = QtWidgets.QTableWidgetItem(status)
                 if result:
@@ -375,32 +354,26 @@ class CheckMaWidget(QtWidgets.QWidget):
                     status_item.setBackground(QtGui.QColor("#e74c3c"))
                 status_item.setForeground(QtGui.QColor("white"))
                 self.results_table.setItem(row, 3, status_item)
-                
-                # Обновляем значения ФВ
-                if not result and fv_data:  # Если ППМ не прошел проверку и есть данные ФВ
+
+                if not result and fv_data:
                     try:
-                        # Заполняем значения ФВ в таблицу
                         for i, value in enumerate(fv_data['values']):
                             self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(f"{value:.1f}"))
-                        
-                        # Заполняем дельту ФВ
+
                         if 'delta' in fv_data:
                             self.results_table.setItem(row, 4, QtWidgets.QTableWidgetItem(f"{fv_data['delta']:.1f}"))
                         else:
                             self.results_table.setItem(row, 4, QtWidgets.QTableWidgetItem("---"))
                     except Exception as e:
                         logger.error(f'Ошибка при обновлении значений ФВ для ППМ {ppm_num}: {e}')
-                        # В случае ошибки ставим прочерки
                         for i in range(6):
                             self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem("---"))
                         self.results_table.setItem(row, 4, QtWidgets.QTableWidgetItem("---"))
                 else:
-                    # Если ППМ прошел проверку или нет данных ФВ, ставим прочерки
                     for i in range(6):
                         self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem("---"))
                     self.results_table.setItem(row, 4, QtWidgets.QTableWidgetItem("---"))
-                
-                # Принудительно обновляем таблицу
+
                 self.results_table.viewport().update()
                 QtCore.QCoreApplication.processEvents()
                 
@@ -429,13 +402,14 @@ class CheckMaWidget(QtWidgets.QWidget):
                 logger.error(f'Ошибка отключения МА: {e}')
                 return
 
-        addr = self.ma_addr_combo.currentText()
         com_port = self.device_settings.get('ma_com_port', '')
         mode = self.device_settings.get('ma_mode', 0)
 
         try:
-            self.ma = MA(bu_addr=int(addr), ma_num=1, com_port=com_port, mode=mode)
+            self.ma = MA(com_port=com_port, mode=mode)
             self.ma.connect()
+            if self.ma.bu_addr:
+                self.ma_connect_btn.setText(f'МА №{self.ma.bu_addr}')
             self.ma_connect_btn.setStyleSheet(self.btn_style_connected)
             logger.info(f'МА успешно подключен {'' if mode == 0 else "(тестовый режим)"}')
         except Exception as e:

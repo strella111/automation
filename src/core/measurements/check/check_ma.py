@@ -3,7 +3,7 @@ from loguru import logger
 from ...devices.ma import MA
 from ...devices.pna import PNA
 from ...devices.psn import PSN
-from ...common.enums import Channel, Direction
+from src.core.common.enums import Channel, Direction, PpmState
 from ...common.exceptions import WrongInstrumentError, PlanarScannerError
 from PyQt5.QtCore import QThread
 import threading
@@ -115,20 +115,16 @@ class CheckMA:
         phase_diff = self._normalize_phase(phase_all - phase_zero)
         return phase_diff
         
-    def _check_ppm(self, ppm_num: int, channel: Channel, direction: Direction) -> tuple[bool, tuple[float, float]]:
+    def _check_ppm(self, ppm_num: int, channel: Channel, direction: Direction) -> tuple[bool, tuple[float, float, list]]:
         """Проверяет один ППМ"""
         try:
-            # Включаем ППМ
-            self.ma.switch_ppm(ppm_num, direction, channel, True)
-            
-            # Устанавливаем ФВ в нулевое положение
-            self.ma.set_phase_shifter(ppm_num, direction, channel, 0)
-            
-            # Измеряем амплитуду и фазу в нулевом положении
+            self.ma.switch_ppm(ppm_num, channel, direction, PpmState.ON)
+            self.ma.set_phase_shifter(ppm_num, channel, direction, 0)
+
             amp_zero, phase_zero = self.pna.measure()
             
             # Устанавливаем максимальное значение ФВ
-            self.ma.set_phase_shifter(ppm_num, direction, channel, 63)
+            self.ma.set_phase_shifter(ppm_num, channel, direction, 63)
             
             # Измеряем амплитуду и фазу с включенным ФВ
             amp_all, phase_all = self.pna.measure()
@@ -147,7 +143,7 @@ class CheckMA:
             if not phase_ok:
                 for shift in self.phase_shifts:
                     value = int(shift / 5.625)  # Конвертируем градусы в код ФВ
-                    self.ma.set_phase_shifter(ppm_num, direction, channel, value)
+                    self.ma.set_phase_shifter(ppm_num, channel, direction, value)
                     _, phase_err = self.pna.measure()
                     phase_vals.append(self._calculate_phase_diff(phase_err, phase_zero))
             
@@ -155,14 +151,14 @@ class CheckMA:
             result = phase_ok and amp_ok
             
             # Возвращаем результат и измерения
-            return result, (amp_all, phase_all)
+            return result, (amp_all, phase_all, phase_vals)
             
         except Exception as e:
             logger.error(f"Ошибка при проверке ППМ {ppm_num}: {e}")
-            return False, (np.nan, np.nan)
+            return False, (np.nan, np.nan, [np.nan])
         finally:
             # Выключаем ППМ
-            self.ma.switch_ppm(ppm_num, direction, channel, False)
+            self.ma.switch_ppm(ppm_num, channel, direction, PpmState.OFF)
 
     def check_ppm(self, ppm_num: int, channel: Channel, direction: Direction) -> Tuple[bool, Tuple[float, float]]:
         """
@@ -181,7 +177,6 @@ class CheckMA:
             PlanarScannerError: При ошибке перемещения
         """
         try:
-            # Перемещаемся к ППМ
             i = (ppm_num - 1) // 8
             j = (ppm_num - 1) % 8
             try:
@@ -251,7 +246,6 @@ class CheckMA:
 
         except Exception as e:
             logger.error(f"Ошибка при выполнении проверки: {e}")
-            # Пытаемся безопасно завершить работу
             try:
                 self.pna.power_off()
             except Exception as e:

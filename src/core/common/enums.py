@@ -13,4 +13,14 @@ class Direction(Enum):
 class PhaseDir(Enum):
     """Направления изменения фазы"""
     UP = "UP"
-    DOWN = "DOWN" 
+    DOWN = "DOWN"
+
+class PpmState(Enum):
+    """Состояние ППМа"""
+    ON = "ON"
+    OFF = "OFF"
+
+class MdoState(Enum):
+    """Состояние МДО"""
+    ON = "ON"
+    OFF = "OFF"

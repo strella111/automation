@@ -45,7 +45,7 @@ class CoordinateSystemManager:
         default_systems = {
             "coordinate_systems": [
                 {
-                    "name": "По умолчанию",
+                    "name": "Аппаратная",
                     "x_offset": 0,
                     "y_offset": 0
                 }

@@ -4,7 +4,6 @@ from .check_ma_widget import CheckMaWidget
 import serial.tools.list_ports
 from loguru import logger
 
-# Диалог настроек устройств
 class SettingsDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -35,14 +34,10 @@ class SettingsDialog(QtWidgets.QDialog):
         psn_layout.addRow('Порт:', self.psn_port_edit)
         psn_layout.addRow('Режим:', self.psn_mode_combo)
 
-        self.psn_x_offset = QtWidgets.QDoubleSpinBox(); self.psn_x_offset.setDecimals(4); self.psn_x_offset.setRange(-9999, 9999)
-        self.psn_y_offset = QtWidgets.QDoubleSpinBox(); self.psn_y_offset.setDecimals(4); self.psn_y_offset.setRange(-9999, 9999)
         self.psn_speed_x = QtWidgets.QSpinBox(); self.psn_speed_x.setRange(-9999, 9999) 
         self.psn_speed_y = QtWidgets.QSpinBox(); self.psn_speed_y.setRange(-9999, 9999)
         self.psn_acc_x = QtWidgets.QSpinBox(); self.psn_acc_x.setRange(-9999, 9999)
         self.psn_acc_y = QtWidgets.QSpinBox(); self.psn_acc_y.setRange(-9999, 9999)
-        psn_layout.addRow('X offset:', self.psn_x_offset)
-        psn_layout.addRow('Y offset:', self.psn_y_offset)
         psn_layout.addRow('Скорость X:', self.psn_speed_x)
         psn_layout.addRow('Скорость Y:', self.psn_speed_y)
         psn_layout.addRow('Ускорение X:', self.psn_acc_x)
@@ -101,8 +96,6 @@ class SettingsDialog(QtWidgets.QDialog):
             'pna_port': self.pna_port_edit.text(),
             'psn_ip': self.psn_ip_edit.text(),
             'psn_port': self.psn_port_edit.text(),
-            'psn_x_offset': self.psn_x_offset.value(),
-            'psn_y_offset': self.psn_y_offset.value(),
             'psn_speed_x': self.psn_speed_x.value(),
             'psn_speed_y': self.psn_speed_y.value(),
             'psn_acc_x': self.psn_acc_x.value(),
@@ -116,7 +109,7 @@ class SettingsDialog(QtWidgets.QDialog):
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('Что-то очень сложное и важное')
+        self.setWindowTitle('DEV')
         self.resize(1400, 800)
 
         self.settings = QtCore.QSettings('PULSAR', 'PhaseMA')
@@ -150,13 +143,12 @@ class MainWindow(QtWidgets.QMainWindow):
         mode_group = QtWidgets.QActionGroup(self)
         mode_group.addAction(self.phase_action)
         mode_group.addAction(self.check_action)
-        mode_group.setExclusive(True)  # только одно действие может быть выбрано
+        mode_group.setExclusive(True)
         
         self.menu_params.addAction('Настройки устройств', self.open_settings_dialog)
 
         self.show_phase_ma()  # По умолчанию
 
-        # Загрузка параметров при запуске
         self.load_settings()
         
     def show_phase_ma(self):
@@ -169,15 +161,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def open_settings_dialog(self):
         dlg = SettingsDialog(self)
-        # Подставляем сохранённые значения
+
         dlg.pna_ip_edit.setText(self.settings.value('pna_ip', ''))
         dlg.pna_port_edit.setText(self.settings.value('pna_port', ''))
         dlg.pna_mode_combo.setCurrentIndex(self.settings.value('pna_mode', 0))
         dlg.psn_ip_edit.setText(self.settings.value('psn_ip', ''))
         dlg.psn_port_edit.setText(self.settings.value('psn_port', ''))
         dlg.psn_mode_combo.setCurrentIndex(self.settings.value('psn_mode', 0))
-        dlg.psn_x_offset.setValue(float(self.settings.value('psn_x_offset', 0)))
-        dlg.psn_y_offset.setValue(float(self.settings.value('psn_y_offset', 0)))
         dlg.psn_speed_x.setValue(int(self.settings.value('psn_speed_x', 0)))
         dlg.psn_speed_y.setValue(int(self.settings.value('psn_speed_y', 0)))
         dlg.psn_acc_x.setValue(int(self.settings.value('psn_acc_x', 0)))

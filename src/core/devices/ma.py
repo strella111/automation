@@ -1,14 +1,16 @@
 import serial
 import time
-from typing import Optional, Union
+from typing import Union
 from loguru import logger
-from ..common.enums import Channel, Direction
-from ..common.exceptions import WrongInstrumentError
+
+from core.common.enums import MdoState
+from src.core.common.enums import Channel, Direction, PpmState
+from src.core.common.exceptions import WrongInstrumentError, BuAddrNotFound, MaCommandNotDelivered
 
 class MA:
     """Класс для работы с модулем антенным"""
     
-    def __init__(self, bu_addr: int, ma_num: int, com_port: str, mode: int = 0):
+    def __init__(self, com_port: str, mode: int = 0):
         """
         Инициализация модуля антенного
         
@@ -18,13 +20,14 @@ class MA:
             com_port: COM-порт для подключения
             mode: Режим работы (0 - реальный, 1 - тестовый)
         """
-        self.bu_addr = bu_addr
-        self.ma_num = ma_num
+        self.bu_addr = 0
         self.com_port = com_port
         self.mode = mode
         self.connection = None
-        self._poly = 0x1021
-        self._preset = 0x1d0f
+        self.CRC_POLY = 0x1021
+        self.CRC_INIT = 0x1d0f
+        self.ppm_data = bytearray(25)
+        self.retry_counter = 0
 
     def connect(self) -> None:
         """Подключение к модулю антенному"""
@@ -39,10 +42,16 @@ class MA:
                 )
                 if not self.connection.is_open:
                     raise WrongInstrumentError(f'Не удалось подключиться к {self.com_port}. Порт закрыт.')
-                logger.debug(f'Произведено подключение к {self.com_port}')
+                bu_num = self.search_bu_num()
+                if bu_num == 0:
+                    raise BuAddrNotFound('Не удалось найти нужный адрес БУ')
+                else:
+                    self.bu_addr = bu_num
+                    logger.info(f'Произведено подключение к БУ№{self.bu_addr}')
             else:
                 time.sleep(0.2)
                 self.connection = True
+                self.bu_addr = 1
             logger.info('Произведено подключение к MA')
         except serial.SerialException as e:
             logger.error(f'Ошибка подключения к MA - ошибка ввода/вывода: {e}')
@@ -58,7 +67,16 @@ class MA:
                 logger.error('Не обнаружено подключение к MA')
                 raise WrongInstrumentError('При попытке обращения к connection MA произошла ошибка')
             self.connection.close()
+            self.bu_addr = 0
         logger.info('Подключение к MA закрыто')
+
+    def _generate_command(self, bu_num: int, command_code: bytes, data: bytes=b'') -> bytes:
+        separator = b'\xaa'
+        addr = bu_num.to_bytes(length=1, byteorder='big')
+        command_id = b'\x00\x00'
+        command = b''.join([separator, addr, command_code, command_id, data])
+        crc = self._crc16(command).to_bytes(2, 'big')
+        return b''.join([command, crc])
 
     def write(self, string: Union[str, bytes]) -> None:
         """
@@ -93,248 +111,253 @@ class MA:
             return b''
         return b''
 
-    def turn_on_vips(self) -> None:
-        """Включение ВИПов"""
-        logger.info('Включение ВИПов')
-        if self.mode == 1:
-            time.sleep(0.1)
+    def _check_request(self):
+        if self.mode == 0:
+            command_code = b'\xFB'
+            command = self._generate_command(bu_num=self.bu_addr, command_code=command_code)
+            self.write(command)
+            logger.debug(f'МА -> {command.hex(' ')}')
+            response = self.read()
+            if response:
+                logger.debug(f'МА <- {command.hex(' ')}')
+                if response[1] == b'\x00':
+                    return True
+                elif response[1] == b'\x01':
+                    logger.error('Ошибка целостности принятой КУ ')
+                    return False
+                else:
+                    logger.error(f'Код ошибки при выполнения последней КУ: {int(response[1])}')
+                    return False
+            return False
+        else:
+            return True
 
-    def turn_off_ppm(self, ppm_num: int, channel: Channel, direction: Direction) -> None:
+    def _crc16(self, data):
         """
-        Отключение ППМ
-        
-        Args:
-            ppm_num: Номер ППМ
-            channel: Канал
-            direction: Направление
+        Параметры:
+            data: bytes или bytearray - входные данные
+        Возвращает:
+            crc: int - значение CRC-16 (2 байта)
         """
-        logger.info(f'Отключение ППМА№{ppm_num} канал {channel} поляризация {direction}')
-        if self.mode == 1:
-            time.sleep(0.05)
+        crc = self.CRC_INIT
 
-    def turn_on_ppm(self, ppm_num: int, channel: Channel, direction: Direction) -> None:
-        """
-        Включение ППМ
-        
-        Args:
-            ppm_num: Номер ППМ
-            channel: Канал
-            direction: Направление
-        """
-        logger.info(f'Включение ППМА№{ppm_num} канал {channel} поляризация {direction}')
-        if self.mode == 1:
-            time.sleep(0.05)
+        for byte in data:
+            for bit in range(8):
+                bit_val = (byte >> 7) & 1
+                crc_msb = (crc >> 15) & 1
 
-    def set_phase_shifter(self, ppm_num: int, channel: Channel, direction: Direction, value: int) -> None:
-        """
-        Установка значения фазовращателя
-        
-        Args:
-            ppm_num: Номер ППМ
-            channel: Канал
-            direction: Направление
-            value: Значение фазовращателя
-        """
-        logger.info(f'Включение ФВ {value} ППМ№{ppm_num} канал {channel} поляризация {direction}')
-        if self.mode == 1:
-            time.sleep(1)
+                if crc_msb ^ bit_val:
+                    crc = (crc << 1) ^ self.CRC_POLY
+                else:
+                    crc = (crc << 1)
 
-    def set_att(self, ppm_num: int, channel: Channel, direction: Direction, value: int) -> None:
-        """
-        Установка значения аттенюатора
-        
-        Args:
-            ppm_num: Номер ППМ
-            channel: Канал
-            direction: Направление
-            value: Значение аттенюатора
-        """
-        logger.info(f'Включение атт {value} ППМ№{ppm_num} канал {channel} поляризация {direction}')
-        if self.mode == 1:
-            time.sleep(0.03)
+                crc &= 0xFFFF
+                byte = (byte << 1) & 0xFF
 
-    def set_delay(self, channel: Channel, value: int) -> None:
-        """
-        Установка задержки
-        
-        Args:
-            channel: Канал
-            value: Значение задержки
-        """
-        logger.info(f'Установка задержки {value} для канала {channel}')
-        if self.mode == 1:
-            time.sleep(0.02)
-
-    def read_ph_table(self) -> list:
-        """
-        Чтение таблицы фаз
-        
-        Returns:
-            list: Таблица фаз
-        """
-        logger.info('Чтение таблицы фаз')
-        if self.mode == 1:
-            time.sleep(0.05)
-        return []  # Возвращаем пустой список в dev режиме
-
-    def _crcb(self, data: bytes) -> int:
-        """Вычисление CRC16"""
-        crc = self._preset
-        data = bytearray(data)
-        for c in data:
-            cc = 0xff & c
-            tmp = (crc >> 8) ^ cc
-            crc = (crc << 8) ^ self._tab[tmp & 0xff]
-            crc = crc & 0xffff
         return crc
-        
-    def _send_command(self, command_id: bytes, data: bytes = b'') -> None:
-        """Отправка команды в МА"""
-        if not self.connection:
-            logger.error('При отправке команды на МА произошла ошибка: не обнаружено подлючение к МА')
-            raise ConnectionError("МА не подключен")
-            
-        if self.mode == 0:  # Реальный режим
-            start_byte = b'\xaa'
-            module_num_byte = self.bu_addr.to_bytes(1, 'big')
-            arb_num = b'\x00\x00'
-            
-            command = b''.join([start_byte, module_num_byte, command_id, arb_num, data])
-            command_crc = self._crcb(command).to_bytes(2, 'big')
-            bytes_result = b''.join([command, command_crc])
-            
-            self.connection.write(bytes_result)
+
+    def search_bu_num(self):
+        if self.mode == 0:
+            if not self.connection:
+                logger.error('Не обнаружено подключение к MA')
+                raise WrongInstrumentError('При попытке обращения к connection MA произошла ошибка')
+            for i in range(1, 45):
+                command = self._generate_command(i, command_code=b'\xfa')
+                logger.debug(f'Команда на МА {command.hex(' ')}')
+                self.write(command)
+                response = self.read()
+                if response:
+                    logger.debug(f'Ответ от МА - {response.hex(' ')}')
+                    return int(response[1])
+        return 0
+
+    def _send_command(self, command: bytes):
+        self.write(command)
+        logger.debug(f'МА -> {command}')
+        if self._check_request():
+            logger.debug(f'Команда f{command.hex(' ')} успешно принята БУ')
+            return
+        else:
+            if self.retry_counter >= 3:
+                logger.error(f'Команда f{command.hex(' ')} не принята бу.')
+                raise MaCommandNotDelivered(f'После 3 попыток не удалось отправить команду {command.hex(' ')} на БУ')
+            self.retry_counter += 1
+
+    def turn_off_vips(self) -> None:
+        logger.info('Отключение ВИПов')
+        if self.mode == 1:
             time.sleep(0.1)
-            
-    def turn_vips_on(self):
-        """Включение ВИП"""
-        try:
-            power_command_id = b'\x0b'
-            power_command_vips_on = b'\x3f'
-            self._send_command(power_command_id, power_command_vips_on)
-            logger.info("ВИП включены")
-        except Exception as e:
-            logger.error(f"Ошибка включения ВИП: {e}")
-            raise
-            
-    def turn_vips_off(self):
-        """Выключение ВИП"""
-        try:
-            power_command_id = b'\x0b'
-            power_command_vips_off = b'\x00'
-            self._send_command(power_command_id, power_command_vips_off)
-            logger.info("ВИП выключены")
-        except Exception as e:
-            logger.error(f"Ошибка выключения ВИП: {e}")
-            raise
-            
-    def switch_ppm(self, ppm_num: int, direction: Direction, channel: Channel, state: bool):
-        """Включение/выключение ППМ"""
-        try:
-            turn_on_cmd_id = b'\x33'
-            data = bytearray(25)  # 25 байт нулей
-            
-            if state:  # Включение
-                ppm_num = ppm_num - 1  # Нумерация с 0
-                
-                # Определяем смещение в массиве данных в зависимости от канала и поляризации
-                if channel == Channel.Transmitter and direction == Direction.Horizontal:
-                    data[16] = 1
-                    if 0 <= ppm_num < 8:
-                        data[0] = 1 << ppm_num
-                    elif 8 <= ppm_num < 16:
-                        data[1] = 1 << (ppm_num - 8)
-                    elif 16 <= ppm_num < 24:
-                        data[2] = 1 << (ppm_num - 16)
-                    elif 24 <= ppm_num < 32:
-                        data[3] = 1 << (ppm_num - 24)
-                        
-                elif channel == Channel.Transmitter and direction == Direction.Vertical:
-                    data[16] = 2
-                    if 0 <= ppm_num < 8:
-                        data[4] = 1 << ppm_num
-                    elif 8 <= ppm_num < 16:
-                        data[5] = 1 << (ppm_num - 8)
-                    elif 16 <= ppm_num < 24:
-                        data[6] = 1 << (ppm_num - 16)
-                    elif 24 <= ppm_num < 32:
-                        data[7] = 1 << (ppm_num - 24)
-                        
-                elif channel == Channel.Receiver and direction == Direction.Horizontal:
-                    data[16] = 4
-                    if 0 <= ppm_num < 8:
-                        data[8] = 1 << ppm_num
-                    elif 8 <= ppm_num < 16:
-                        data[9] = 1 << (ppm_num - 8)
-                    elif 16 <= ppm_num < 24:
-                        data[10] = 1 << (ppm_num - 16)
-                    elif 24 <= ppm_num < 32:
-                        data[11] = 1 << (ppm_num - 24)
-                        
-                elif channel == Channel.Receiver and direction == Direction.Vertical:
-                    data[16] = 8
-                    if 0 <= ppm_num < 8:
-                        data[12] = 1 << ppm_num
-                    elif 8 <= ppm_num < 16:
-                        data[13] = 1 << (ppm_num - 8)
-                    elif 16 <= ppm_num < 24:
-                        data[14] = 1 << (ppm_num - 16)
-                    elif 24 <= ppm_num < 32:
-                        data[15] = 1 << (ppm_num - 24)
-            
-            self._send_command(turn_on_cmd_id, bytes(data))
-            logger.info(f"ППМ {ppm_num + 1} {'включен' if state else 'выключен'}")
-            
-        except Exception as e:
-            logger.error(f"Ошибка переключения ППМ {ppm_num}: {e}")
-            raise
-            
-    def set_phase_shifter(self, ppm_num: int, direction: Direction, channel: Channel, value: int):
-        """Установка значения фазовращателя"""
-        try:
-            set_ph_cmd_id = b'\x01'
-            data_array = bytearray(128)  # 32 ППМ * 4 значения
-            
-            # Определяем индекс в массиве данных
-            base_index = (ppm_num - 1) * 4
-            offset = 0
-            
-            if channel == Channel.Transmitter and direction == Direction.Horizontal:
-                offset = 0
-            elif channel == Channel.Transmitter and direction == Direction.Vertical:
-                offset = 1
-            elif channel == Channel.Receiver and direction == Direction.Vertical:
-                offset = 2
-            elif channel == Channel.Receiver and direction == Direction.Horizontal:
-                offset = 3
-                
-            index = base_index + offset
-            data_array[index] = value % 64  # Значение должно быть в диапазоне 0-63
-            
-            self._send_command(set_ph_cmd_id, bytes(data_array))
-            logger.info(f"Установлено значение ФВ {value} для ППМ {ppm_num}")
-            
-        except Exception as e:
-            logger.error(f"Ошибка установки ФВ для ППМ {ppm_num}: {e}")
-            raise
-            
-    def set_delay(self, channel: Channel, value: int):
-        """Установка задержки"""
-        try:
-            delay_cmd_id = b'\x02'
-            data_fv = bytearray(64)
-            
-            if channel == Channel.Receiver:
-                data_lz_prm = value.to_bytes(1, 'big')
-                data_lz_prd = b'\x00'
+        else:
+            command_code = b'\x0b'
+            data = b'\x00'
+            command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
+            self._send_command(command)
+
+    def turn_on_vips(self):
+        logger.info('Отключение ВИПов')
+        if self.mode == 1:
+            time.sleep(0.1)
+        else:
+            command_code = b'\x0b'
+            data = b'\x3f'
+            command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
+            self._send_command(command)
+
+    def switch_ppm(self, ppm_num: int, chanel: Channel, direction: Direction, state: PpmState):
+        if state == PpmState.ON:
+            logger.info(f'Включение ППМ №{ppm_num}. Канал - {chanel}, поляризация - {direction}')
+        else:
+            logger.info(f'Выключение ППМ №{ppm_num}. Канал - {chanel}, поляризация - {direction}')
+        ppm_num -= 1
+        if chanel == Channel.Transmitter and direction == Direction.Horizontal:
+            if state == PpmState.ON:
+                self.ppm_data[16] = self.ppm_data[16] | 1
+                if 0 <= ppm_num < 8:
+                    self.ppm_data[0] = self.ppm_data[0] | (1 << ppm_num)
+                if 8 <= ppm_num < 16:
+                    self.ppm_data[1] = self.ppm_data[1] | (1 << (ppm_num - 8))
+                if 16 <= ppm_num < 24:
+                    self.ppm_data[2] = self.ppm_data[2] | (1 << (ppm_num - 16))
+                if 24 <= ppm_num < 32:
+                    self.ppm_data[3] = self.ppm_data[3] | (1 << (ppm_num - 24))
             else:
-                data_lz_prd = value.to_bytes(1, 'big')
-                data_lz_prm = b'\x00'
-                
-            data = b''.join([data_fv, data_lz_prd, data_lz_prm])
-            self._send_command(delay_cmd_id, data)
-            logger.info(f"Установлена задержка {value} для канала {channel.name}")
-            
-        except Exception as e:
-            logger.error(f"Ошибка установки задержки: {e}")
-            raise 
+                self.ppm_data[16] = self.ppm_data[16] & ~ 1
+                if 0 <= ppm_num < 8:
+                    self.ppm_data[0] = self.ppm_data[0] & ~ (1 << ppm_num)
+                if 8 <= ppm_num < 16:
+                    self.ppm_data[1] = self.ppm_data[1] & ~ (1 << (ppm_num - 8))
+                if 16 <= ppm_num < 24:
+                    self.ppm_data[2] = self.ppm_data[2] & ~ (1 << (ppm_num - 16))
+                if 24 <= ppm_num < 32:
+                    self.ppm_data[3] = self.ppm_data[3] & ~ (1 << (ppm_num - 24))
+
+        if chanel == Channel.Transmitter and direction == Direction.Vertical:
+            if state == PpmState.ON:
+                self.ppm_data[16] = self.ppm_data[16] | (1 << 1)
+                if 0 <= ppm_num < 8:
+                    self.ppm_data[4] = self.ppm_data[4] | (1 << ppm_num)
+                if 8 <= ppm_num < 16:
+                    self.ppm_data[5] = self.ppm_data[5] | (1 << (ppm_num - 8))
+                if 16 <= ppm_num < 24:
+                    self.ppm_data[6] = self.ppm_data[6] | (1 << (ppm_num - 16))
+                if 24 <= ppm_num < 32:
+                    self.ppm_data[7] = self.ppm_data[7] | (1 << (ppm_num - 24))
+            else:
+                self.ppm_data[16] = self.ppm_data[16] & ~ (1 << 1)
+                if 0 <= ppm_num < 8:
+                    self.ppm_data[4] = self.ppm_data[4] & ~ (1 << ppm_num)
+                if 8 <= ppm_num < 16:
+                    self.ppm_data[5] = self.ppm_data[5] & ~ (1 << (ppm_num - 8))
+                if 16 <= ppm_num < 24:
+                    self.ppm_data[6] = self.ppm_data[6] & ~ (1 << (ppm_num - 16))
+                if 24 <= ppm_num < 32:
+                    self.ppm_data[7] = self.ppm_data[7] & ~ (1 << (ppm_num - 24))
+
+        if chanel == Channel.Receiver and direction == Direction.Horizontal:
+            if state == PpmState.ON:
+                self.ppm_data[16] = self.ppm_data[16] | (1 << 2)
+                if 0 <= ppm_num < 8:
+                    self.ppm_data[8] = self.ppm_data[8] | (1 << ppm_num)
+                if 8 <= ppm_num < 16:
+                    self.ppm_data[9] = self.ppm_data[9] | (1 << (ppm_num - 8))
+                if 16 <= ppm_num < 24:
+                    self.ppm_data[10] = self.ppm_data[10] | (1 << (ppm_num - 16))
+                if 24 <= ppm_num < 32:
+                    self.ppm_data[11] = self.ppm_data[11] | (1 << (ppm_num - 24))
+            else:
+                self.ppm_data[16] = self.ppm_data[16] & ~ (1 << 2)
+                if 0 <= ppm_num < 8:
+                    self.ppm_data[8] = self.ppm_data[8] & ~ (1 << ppm_num)
+                if 8 <= ppm_num < 16:
+                    self.ppm_data[9] = self.ppm_data[9] & ~ (1 << (ppm_num - 8))
+                if 16 <= ppm_num < 24:
+                    self.ppm_data[10] = self.ppm_data[10] & ~ (1 << (ppm_num - 16))
+                if 24 <= ppm_num < 32:
+                    self.ppm_data[11] = self.ppm_data[11] & ~ (1 << (ppm_num - 24))
+
+        if chanel == Channel.Receiver and direction == Direction.Vertical:
+            if state == PpmState.ON:
+                self.ppm_data[16] = self.ppm_data[16] | (1 << 3)
+                if 0 <= ppm_num < 8:
+                    self.ppm_data[12] = self.ppm_data[12] | (1 << ppm_num)
+                if 8 <= ppm_num < 16:
+                    self.ppm_data[13] = self.ppm_data[13] | (1 << (ppm_num - 8))
+                if 16 <= ppm_num < 24:
+                    self.ppm_data[14] = self.ppm_data[14] | (1 << (ppm_num - 16))
+                if 24 <= ppm_num < 32:
+                    self.ppm_data[15] = self.ppm_data[15] | (1 << (ppm_num - 24))
+            else:
+                self.ppm_data[16] = self.ppm_data[16] & ~ (1 << 3)
+                if 0 <= ppm_num < 8:
+                    self.ppm_data[12] = self.ppm_data[12] & ~ (1 << ppm_num)
+                if 8 <= ppm_num < 16:
+                    self.ppm_data[13] = self.ppm_data[13] & ~ (1 << (ppm_num - 8))
+                if 16 <= ppm_num < 24:
+                    self.ppm_data[14] = self.ppm_data[14] & ~ (1 << (ppm_num - 16))
+                if 24 <= ppm_num < 32:
+                    self.ppm_data[15] = self.ppm_data[15] & ~ (1 << (ppm_num - 24))
+
+        data = self.ppm_data
+        command_code = b'\x33'
+        command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
+        self._send_command(command)
+
+    def switch_mdo(self, chanel: Channel, direction: Direction, state: MdoState):
+        if state == MdoState.ON:
+            logger.info(f'Включение МДО. Канал - {chanel}, поляризация - {direction}')
+        else:
+            logger.info(f'Выключение МДО. Канал - {chanel}, поляризация - {direction}')
+
+        if chanel == Channel.Transmitter and direction == Direction.Horizontal:
+            if state == MdoState.ON:
+                self.ppm_data[16] = self.ppm_data[16] | 1
+            else:
+                self.ppm_data[16] = self.ppm_data[16] & ~ 1
+        if chanel == Channel.Transmitter and direction == Direction.Vertical:
+            if state == MdoState.ON:
+                self.ppm_data[16] = self.ppm_data[16] | (1 << 1)
+            else:
+                self.ppm_data[16] = self.ppm_data[16] & ~ (1 << 1)
+
+        if chanel == Channel.Receiver and direction == Direction.Horizontal:
+            if state == MdoState.ON:
+                self.ppm_data[16] = self.ppm_data[16] | (1 << 2)
+            else:
+                self.ppm_data[16] = self.ppm_data[16] & ~ (1 << 2)
+
+        if chanel == Channel.Receiver and direction == Direction.Vertical:
+            if state == MdoState.ON:
+                self.ppm_data[16] = self.ppm_data[16] | (1 << 3)
+            else:
+                self.ppm_data[16] = self.ppm_data[16] & ~ (1 << 3)
+
+        data = self.ppm_data
+        command_code = b'\x33'
+        command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
+        self._send_command(command)
+
+    def set_phase_shifter(self, ppm_num: int, chanel: Channel, direction: Direction, value: int):
+        logger.info(f'Включение ФВ№{value}({value*5.625}). Канал - {chanel}, поляризация - {direction}')
+        data = bytearray(32 * 4)
+        base_index = (ppm_num - 1) * 4
+        offset = 0
+        if chanel == Channel.Transmitter and direction == Direction.Horizontal:
+            offset = 0
+        elif chanel == Channel.Transmitter and direction == Direction.Vertical:
+            offset = 1
+        elif chanel == Channel.Receiver and direction == Direction.Vertical:
+            offset = 2
+        elif chanel == Channel.Receiver and direction == Direction.Horizontal:
+            offset = 3
+        index = base_index + offset
+        data[index] = value
+        data = bytes(data)
+        command_code = b'\x01'
+        command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
+        self._send_command(command)
+
+
+
+if __name__ == '__main__':
+    ma = MA(com_port='Тестовый', mode=1)
+    ma.search_bu_num()
