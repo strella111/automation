@@ -147,7 +147,7 @@ class MainWindow(QtWidgets.QMainWindow):
         
         self.menu_params.addAction('Настройки устройств', self.open_settings_dialog)
 
-        self.show_phase_ma()  # По умолчанию
+        self.show_check_ma()  # По умолчанию - проверка МА
 
         self.load_settings()
         

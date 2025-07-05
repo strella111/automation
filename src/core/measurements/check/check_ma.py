@@ -138,14 +138,19 @@ class CheckMA:
             # Проверяем амплитуду
             amp_ok = self._check_amplitude(amp_zero, amp_all, channel)
             
-            # Если фаза не прошла проверку, проверяем дискреты
+            # Если фаза не прошла проверку, проверяем все значения ФВ
             phase_vals = [phase_diff]
             if not phase_ok:
-                for shift in self.phase_shifts:
-                    value = int(shift / 5.625)  # Конвертируем градусы в код ФВ
+                # Проверяем все значения ФВ: 5.625°, 11.25°, 22.5°, 45°, 90°, 180°
+                fv_angles = [5.625, 11.25, 22.5, 45, 90, 180]
+                for fv_angle in fv_angles:
+                    value = int(fv_angle / 5.625)  # Конвертируем градусы в код ФВ
                     self.ma.set_phase_shifter(ppm_num, channel, direction, value)
                     _, phase_err = self.pna.measure()
                     phase_vals.append(self._calculate_phase_diff(phase_err, phase_zero))
+            else:
+                # Если фаза в допусках, добавляем пустые значения для ФВ
+                phase_vals.extend([np.nan] * 6)
             
             # Общий результат проверки
             result = phase_ok and amp_ok
