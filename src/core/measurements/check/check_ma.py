@@ -122,7 +122,7 @@ class CheckMA:
             self.ma.set_phase_shifter(ppm_num, channel, direction, 0)
 
             amp_zero, phase_zero = self.pna.measure()
-            
+
             # Устанавливаем максимальное значение ФВ
             self.ma.set_phase_shifter(ppm_num, channel, direction, 63)
             
@@ -139,7 +139,7 @@ class CheckMA:
             amp_ok = self._check_amplitude(amp_zero, amp_all, channel)
             
             # Если фаза не прошла проверку, проверяем дискреты
-            phase_vals = []
+            phase_vals = [phase_diff]
             if not phase_ok:
                 for shift in self.phase_shifts:
                     value = int(shift / 5.625)  # Конвертируем градусы в код ФВ
@@ -160,7 +160,7 @@ class CheckMA:
             # Выключаем ППМ
             self.ma.switch_ppm(ppm_num, channel, direction, PpmState.OFF)
 
-    def check_ppm(self, ppm_num: int, channel: Channel, direction: Direction) -> Tuple[bool, Tuple[float, float]]:
+    def check_ppm(self, ppm_num: int, channel: Channel, direction: Direction) -> Tuple[bool, Tuple[float, float, List[float]]]:
         """
         Проверка работоспособности ППМ
         
@@ -193,7 +193,7 @@ class CheckMA:
             
         except Exception as e:
             logger.error(f"Ошибка при проверке ППМ {ppm_num}: {e}")
-            return False, (float('nan'), float('nan'))
+            return False, (np.nan, np.nan, [np.nan for _ in range(6)])
 
     def start(self, channel: Channel, direction: Direction) -> List[Tuple[int, Tuple[bool, Tuple[float, float]]]]:
         """

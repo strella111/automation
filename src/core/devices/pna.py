@@ -124,18 +124,31 @@ class PNA:
     def measure(self) -> tuple[float, float]:
         """Измерение амплитуды и фазы"""
         try:
-            # Измеряем амплитуду
-            self._send_command("CALC:PAR:SEL 'CH1_S11_1'")
-            amp_result = self._send_command("CALC:MARK2:Y?")
-            amp = float(amp_result.split(',')[0])
-            
-            # Измеряем фазу
-            self._send_command("CALC:PAR:SEL 'CH1_S12_2'")
-            phase_result = self._send_command("CALC:MARK2:Y?")
-            phase = float(phase_result.split(',')[0])
-            
-            logger.debug(f"Измерение: amp={amp:.2f} дБ, phase={phase:.1f}°")
-            return amp, phase
+            if self.mode == 0:  # Реальный режим
+                # Измеряем амплитуду
+                self._send_command("CALC:PAR:SEL 'CH1_S11_1'")
+                amp_result = self._send_command("CALC:MARK2:Y?")
+                amp = float(amp_result.split(',')[0])
+                
+                # Измеряем фазу
+                self._send_command("CALC:PAR:SEL 'CH1_S12_2'")
+                phase_result = self._send_command("CALC:MARK2:Y?")
+                phase = float(phase_result.split(',')[0])
+                
+                logger.debug(f"Измерение: amp={amp:.2f} дБ, phase={phase:.1f}°")
+                return amp, phase
+            else:  # Тестовый режим
+                time.sleep(0.1)
+                # Генерируем стабильные значения амплитуды в узком диапазоне
+                amp = random.uniform(-1, 1)  # Узкий диапазон для прохождения проверки
+                phase = random.uniform(-180, 180)
+                
+                # Иногда генерируем "плохие" данные для тестирования
+                if random.random() < 0.2:  # 20% вероятность "плохого" результата
+                    amp = random.uniform(-8, 8)
+                
+                logger.debug(f"Тестовое измерение: amp={amp:.2f} дБ, phase={phase:.1f}°")
+                return amp, phase
             
         except Exception as e:
             logger.error(f"Ошибка измерения: {e}")
@@ -252,10 +265,18 @@ class PNA:
             phase = self._send_command('CALC:MARK2:X?')
             phase = float(phase.split(',')[0])
             logger.info(f'Измерены амплитуда и фаза: amp={amp:.2f}, phase={phase:.2f}')
-            return [amp, phase]
+            return (amp, phase)
         else:
             time.sleep(0.1)
-            amp = random.uniform(-5, 5)
-            phase = random.uniform(-180, 180)
-            logger.info(f'Эмуляция measampphase: amp={amp:.2f}, phase={phase:.2f}')
-            return [amp, phase] 
+            # Генерируем данные, которые чаще будут проходить проверку
+            # Амплитуда в диапазоне [-2, 2] дБ (подходит для TX и RX)
+            amp = random.uniform(-2, 2)
+            # Разность фаз в диапазоне [3, 15] градусов (подходит для RX и TX)
+            phase_diff = random.uniform(3, 15)
+            # Добавляем случайность - иногда генерируем "плохие" данные
+            if random.random() < 0.3:  # 30% вероятность "плохого" результата
+                amp = random.uniform(-8, 8)
+                phase_diff = random.uniform(-180, 180)
+            
+            logger.info(f'Эмуляция measampphase: amp={amp:.2f}, phase_diff={phase_diff:.2f}')
+            return (amp, phase_diff) 

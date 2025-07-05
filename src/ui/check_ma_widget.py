@@ -1,5 +1,6 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
 from PyQt5.QtGui import QTextCursor
+from PyQt5.QtWidgets import QMessageBox
 from loguru import logger
 import threading
 import numpy as np
@@ -29,7 +30,113 @@ class QTextEditLogHandler(QtCore.QObject):
         self.text_edit.insertPlainText(message)
         self.text_edit.moveCursor(QTextCursor.End)
 
+class PpmRect(QtWidgets.QGraphicsRectItem):
+    def __init__(self, ppm_num, parent_widget, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ppm_num = ppm_num
+        self.parent_widget = parent_widget
+        self.setAcceptHoverEvents(True)
+        self.setFlag(QtWidgets.QGraphicsItem.ItemIsSelectable, True)
+        self.setBrush(QtGui.QBrush(QtGui.QColor("#f0f0f0")))
+        self.setPen(QtGui.QPen(QtGui.QColor("#ccc")))
+        self.text = None
+        self.status = None
+
+    def set_status(self, status):
+        color = "#f0f0f0"
+        if status == "ok":
+            color = "#2ecc40"
+        elif status == "fail":
+            color = "#e74c3c"
+        self.setBrush(QtGui.QBrush(QtGui.QColor(color)))
+        self.status = status
+
+    def mousePressEvent(self, event):
+        # Обрабатываем только левый клик для выбора
+        if event.button() == QtCore.Qt.LeftButton:
+            self.setSelected(True)
+        super().mousePressEvent(event)
+
+class PpmFieldView(QtWidgets.QGraphicsView):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setScene(QtWidgets.QGraphicsScene(self))
+        self.rects = {}
+        self.texts = {}
+        self.setRenderHint(QtGui.QPainter.Antialiasing)
+        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.parent_widget = parent  # Сохраняем ссылку на CheckMaWidget
+        self.create_rects()
+        
+        # Включаем контекстное меню
+        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.show_context_menu)
+
+    def create_rects(self):
+        self.scene().clear()
+        self.rects.clear()
+        self.texts.clear()
+        for col in range(4):
+            for row in range(8):
+                ppm_num = col * 8 + row + 1
+                rect = PpmRect(ppm_num, self.parent_widget, 0, 0, 1, 1)
+                self.scene().addItem(rect)
+                self.rects[ppm_num] = rect
+                text = self.scene().addText(f"ППМ {ppm_num}", QtGui.QFont("Arial", 8))
+                text.setDefaultTextColor(QtGui.QColor("black"))
+                self.texts[ppm_num] = text
+        self.update_layout()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_layout()
+        self.fitInView(self.sceneRect(), QtCore.Qt.KeepAspectRatio)
+
+    def update_layout(self):
+        w = self.viewport().width() / 4
+        h = self.viewport().height() / 8
+        for col in range(4):
+            for row in range(8):
+                ppm_num = col * 8 + row + 1
+                rect = self.rects[ppm_num]
+                rect.setRect(col*w, row*h, w, h)
+                text = self.texts[ppm_num]
+                text.setPos(col*w+2, row*h+h/3)
+        self.scene().setSceneRect(0, 0, 4*w, 8*h)
+
+    def update_ppm(self, ppm_num, status):
+        if ppm_num in self.rects:
+            self.rects[ppm_num].set_status(status)
+    
+    def get_ppm_at_position(self, pos):
+        """Определяет номер ППМ по позиции клика"""
+        w = self.viewport().width() / 4
+        h = self.viewport().height() / 8
+        
+        col = int(pos.x() / w)
+        row = int(pos.y() / h)
+        
+        # Проверяем границы
+        if 0 <= col < 4 and 0 <= row < 8:
+            ppm_num = col * 8 + row + 1
+            return ppm_num
+        return None
+    
+    def show_context_menu(self, pos):
+        """Показывает контекстное меню для ППМ в указанной позиции"""
+        ppm_num = self.get_ppm_at_position(pos)
+        if ppm_num is not None and self.parent_widget is not None:
+            # Выбираем соответствующий элемент
+            if ppm_num in self.rects:
+                self.rects[ppm_num].setSelected(True)
+            # Показываем информацию
+            self.parent_widget.show_ppm_details_graphics(ppm_num, self.mapToGlobal(pos))
+
 class CheckMaWidget(QtWidgets.QWidget):
+    # Сигнал для обновления таблицы в реальном времени
+    update_table_signal = QtCore.pyqtSignal(int, bool, float, float, list)
+    
     def __init__(self):
         super().__init__()
 
@@ -181,20 +288,26 @@ class CheckMaWidget(QtWidgets.QWidget):
 
         self.results_table = QtWidgets.QTableWidget()
         self.results_table.setColumnCount(12)
-        self.results_table.setHorizontalHeaderLabels(['ППМ', 
-                                                      'Амплитуда', 
-                                                      'Фаза', 
-                                                      'Статус амплитуды', 
-                                                      'Статус фазы', 
-                                                      'Дельта ФВ', 
-                                                      'ФВ 5,625', 
-                                                      'ФВ 11,25', 
-                                                      'ФВ 22,5',
-                                                      'ФВ 45',
-                                                      'ФВ 90',
-                                                      'ФВ 180'])
+        self.results_table.setHorizontalHeaderLabels([
+            'ППМ', 'Амплитуда', 'Фаза', 'Статус амплитуды', 'Статус фазы',
+            'Дельта ФВ', 'ФВ 5,625', 'ФВ 11,25', 'ФВ 22,5', 'ФВ 45', 'ФВ 90', 'ФВ 180'])
+        self.results_table.setRowCount(32)
+        self.results_table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
+        self.results_table.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
+        self.results_table.verticalHeader().setVisible(False)
+        for row in range(32):
+            self.results_table.setItem(row, 0, QtWidgets.QTableWidgetItem(f"{row+1}"))
+            for col in range(1, 12):
+                self.results_table.setItem(row, col, QtWidgets.QTableWidgetItem(""))
 
-        self.right_layout.addWidget(self.results_table, stretch=2)
+        # --- 2D поле ---
+        self.ppm_field_view = PpmFieldView(self)
+
+        # --- Tabs ---
+        self.view_tabs = QtWidgets.QTabWidget()
+        self.view_tabs.addTab(self.results_table, "Таблица")
+        self.view_tabs.addTab(self.ppm_field_view, "2D поле")
+        self.right_layout.addWidget(self.view_tabs, stretch=2)
 
         self.console = QtWidgets.QTextEdit()
         self.console.setReadOnly(True)
@@ -219,9 +332,155 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.start_btn.clicked.connect(self.start_check)
         self.stop_btn.clicked.connect(self.stop_check)
         self.pause_btn.clicked.connect(self.pause_check)
+        
+        # Подключаем сигнал для обновления таблицы
+        self.update_table_signal.connect(self.update_table_row)
 
         self.set_buttons_enabled(True)
         self.device_settings = {}
+        
+        # Словарь для хранения данных ППМ
+        self.ppm_data = {}
+
+    def show_ppm_details(self, button: QtWidgets.QPushButton, ppm_num: int):
+        """Показывает детальную информацию о ППМ в контекстном меню"""
+        if ppm_num in self.ppm_data:
+            data = self.ppm_data[ppm_num]
+            menu = QtWidgets.QMenu()
+            
+            # Создаем детальную информацию
+            details = f"ППМ {ppm_num}\n"
+            details += f"Результат: {'OK' if data['result'] else 'FAIL'}\n"
+            details += f"Амплитуда: {data['amp']:.2f} дБ\n"
+            details += f"Фаза: {data['phase']:.1f}°\n"
+            
+            if data['fv_data'] and len(data['fv_data']) > 0:
+                details += "\nЗначения ФВ:\n"
+                for i, value in enumerate(data['fv_data']):
+                    if not np.isnan(value):
+                        details += f"  {value:.1f}°\n"
+            
+            # Создаем действие с деталями
+            action = menu.addAction(details)
+            action.setEnabled(False)  # Делаем неактивным, чтобы показать как текст
+            
+            # Показываем меню
+            menu.exec_(button.mapToGlobal(QtCore.QPoint(0, 0)))
+        else:
+            # Если данных нет, показываем простое сообщение
+            menu = QtWidgets.QMenu()
+            action = menu.addAction(f"ППМ {ppm_num} - данные не готовы")
+            action.setEnabled(False)
+            menu.exec_(button.mapToGlobal(QtCore.QPoint(0, 0)))
+
+    @QtCore.pyqtSlot(int, bool, float, float, list)
+    def update_table_row(self, ppm_num: int, result: bool, amp: float, phase: float, fv_data: list):
+        """Обновляет строку таблицы и 2D вид с результатами измерения"""
+        try:
+            # Сохраняем данные ППМ
+            self.ppm_data[ppm_num] = {
+                'result': result,
+                'amp': amp,
+                'phase': phase,
+                'fv_data': fv_data
+            }
+            
+            # Обновляем таблицу
+            row = ppm_num - 1
+
+            self.results_table.setItem(row, 0, QtWidgets.QTableWidgetItem(str(ppm_num)))
+
+            if np.isnan(amp) or np.isnan(phase):
+                self.results_table.setItem(row, 1, QtWidgets.QTableWidgetItem(""))
+                self.results_table.setItem(row, 2, QtWidgets.QTableWidgetItem(""))
+            else:
+                self.results_table.setItem(row, 1, QtWidgets.QTableWidgetItem(f"{amp:.2f}"))
+                self.results_table.setItem(row, 2, QtWidgets.QTableWidgetItem(f"{phase:.1f}"))
+
+            # Определяем статусы амплитуды и фазы на основе критериев CheckMA
+            amp_ok = True
+            phase_ok = True
+            
+            if not np.isnan(amp):
+                # Критерии амплитуды (из CheckMA)
+                rx_amp_max = 4.5
+                tx_amp_max = 2.5
+                amp_max = rx_amp_max if self.channel_combo.currentText() == 'Приемник' else tx_amp_max
+                amp_ok = -amp_max <= amp <= amp_max
+            
+            if not np.isnan(phase):
+                # Критерии фазы (из CheckMA)
+                rx_phase_diff_min, rx_phase_diff_max = 2, 12
+                tx_phase_diff_min, tx_phase_diff_max = 2, 20
+                
+                if self.channel_combo.currentText() == 'Приемник':
+                    phase_ok = rx_phase_diff_min <= phase <= rx_phase_diff_max
+                else:
+                    phase_ok = tx_phase_diff_min < phase < tx_phase_diff_max
+
+            # Статус амплитуды
+            amp_status = "OK" if amp_ok else "FAIL"
+            amp_status_item = QtWidgets.QTableWidgetItem(amp_status)
+            if amp_ok:
+                amp_status_item.setBackground(QtGui.QColor("#2ecc40"))
+            else:
+                amp_status_item.setBackground(QtGui.QColor("#e74c3c"))
+            amp_status_item.setForeground(QtGui.QColor("white"))
+            self.results_table.setItem(row, 3, amp_status_item)
+            
+            # Статус фазы
+            phase_status = "OK" if phase_ok else "FAIL"
+            phase_status_item = QtWidgets.QTableWidgetItem(phase_status)
+            if phase_ok:
+                phase_status_item.setBackground(QtGui.QColor("#2ecc40"))
+            else:
+                phase_status_item.setBackground(QtGui.QColor("#e74c3c"))
+            phase_status_item.setForeground(QtGui.QColor("white"))
+            self.results_table.setItem(row, 4, phase_status_item)
+
+            # Обработка данных ФВ
+            if fv_data and len(fv_data) > 0:
+                try:
+                    # Отображаем дельту ФВ (первое значение) для всех измерений
+                    if not np.isnan(fv_data[0]):
+                        self.results_table.setItem(row, 5, QtWidgets.QTableWidgetItem(f"{fv_data[0]:.1f}"))
+                    else:
+                        self.results_table.setItem(row, 5, QtWidgets.QTableWidgetItem(""))
+                    
+                    # Остальные значения ФВ только для неуспешных измерений
+                    if not result:
+                        for i in range(1, len(fv_data)):
+                            if not np.isnan(fv_data[i]):
+                                self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(f"{fv_data[i]:.1f}"))
+                            else:
+                                self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(""))
+                    else:
+                        # Для успешных измерений очищаем остальные столбцы ФВ
+                        for i in range(1, 6):
+                            self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(""))
+                            
+                except Exception as e:
+                    logger.error(f'Ошибка при обновлении значений ФВ для ППМ {ppm_num}: {e}')
+                    for i in range(6):
+                        self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(""))
+            else:
+                # Если данных ФВ нет, очищаем все столбцы ФВ
+                for i in range(6):
+                    self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(""))
+
+            # Обновляем 2D вид
+            if result:
+                self.ppm_field_view.update_ppm(ppm_num, "ok")
+            else:
+                self.ppm_field_view.update_ppm(ppm_num, "fail")
+
+            self.results_table.viewport().update()
+            QtCore.QCoreApplication.processEvents()
+        except Exception as e:
+            self.show_error_message("Ошибка обновления таблицы", f"Ошибка при обновлении данных ППМ {ppm_num}: {str(e)}")
+            logger.error(f'Ошибка при обновлении значений ФВ для ППМ {ppm_num}: {e}')
+            for i in range(6):
+                self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(""))
 
     def set_buttons_enabled(self, enabled: bool):
         """Управляет доступностью кнопок"""
@@ -254,7 +513,7 @@ class CheckMaWidget(QtWidgets.QWidget):
     def start_check(self):
         """Запускает процесс проверки"""
         if not (self.ma and self.pna and self.psn):
-            logger.error('Сначала подключите все устройства!')
+            self.show_error_message("Ошибка", "Сначала подключите все устройства!")
             return
         
         self._stop_flag.clear()
@@ -262,8 +521,16 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.pause_btn.setText('Пауза') # Reset pause button text
         
         self.results_table.clearContents()
-        self.results_table.setRowCount(32)  # 32 ППМ
+        for row in range(32):
+            self.results_table.setItem(row, 0, QtWidgets.QTableWidgetItem(f"{row+1}"))
+            for col in range(1, 12):
+                self.results_table.setItem(row, col, QtWidgets.QTableWidgetItem(""))
         
+        # Очищаем данные ППМ и сбрасываем 2D вид
+        self.ppm_data.clear()
+        for ppm_num, button in self.ppm_field_view.rects.items():
+            button.set_status('')
+
         self.set_buttons_enabled(False)
         logger.info("Запуск проверки МА...")
         self._check_thread = threading.Thread(target=self._run_check, daemon=True)
@@ -321,69 +588,44 @@ class CheckMaWidget(QtWidgets.QWidget):
                 except Exception as e:
                     logger.error(f'Ошибка применения параметров PSN перед измерением: {e}')
 
-            check = CheckMA(ma=self.ma, psn=self.psn, pna=self.pna, 
-                          stop_event=self._stop_flag, pause_event=self._pause_flag)
-
-            results = check.start(channel=channel, direction=direction)
-
-            for ppm_num, (result, measurements, fv_data) in results:
-                if self._stop_flag.is_set():
-                    logger.info('Проверка МА остановлена пользователем')
-                    break
-
-                while self._pause_flag.is_set() and not self._stop_flag.is_set():
-                    QtCore.QThread.msleep(100)
-
-                amp, phase = measurements
-                row = ppm_num - 1
-
-                self.results_table.setItem(row, 0, QtWidgets.QTableWidgetItem(str(ppm_num)))
-
-                if np.isnan(amp) or np.isnan(phase):
-                    self.results_table.setItem(row, 1, QtWidgets.QTableWidgetItem("---"))
-                    self.results_table.setItem(row, 2, QtWidgets.QTableWidgetItem("---"))
-                else:
-                    self.results_table.setItem(row, 1, QtWidgets.QTableWidgetItem(f"{amp:.2f}"))
-                    self.results_table.setItem(row, 2, QtWidgets.QTableWidgetItem(f"{phase:.1f}"))
-
-                status = "OK" if result else "FAIL"
-                status_item = QtWidgets.QTableWidgetItem(status)
-                if result:
-                    status_item.setBackground(QtGui.QColor("#2ecc40"))
-                else:
-                    status_item.setBackground(QtGui.QColor("#e74c3c"))
-                status_item.setForeground(QtGui.QColor("white"))
-                self.results_table.setItem(row, 3, status_item)
-
-                if not result and fv_data:
-                    try:
-                        for i, value in enumerate(fv_data['values']):
-                            self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(f"{value:.1f}"))
-
-                        if 'delta' in fv_data:
-                            self.results_table.setItem(row, 4, QtWidgets.QTableWidgetItem(f"{fv_data['delta']:.1f}"))
-                        else:
-                            self.results_table.setItem(row, 4, QtWidgets.QTableWidgetItem("---"))
-                    except Exception as e:
-                        logger.error(f'Ошибка при обновлении значений ФВ для ППМ {ppm_num}: {e}')
-                        for i in range(6):
-                            self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem("---"))
-                        self.results_table.setItem(row, 4, QtWidgets.QTableWidgetItem("---"))
-                else:
-                    for i in range(6):
-                        self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem("---"))
-                    self.results_table.setItem(row, 4, QtWidgets.QTableWidgetItem("---"))
-
-                self.results_table.viewport().update()
-                QtCore.QCoreApplication.processEvents()
+            # Создаем модифицированный CheckMA с callback для обновления UI
+            class CheckMAWithCallback(CheckMA):
+                def __init__(self, ma, psn, pna, stop_event, pause_event, callback):
+                    super().__init__(ma, psn, pna, stop_event, pause_event)
+                    self.callback = callback
                 
-                QtCore.QThread.msleep(50) # Маленькая задержка для отзывчивости UI при обновлении таблицы
+                def check_ppm(self, ppm_num: int, channel: Channel, direction: Direction):
+                    """Переопределяем метод для отправки результатов через callback"""
+                    result, measurements = super().check_ppm(ppm_num, channel, direction)
+                    amp, phase, fv_data = measurements
+
+                    if self.callback:
+                        self.callback.emit(ppm_num, result, amp, phase, fv_data)
+                    
+                    return result, measurements
+
+            check = CheckMAWithCallback(
+                ma=self.ma, 
+                psn=self.psn, 
+                pna=self.pna, 
+                stop_event=self._stop_flag, 
+                pause_event=self._pause_flag,
+                callback=self.update_table_signal
+            )
+
+            check.start(channel=channel, direction=direction)
 
             if not self._stop_flag.is_set():
-                 logger.info('Проверка завершена успешно.')
+                logger.info('Проверка завершена успешно.')
 
         except Exception as e:
-            logger.error(f'Ошибка проверки: {e}')
+            self.show_error_message("Ошибка проверки", f"Произошла ошибка при выполнении проверки: {str(e)}")
+            logger.error(f"Ошибка при выполнении проверки: {e}")
+            try:
+                self.pna.power_off()
+            except Exception as e:
+                logger.error(f"Ошибка при аварийном выключении PNA: {e}")
+            raise
         finally:
             if not self.start_btn.isEnabled():
                 self.set_buttons_enabled(True)
@@ -399,7 +641,7 @@ class CheckMaWidget(QtWidgets.QWidget):
                 logger.info('МА успешно отключен')
                 return
             except Exception as e:
-                logger.error(f'Ошибка отключения МА: {e}')
+                self.show_error_message("Ошибка отключения МА", f"Не удалось отключить МА: {str(e)}")
                 return
 
         com_port = self.device_settings.get('ma_com_port', '')
@@ -415,7 +657,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         except Exception as e:
             self.ma = None
             self.ma_connect_btn.setStyleSheet(self.btn_style_disconnected)
-            logger.error(f'Ошибка подключения МА: {e}')
+            self.show_error_message("Ошибка подключения МА", f"Не удалось подключиться к МА: {str(e)}")
 
     def connect_pna(self):
         """Подключает/отключает PNA"""
@@ -427,7 +669,7 @@ class CheckMaWidget(QtWidgets.QWidget):
                 logger.info('PNA успешно отключен')
                 return
             except Exception as e:
-                logger.error(f'Ошибка отключения PNA: {e}')
+                self.show_error_message("Ошибка отключения PNA", f"Не удалось отключить PNA: {str(e)}")
                 return
 
         ip = self.device_settings.get('pna_ip', '')
@@ -442,7 +684,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         except Exception as e:
             self.pna = None
             self.pna_connect_btn.setStyleSheet(self.btn_style_disconnected)
-            logger.error(f'Ошибка подключения PNA: {e}')
+            self.show_error_message("Ошибка подключения PNA", f"Не удалось подключиться к PNA: {str(e)}")
 
     def connect_psn(self):
         """Подключает/отключает PSN"""
@@ -454,7 +696,7 @@ class CheckMaWidget(QtWidgets.QWidget):
                 logger.info('PSN успешно отключен')
                 return
             except Exception as e:
-                logger.error(f'Ошибка отключения PSN: {e}')
+                self.show_error_message("Ошибка отключения PSN", f"Не удалось отключить PSN: {str(e)}")
                 return
 
         ip = self.device_settings.get('psn_ip', '')
@@ -469,8 +711,78 @@ class CheckMaWidget(QtWidgets.QWidget):
         except Exception as e:
             self.psn = None
             self.psn_connect_btn.setStyleSheet(self.btn_style_disconnected)
-            logger.error(f'Ошибка подключения PSN: {e}')
+            self.show_error_message("Ошибка подключения PSN", f"Не удалось подключиться к PSN: {str(e)}")
 
     def set_device_settings(self, settings: dict):
         """Сохраняет параметры устройств из настроек"""
         self.device_settings = settings or {} 
+
+    def show_ppm_details_graphics(self, ppm_num, global_pos):
+        if ppm_num not in self.ppm_data:
+            menu = QtWidgets.QMenu()
+            action = menu.addAction(f"ППМ {ppm_num} - данные не готовы")
+            action.setEnabled(False)
+            menu.exec_(global_pos)
+            return
+        
+        data = self.ppm_data[ppm_num]
+        menu = QtWidgets.QMenu()
+        
+        # Заголовок с номером ППМ и статусом
+        status_text = "OK" if data['result'] else "FAIL"
+        status_color = "🟢" if data['result'] else "🔴"
+        header_action = menu.addAction(f"{status_color} ППМ {ppm_num} - {status_text}")
+        header_action.setEnabled(False)
+        menu.addSeparator()
+        
+        # Амплитуда
+        if not np.isnan(data['amp']):
+            amp_action = menu.addAction(f"Амплитуда: {data['amp']:.2f} дБ")
+        else:
+            amp_action = menu.addAction("Амплитуда: ---")
+        amp_action.setEnabled(False)
+        
+        # Фаза
+        if not np.isnan(data['phase']):
+            phase_action = menu.addAction(f"Фаза: {data['phase']:.1f}°")
+        else:
+            phase_action = menu.addAction("Фаза: ---")
+        phase_action.setEnabled(False)
+        
+        # Значения ФВ (если есть)
+        if data['fv_data'] and len(data['fv_data']) > 0:
+            menu.addSeparator()
+            fv_header = menu.addAction("Значения ФВ:")
+            fv_header.setEnabled(False)
+            
+            fv_names = ["Дельта ФВ", "5,625°", "11,25°", "22,5°", "45°", "90°", "180°"]
+            for i, value in enumerate(data['fv_data']):
+                if i < len(fv_names):
+                    if not np.isnan(value):
+                        fv_action = menu.addAction(f"  {fv_names[i]}: {value:.1f}°")
+                    else:
+                        fv_action = menu.addAction(f"  {fv_names[i]}: ---")
+                    fv_action.setEnabled(False)
+                else:
+                    if not np.isnan(value):
+                        fv_action = menu.addAction(f"  ФВ {i+1}: {value:.1f}°")
+                    else:
+                        fv_action = menu.addAction(f"  ФВ {i+1}: ---")
+                    fv_action.setEnabled(False)
+        
+        menu.exec_(global_pos) 
+
+    def show_error_message(self, title: str, message: str):
+        """Показывает всплывающее окно с ошибкой"""
+        QMessageBox.critical(self, title, message)
+        logger.error(f"{title}: {message}")
+
+    def show_warning_message(self, title: str, message: str):
+        """Показывает всплывающее окно с предупреждением"""
+        QMessageBox.warning(self, title, message)
+        logger.warning(f"{title}: {message}")
+
+    def show_info_message(self, title: str, message: str):
+        """Показывает всплывающее окно с информацией"""
+        QMessageBox.information(self, title, message)
+        logger.info(f"{title}: {message}") 
