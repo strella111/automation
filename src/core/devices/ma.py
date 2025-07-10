@@ -6,6 +6,7 @@ from loguru import logger
 from core.common.enums import MdoState
 from core.common.enums import Channel, Direction, PpmState
 from core.common.exceptions import WrongInstrumentError, BuAddrNotFound, MaCommandNotDelivered
+from utils.logger import format_device_log
 
 class MA:
     """Класс для работы с модулем антенным"""
@@ -90,7 +91,7 @@ class MA:
                 logger.error('Не обнаружено подключение к MA при попытке отправки данных')
                 raise WrongInstrumentError('При попытке обращения к connection MA произошла ошибка')
             self.connection.write(string if isinstance(string, bytes) else string.encode())
-        logger.debug(f'На МА - "{string}"')
+            logger.debug(format_device_log('MA', '>>', string))
 
     def read(self) -> bytes:
         """
@@ -105,7 +106,7 @@ class MA:
                 raise WrongInstrumentError('Не обнаружено подключение к MA')
             if self.connection.in_waiting > 0:
                 response = self.connection.read(self.connection.in_waiting)
-                logger.debug(f'От МА: "{response}"')
+                logger.debug(format_device_log('MA', '<<', response))
                 return response
             logger.debug('Нет данных для чтения.')
             return b''
@@ -116,10 +117,10 @@ class MA:
             command_code = b'\xFB'
             command = self._generate_command(bu_num=self.bu_addr, command_code=command_code)
             self.write(command)
-            logger.debug(f'МА -> {command.hex(" ")}')
+            logger.debug(format_device_log('MA', '>>', command))
             response = self.read()
             if response:
-                logger.debug(f'МА <- {command.hex(" ")}')
+                logger.debug(format_device_log('MA', '>>', response))
                 if response[1] == b'\x00':
                     return True
                 elif response[1] == b'\x01':
@@ -163,7 +164,7 @@ class MA:
                 raise WrongInstrumentError('При попытке обращения к connection MA произошла ошибка')
             for i in range(1, 45):
                 command = self._generate_command(i, command_code=b'\xfa')
-                logger.debug(f'Команда на МА {command.hex(" ")}')
+                logger.debug(format_device_log(device='MA', direction='>>', data=command))
                 self.write(command)
                 response = self.read()
                 if response:
@@ -173,33 +174,32 @@ class MA:
 
     def _send_command(self, command: bytes):
         self.write(command)
-        logger.debug(f'МА -> {command}')
+        logger.debug(format_device_log(device='MA', direction='>>', data=command))
         if self._check_request():
-            logger.debug(f'Команда f{command.hex(" ")} успешно принята БУ')
+            logger.debug(f'Команда успешно принята БУ')
             return
         else:
             if self.retry_counter >= 3:
-                logger.error(f'Команда f{command.hex(" ")} не принята бу.')
                 raise MaCommandNotDelivered(f'После 3 попыток не удалось отправить команду {command.hex(" ")} на БУ')
             self.retry_counter += 1
 
-    def turn_off_vips(self) -> None:
-        logger.info('Отключение ВИПов')
-        if self.mode == 1:
-            time.sleep(0.1)
-        else:
-            command_code = b'\x0b'
-            data = b'\x00'
-            command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
-            self._send_command(command)
-
-    def turn_on_vips(self):
+    def turn_on_vips(self) -> None:
         logger.info('Отключение ВИПов')
         if self.mode == 1:
             time.sleep(0.1)
         else:
             command_code = b'\x0b'
             data = b'\x3f'
+            command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
+            self._send_command(command)
+
+    def turn_off_vips(self):
+        logger.info('Отключение ВИПов')
+        if self.mode == 1:
+            time.sleep(0.1)
+        else:
+            command_code = b'\x0b'
+            data = b'\x00'
             command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
             self._send_command(command)
 
@@ -356,8 +356,3 @@ class MA:
         command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
         self._send_command(command)
 
-
-
-if __name__ == '__main__':
-    ma = MA(com_port='Тестовый', mode=1)
-    ma.search_bu_num()

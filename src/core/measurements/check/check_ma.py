@@ -80,7 +80,7 @@ class CheckMA:
             self.pna.preset()
             self.pna.load_settings_file()
             self.pna.set_power(1, 0)
-            self.pna.power_on()
+            self.pna.set_output(True)
         except Exception as e:
             logger.error(f"Ошибка при настройке PNA: {e}")
             raise WrongInstrumentError(f"Ошибка настройки PNA: {e}")
@@ -121,13 +121,13 @@ class CheckMA:
             self.ma.switch_ppm(ppm_num, channel, direction, PpmState.ON)
             self.ma.set_phase_shifter(ppm_num, channel, direction, 0)
 
-            amp_zero, phase_zero = self.pna.measure()
+            amp_zero, phase_zero = self.pna.get_center_freq_data()
 
             # Устанавливаем максимальное значение ФВ
             self.ma.set_phase_shifter(ppm_num, channel, direction, 63)
             
             # Измеряем амплитуду и фазу с включенным ФВ
-            amp_all, phase_all = self.pna.measure()
+            amp_all, phase_all = self.pna.get_center_freq_data()
             
             # Вычисляем разность фаз
             phase_diff = self._calculate_phase_diff(phase_all, phase_zero)
@@ -141,28 +141,23 @@ class CheckMA:
             # Если фаза не прошла проверку, проверяем все значения ФВ
             phase_vals = [phase_diff]
             if not phase_ok:
-                # Проверяем все значения ФВ: 5.625°, 11.25°, 22.5°, 45°, 90°, 180°
                 fv_angles = [5.625, 11.25, 22.5, 45, 90, 180]
                 for fv_angle in fv_angles:
-                    value = int(fv_angle / 5.625)  # Конвертируем градусы в код ФВ
+                    value = int(fv_angle / 5.625)
                     self.ma.set_phase_shifter(ppm_num, channel, direction, value)
-                    _, phase_err = self.pna.measure()
+                    _, phase_err = self.pna.get_center_freq_data()
                     phase_vals.append(self._calculate_phase_diff(phase_err, phase_zero))
             else:
-                # Если фаза в допусках, добавляем пустые значения для ФВ
                 phase_vals.extend([np.nan] * 6)
-            
-            # Общий результат проверки
+
             result = phase_ok and amp_ok
-            
-            # Возвращаем результат и измерения
+
             return result, (amp_all, phase_all, phase_vals)
             
         except Exception as e:
             logger.error(f"Ошибка при проверке ППМ {ppm_num}: {e}")
             return False, (np.nan, np.nan, [np.nan])
         finally:
-            # Выключаем ППМ
             self.ma.switch_ppm(ppm_num, channel, direction, PpmState.OFF)
 
     def check_ppm(self, ppm_num: int, channel: Channel, direction: Direction) -> Tuple[bool, Tuple[float, float, List[float]]]:
@@ -242,7 +237,7 @@ class CheckMA:
                     results.append((ppm_num, (result, measurements)))
 
             try:
-                self.pna.power_off()
+                self.pna.set_output(False)
             except Exception as e:
                 logger.error(f"Ошибка при выключении PNA: {e}")
                 raise WrongInstrumentError(f"Ошибка выключения PNA: {e}")
@@ -252,7 +247,7 @@ class CheckMA:
         except Exception as e:
             logger.error(f"Ошибка при выполнении проверки: {e}")
             try:
-                self.pna.power_off()
+                self.pna.set_output(False)
             except Exception as e:
                 logger.error(f"Ошибка при аварийном выключении PNA: {e}")
             raise

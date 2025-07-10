@@ -19,14 +19,14 @@ def setup_logging(log_file: str = "logs/app.log"):
     # Добавляем обработчик для вывода в консоль
     logger.add(
         sys.stderr,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+        format="{time:YYYY-MM-DD HH:mm:ss}\t{level}\t{message}",
         level="DEBUG"
     )
     
     # Добавляем обработчик для записи в файл
     logger.add(
         log_file,
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
+        format="{time:YYYY-MM-DD HH:mm:ss}\t{level}\t{message}",
         level="DEBUG",
         rotation="1 day",    # Ротация логов каждый день
         retention="7 days",  # Хранить логи 7 дней
@@ -35,3 +35,16 @@ def setup_logging(log_file: str = "logs/app.log"):
     
     logger.info("Логирование успешно настроено")
     return logger 
+
+def format_device_log(device: str, direction: str, data) -> str:
+    """
+    Форматирует лог обмена с устройством.
+    device: 'MA', 'PSN', 'PNA'
+    direction: '>>' (отправка) или '<<' (приём)
+    data: str или bytes
+    """
+    if isinstance(data, (bytes, bytearray)):
+        data_str = ' '.join(f'{b:02X}' for b in data)
+    else:
+        data_str = str(data)
+    return f"{device} {direction} {data_str}"

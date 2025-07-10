@@ -1,7 +1,6 @@
 import sys
 from PyQt5 import QtWidgets
 from utils.logger import setup_logging
-import os
 
 from ui.main_window import MainWindow
 

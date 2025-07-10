@@ -1,9 +1,9 @@
 import time
 import pyvisa
-from typing import Optional
 from loguru import logger
-from ..common.enums import Channel, Direction
-from ..common.exceptions import WrongInstrumentError, PlanarScannerError
+from core.common.enums import Channel, Direction
+from core.common.exceptions import WrongInstrumentError, PlanarScannerError
+from utils.logger import format_device_log
 
 class PSN:
     """Класс планарнего сканера"""
@@ -66,34 +66,43 @@ class PSN:
     def write(self, string: str) -> None:
         """Write string to the instrument."""
         if self.mode == 0:
+            if not self.connection:
+                logger.error('Не обнаружено подключение к PSN при попытке отправки данных')
+                raise WrongInstrumentError('Не обнаружено подключение к PSN')
             self.connection.write(string)
-            logger.debug(f'На PSN - {string}')
+            logger.debug(format_device_log('PSN', '>>', string))
         else:
-            logger.debug(f'На PSN - {string}')
+            logger.debug(format_device_log('PSN', '>>', string))
             time.sleep(0.01)
 
     def read(self) -> str:
         """Read string from the instrument."""
         if self.mode == 0:
+            if not self.connection:
+                logger.error('Не обнаружено подключение к PSN при попытке чтения данных')
+                raise WrongInstrumentError('Не обнаружено подключение к PSN')
             response = self.connection.read().strip()
-            logger.debug(f'От PSN - {response}')
+            logger.debug(format_device_log('PSN', '<<', response))
             return response
         else:
-            logger.debug(f'От PSN - 0')
+            logger.debug(format_device_log('PSN', '<<', '0'))
             time.sleep(0.01)
             return "0"
 
     def query(self, string: str) -> str:
         """Makes a request to the device and returns a response"""
-        if self.mode == 0: 
-            logger.debug(f'На PSN - {string}')
+        if self.mode == 0:
+            if not self.connection:
+                logger.error('Не обнаружено подключение к PSN при попытке запроса данных')
+                raise WrongInstrumentError('Не обнаружено подключение к PSN')
+            logger.debug(format_device_log('PSN', '>>', string))
             response = self.connection.query(string)
-            logger.debug(f'От PSN - {response}')
+            logger.debug(format_device_log('PSN', '<<', response))
             return response
         else:
             time.sleep(0.01)
-            logger.debug(f'На PSN - {string}')
-            logger.debug(f'От PSN - 0')
+            logger.debug(format_device_log('PSN', '>>', string))
+            logger.debug(format_device_log('PSN', '<<', '0'))
             return "0"
 
     def move(self, x: float, y: float) -> None:
@@ -126,6 +135,7 @@ class PSN:
             self.write(axis_x_move_string)
             self.write(axis_y_move_string)
 
+            #todo Вместо расчета времени в отдельном потоке распрашивать сканер о его состоянии,если доехал -> продолжать алгоритм
             dist = (abs(x_diff) ** 2 + abs(y_diff) ** 2) ** 0.5
             probe_speed = 5
             min_time = 1.5
@@ -134,6 +144,7 @@ class PSN:
         except Exception as e:
             logger.error(f'Ошибка при перемещении планарного сканера в точку ({x}, {y}): {e}')
             raise PlanarScannerError(f'Ошибка перемещения PSN: {e}') from e
+
 
     def check_errors(self) -> None:
         """Проверка ошибок сканера"""
