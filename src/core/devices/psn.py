@@ -121,14 +121,14 @@ class PSN:
 
             x_diff = x - current_x_pos
             y_diff = y - current_y_pos
-            axis_x_move_string = "AXIS0:UMOV " + str(x_diff)
-            axis_y_move_string = "AXIS1:UMOV " + str(y_diff)
+            axis_x_move_string = "AXIS0:UMOV:ABS " + str(x + self.x_offset)
+            axis_y_move_string = "AXIS1:UMOV:ABS " + str(y + self.y_offset)
             self.write(axis_x_move_string)
             self.write(axis_y_move_string)
 
             dist = (abs(x_diff) ** 2 + abs(y_diff) ** 2) ** 0.5
-            probe_speed = 14
-            min_time = 1.2
+            probe_speed = 5
+            min_time = 1.5
             delay = dist / probe_speed + min_time
             time.sleep(delay)
         except Exception as e:
@@ -150,12 +150,8 @@ class PSN:
             axis: Ось (0: x, 1: y)
             value: Скорость в см/сек
         """
-        if 1 <= value <= 600:
-            self.write(f'AXIS{axis}:USPE {value}')
-            logger.info(f'Для AXIS{axis} установлена скорость {value} см/сек')
-        else:
-            logger.error(f'Недопустимое значение скорости: {value}. Диапазон: 1–600.')
-            raise ValueError('Скорость должна быть в диапазоне от 1 до 50 см/сек')
+        self.write(f'AXIS{axis}:SPE {value}')
+        logger.info(f'Для AXIS{axis} установлена скорость {value} см/сек')
 
     def set_acc(self, axis: int, value: int) -> None:
         """
@@ -164,6 +160,7 @@ class PSN:
             axis: Ось (0: x, 1: y)
             value: Значение ускорения
         """
+
         self.write(f'AXIS{axis}:ACC {value}')
         logger.info(f'Для AXIS{axis} установлено ускорение {value}')
 

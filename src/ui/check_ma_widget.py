@@ -8,7 +8,7 @@ from core.devices.ma import MA
 from core.devices.pna import PNA
 from core.devices.psn import PSN
 from core.measurements.check.check_ma import CheckMA
-from src.core.common.enums import Channel, Direction, PpmState
+from core.common.enums import Channel, Direction, PpmState
 from core.common.coordinate_system import CoordinateSystemManager
 
 class QTextEditLogHandler(QtCore.QObject):
@@ -653,7 +653,7 @@ class CheckMaWidget(QtWidgets.QWidget):
             if self.ma.bu_addr:
                 self.ma_connect_btn.setText(f'МА №{self.ma.bu_addr}')
             self.ma_connect_btn.setStyleSheet(self.btn_style_connected)
-            logger.info(f'МА успешно подключен {'' if mode == 0 else "(тестовый режим)"}')
+            logger.info(f'МА успешно подключен {"" if mode == 0 else "(тестовый режим)"}')
         except Exception as e:
             self.ma = None
             self.ma_connect_btn.setStyleSheet(self.btn_style_disconnected)
@@ -680,7 +680,7 @@ class CheckMaWidget(QtWidgets.QWidget):
             self.pna = PNA(ip=ip, port=port, mode=mode)
             self.pna.connect()
             self.pna_connect_btn.setStyleSheet(self.btn_style_connected)
-            logger.info(f'PNA успешно подключен {'' if mode == 0 else "(тестовый режим)"}')
+            logger.info(f'PNA успешно подключен {"" if mode == 0 else "(тестовый режим)"}')
         except Exception as e:
             self.pna = None
             self.pna_connect_btn.setStyleSheet(self.btn_style_disconnected)
@@ -707,7 +707,7 @@ class CheckMaWidget(QtWidgets.QWidget):
             self.psn = PSN(ip=ip, port=port, mode=mode)
             self.psn.connect()
             self.psn_connect_btn.setStyleSheet(self.btn_style_connected)
-            logger.info(f'PSN успешно подключен {'' if mode == 0 else "(тестовый режим)"}')
+            logger.info(f'PSN успешно подключен {"" if mode == 0 else "(тестовый режим)"}')
         except Exception as e:
             self.psn = None
             self.psn_connect_btn.setStyleSheet(self.btn_style_disconnected)

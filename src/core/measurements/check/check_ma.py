@@ -3,7 +3,7 @@ from loguru import logger
 from ...devices.ma import MA
 from ...devices.pna import PNA
 from ...devices.psn import PSN
-from src.core.common.enums import Channel, Direction, PpmState
+from core.common.enums import Channel, Direction, PpmState
 from ...common.exceptions import WrongInstrumentError, PlanarScannerError
 from PyQt5.QtCore import QThread
 import threading

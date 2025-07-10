@@ -446,7 +446,7 @@ class PhaseMaWidget(QtWidgets.QWidget):
             self.ma = MA(bu_addr=int(addr), ma_num=1, com_port=com_port, mode=mode)
             self.ma.connect()
             self.ma_connect_btn.setStyleSheet(self.btn_style_connected)
-            logger.info(f'МА успешно подключен {'' if mode == 0 else "(тестовый режим)"}')
+            logger.info(f'МА успешно подключен {" " if mode == 0 else "(тестовый режим)"}')
         except Exception as e:
             self.ma = None
             self.ma_connect_btn.setStyleSheet(self.btn_style_disconnected)
@@ -472,7 +472,7 @@ class PhaseMaWidget(QtWidgets.QWidget):
             self.pna = PNA(ip=ip, port=port, mode=mode)
             self.pna.connect()
             self.pna_connect_btn.setStyleSheet(self.btn_style_connected)
-            logger.info(f'PNA успешно подключен {'' if mode == 0 else "(тестовый режим)"}')
+            logger.info(f'PNA успешно подключен {"" if mode == 0 else "(тестовый режим)"}')
             self.update_pna_settings_files()
         except Exception as e:
             self.pna = None
@@ -499,7 +499,7 @@ class PhaseMaWidget(QtWidgets.QWidget):
             self.psn = PSN(ip=ip, port=port, mode=mode)
             self.psn.connect()
             self.psn_connect_btn.setStyleSheet(self.btn_style_connected)
-            logger.info(f'PSN успешно подключен {'' if mode == 0 else "(тестовый режим)"}')
+            logger.info(f'PSN успешно подключен {"" if mode == 0 else "(тестовый режим)"}')
         except Exception as e:
             self.psn = None
             self.psn_connect_btn.setStyleSheet(self.btn_style_disconnected)

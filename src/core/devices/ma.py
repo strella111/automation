@@ -4,8 +4,8 @@ from typing import Union
 from loguru import logger
 
 from core.common.enums import MdoState
-from src.core.common.enums import Channel, Direction, PpmState
-from src.core.common.exceptions import WrongInstrumentError, BuAddrNotFound, MaCommandNotDelivered
+from core.common.enums import Channel, Direction, PpmState
+from core.common.exceptions import WrongInstrumentError, BuAddrNotFound, MaCommandNotDelivered
 
 class MA:
     """Класс для работы с модулем антенным"""
@@ -116,10 +116,10 @@ class MA:
             command_code = b'\xFB'
             command = self._generate_command(bu_num=self.bu_addr, command_code=command_code)
             self.write(command)
-            logger.debug(f'МА -> {command.hex(' ')}')
+            logger.debug(f'МА -> {command.hex(" ")}')
             response = self.read()
             if response:
-                logger.debug(f'МА <- {command.hex(' ')}')
+                logger.debug(f'МА <- {command.hex(" ")}')
                 if response[1] == b'\x00':
                     return True
                 elif response[1] == b'\x01':
@@ -163,11 +163,11 @@ class MA:
                 raise WrongInstrumentError('При попытке обращения к connection MA произошла ошибка')
             for i in range(1, 45):
                 command = self._generate_command(i, command_code=b'\xfa')
-                logger.debug(f'Команда на МА {command.hex(' ')}')
+                logger.debug(f'Команда на МА {command.hex(" ")}')
                 self.write(command)
                 response = self.read()
                 if response:
-                    logger.debug(f'Ответ от МА - {response.hex(' ')}')
+                    logger.debug(f'Ответ от МА - {response.hex(" ")}')
                     return int(response[1])
         return 0
 
@@ -175,12 +175,12 @@ class MA:
         self.write(command)
         logger.debug(f'МА -> {command}')
         if self._check_request():
-            logger.debug(f'Команда f{command.hex(' ')} успешно принята БУ')
+            logger.debug(f'Команда f{command.hex(" ")} успешно принята БУ')
             return
         else:
             if self.retry_counter >= 3:
-                logger.error(f'Команда f{command.hex(' ')} не принята бу.')
-                raise MaCommandNotDelivered(f'После 3 попыток не удалось отправить команду {command.hex(' ')} на БУ')
+                logger.error(f'Команда f{command.hex(" ")} не принята бу.')
+                raise MaCommandNotDelivered(f'После 3 попыток не удалось отправить команду {command.hex(" ")} на БУ')
             self.retry_counter += 1
 
     def turn_off_vips(self) -> None:
