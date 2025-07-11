@@ -119,28 +119,25 @@ class PSN:
             if res != "0":
                 logger.error("Ошибка в оси X планарного сканера.")
                 raise PlanarScannerError(f'Ошибка оси X: Статус {res}')
-            res = self.query("AXIS0:STAT:UPOS?")
-            current_x_pos = float(res) - self.x_offset
             res = self.query("AXIS1:STAT:OP?")
             if res != "0":
                 logger.error("Ошибка в оси Y планарного сканера.")
                 raise PlanarScannerError(f'Ошибка оси Y: Статус {res}')
-            res = self.query("AXIS1:STAT:UPOS?")
-            current_y_pos = float(res) - self.y_offset
 
-            x_diff = x - current_x_pos
-            y_diff = y - current_y_pos
             axis_x_move_string = "AXIS0:UMOV:ABS " + str(x + self.x_offset)
             axis_y_move_string = "AXIS1:UMOV:ABS " + str(y + self.y_offset)
             self.write(axis_x_move_string)
             self.write(axis_y_move_string)
 
-            #todo Вместо расчета времени в отдельном потоке распрашивать сканер о его состоянии,если доехал -> продолжать алгоритм
-            dist = (abs(x_diff) ** 2 + abs(y_diff) ** 2) ** 0.5
-            probe_speed = 5
-            min_time = 1.5
-            delay = dist / probe_speed + min_time
-            time.sleep(delay)
+            stat = False
+            while not stat:
+                stat_x = self.query("AXIS0:STAT:OP?")
+                stat_y = self.query("AXIS1:STAT:OP?")
+                if stat_x == '0' and stat_y == '0':
+                    stat = True
+                    time.sleep(0.1)
+
+
         except Exception as e:
             logger.error(f'Ошибка при перемещении планарного сканера в точку ({x}, {y}): {e}')
             raise PlanarScannerError(f'Ошибка перемещения PSN: {e}') from e

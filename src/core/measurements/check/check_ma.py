@@ -69,21 +69,6 @@ class CheckMA:
             return False
         return True
 
-    def _setup_pna(self) -> None:
-        """
-        Настройка анализатора цепей
-        
-        Raises:
-            WrongInstrumentError: При ошибке настройки PNA
-        """
-        try:
-            self.pna.preset()
-            self.pna.load_settings_file()
-            self.pna.set_power(1, 0)
-            self.pna.set_output(True)
-        except Exception as e:
-            logger.error(f"Ошибка при настройке PNA: {e}")
-            raise WrongInstrumentError(f"Ошибка настройки PNA: {e}")
 
     def _check_phase_diff(self, phase_diff: float, channel: Channel) -> bool:
         """Проверяет разность фаз в соответствии с требованиями для канала"""
@@ -216,8 +201,6 @@ class CheckMA:
                 self.psn.move(self.ppm_norm_cords[0], self.ppm_norm_cords[1])
             except Exception as e:
                 raise PlanarScannerError(f"Ошибка перемещения к нормализующему ППМ: {e}")
-            
-            self._setup_pna()
             
             self.ma.turn_on_vips()
             

@@ -43,7 +43,9 @@ def format_device_log(device: str, direction: str, data) -> str:
     direction: '>>' (отправка) или '<<' (приём)
     data: str или bytes
     """
-    if isinstance(data, (bytes, bytearray)):
+    if device == 'PNA':
+        data_str = str(data)
+    elif isinstance(data, (bytes, bytearray)):
         data_str = ' '.join(f'{b:02X}' for b in data)
     else:
         data_str = str(data)

@@ -18,9 +18,12 @@ class SettingsDialog(QtWidgets.QDialog):
         self.pna_port_edit = QtWidgets.QLineEdit()
         self.pna_mode_combo = QtWidgets.QComboBox()
         self.pna_mode_combo.addItems(['Реальный', 'Тестовый'])
+        self.pna_files_path = QtWidgets.QLineEdit()
+        self.pna_files_path.setPlaceholderText('C:\\Users\\Public\\Documents\\Network Analyzer\\')
         pna_layout.addRow('IP:', self.pna_ip_edit)
         pna_layout.addRow('Порт:', self.pna_port_edit)
         pna_layout.addRow('Режим:', self.pna_mode_combo)
+        pna_layout.addRow('Путь к файлам:', self.pna_files_path)
         layout.addWidget(pna_group)
 
         # --- Настройки PSN ---
@@ -103,8 +106,28 @@ class SettingsDialog(QtWidgets.QDialog):
             'ma_com_port': self.ma_com_combo.currentText(),
             'ma_mode': self.ma_mode_combo.currentIndex(),
             'pna_mode': self.pna_mode_combo.currentIndex(),
-            'psn_mode': self.psn_mode_combo.currentIndex()
+            'psn_mode': self.psn_mode_combo.currentIndex(),
+            'pna_files_path': self.pna_files_path.text(),
         }
+
+    def set_settings(self, settings):
+        """Установка настроек в диалог"""
+        if not settings:
+            return
+            
+        self.pna_ip_edit.setText(settings.get('pna_ip', ''))
+        self.pna_port_edit.setText(settings.get('pna_port', ''))
+        self.pna_mode_combo.setCurrentIndex(int(settings.get('pna_mode', 0)))
+        self.psn_ip_edit.setText(settings.get('psn_ip', ''))
+        self.psn_port_edit.setText(settings.get('psn_port', ''))
+        self.psn_mode_combo.setCurrentIndex(int(settings.get('psn_mode', 0)))
+        self.psn_speed_x.setValue(int(settings.get('psn_speed_x', 10)))
+        self.psn_speed_y.setValue(int(settings.get('psn_speed_y', 10)))
+        self.psn_acc_x.setValue(int(settings.get('psn_acc_x', 5)))
+        self.psn_acc_y.setValue(int(settings.get('psn_acc_y', 5)))
+        self.ma_com_combo.setCurrentText(settings.get('ma_com_port', ''))
+        self.ma_mode_combo.setCurrentIndex(int(settings.get('ma_mode', 0)))
+        self.pna_files_path.setText(settings.get('pna_files_path', 'C:\\Users\\Public\\Documents\\Network Analyzer\\'))
 
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
@@ -174,6 +197,7 @@ class MainWindow(QtWidgets.QMainWindow):
         dlg.psn_acc_y.setValue(int(self.settings.value('psn_acc_y', 0)))
         dlg.ma_com_combo.setCurrentText(self.settings.value('ma_com_port', ''))
         dlg.ma_mode_combo.setCurrentIndex(self.settings.value('ma_mode', 0))
+        dlg.pna_files_path.setText(self.settings.value('pna_files_path', 'C:\\Users\\Public\\Documents\\Network Analyzer\\'))
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
             settings = dlg.get_settings()
             for k, v in settings.items():

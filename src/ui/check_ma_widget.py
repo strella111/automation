@@ -10,6 +10,7 @@ from core.devices.psn import PSN
 from core.measurements.check.check_ma import CheckMA
 from core.common.enums import Channel, Direction, PpmState
 from core.common.coordinate_system import CoordinateSystemManager
+from .pna_file_dialog import PnaFileDialog
 
 class QTextEditLogHandler(QtCore.QObject):
     log_signal = QtCore.pyqtSignal(str)
@@ -231,36 +232,54 @@ class CheckMaWidget(QtWidgets.QWidget):
         
         self.param_tabs.addTab(self.ma_tab, 'MA')
 
+        # === Настройки PNA ===
         self.pna_tab = QtWidgets.QWidget()
         self.pna_tab_layout = QtWidgets.QFormLayout(self.pna_tab)
-
+        
+        # S-параметр
         self.s_param_combo = QtWidgets.QComboBox()
         self.s_param_combo.addItems(['S21', 'S12', 'S11', 'S22'])
         self.pna_tab_layout.addRow('S-параметр:', self.s_param_combo)
 
+        # Входная мощность
         self.pna_power = QtWidgets.QDoubleSpinBox()
         self.pna_power.setRange(-20, 18)
         self.pna_power.setSingleStep(1)
         self.pna_power.setDecimals(0)
-        self.pna_tab_layout.addRow('Входная мощность:',  self.pna_power)
+        self.pna_power.setValue(0)  # Значение по умолчанию
+        self.pna_tab_layout.addRow('Входная мощность (дБм):', self.pna_power)
 
-        only_float = QtGui.QDoubleValidator()
-        only_float.setDecimals(2)
-        self.pna_start_freq = QtWidgets.QLineEdit()
-        self.pna_start_freq.setText('9300')
-        self.pna_start_freq.setValidator(only_float)
-        self.pna_tab_layout.addRow('Нач. частота (МГц):', self.pna_start_freq)
+        # Начальная частота
+        self.pna_start_freq = QtWidgets.QSpinBox()
+        self.pna_start_freq.setRange(1, 50000)
+        self.pna_start_freq.setSingleStep(1)
+        self.pna_start_freq.setValue(9300)
+        self.pna_start_freq.setSuffix(' МГц')
+        self.pna_tab_layout.addRow('Нач. частота:', self.pna_start_freq)
 
-        self.pna_stop_freq = QtWidgets.QLineEdit()
-        self.pna_stop_freq.setText('9300')
-        self.pna_stop_freq.setValidator(only_float)
-        self.pna_tab_layout.addRow('Кон. частота (МГц):', self.pna_stop_freq)
+        # Конечная частота
+        self.pna_stop_freq = QtWidgets.QSpinBox()
+        self.pna_stop_freq.setRange(1, 50000)
+        self.pna_stop_freq.setSingleStep(1)
+        self.pna_stop_freq.setValue(9800)
+        self.pna_stop_freq.setSuffix(' МГц')
+        self.pna_tab_layout.addRow('Кон. частота:', self.pna_stop_freq)
 
         self.pna_number_of_points = QtWidgets.QComboBox()
-        self.pna_number_of_points.addItems(['3', '11', '101', '201'])
+        self.pna_number_of_points.addItems(['3', '11', '101', '201', '401', '801'])
+        self.pna_number_of_points.setCurrentText('11')
         self.pna_tab_layout.addRow('Кол-во точек:', self.pna_number_of_points)
 
-        self.pna_tab_layout.addRow('Файл настроек:', QtWidgets.QLineEdit())
+        settings_layout = QtWidgets.QHBoxLayout()
+        self.settings_file_edit = QtWidgets.QLineEdit()
+        self.settings_file_edit.setReadOnly(True)
+        self.load_file_btn = QtWidgets.QPushButton('Выбрать файл...')
+        self.load_file_btn.clicked.connect(self.open_file_dialog)
+        
+        settings_layout.addWidget(self.settings_file_edit, 1)
+        settings_layout.addWidget(self.load_file_btn)
+        
+        self.pna_tab_layout.addRow('Файл настроек:', settings_layout)
         self.param_tabs.addTab(self.pna_tab, 'PNA')
         
         # Meas tab
@@ -338,6 +357,7 @@ class CheckMaWidget(QtWidgets.QWidget):
 
         self.set_buttons_enabled(True)
         self.device_settings = {}
+        self.pna_settings = {}
         
         # Словарь для хранения данных ППМ
         self.ppm_data = {}
@@ -498,12 +518,12 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.channel = self.channel_combo.currentText()
         self.direction = self.direction_combo.currentText()
         # PNA
-        self.s_param = self.pna_tab_layout.itemAt(1).widget().currentText()
-        self.power = self.pna_tab_layout.itemAt(3).widget().value()
-        self.freq_start = self.pna_tab_layout.itemAt(5).widget().text()
-        self.freq_stop = self.pna_tab_layout.itemAt(7).widget().text()
-        self.freq_points = self.pna_tab_layout.itemAt(9).widget().currentText()
-        self.settings_file = self.pna_tab_layout.itemAt(11).widget().text()
+        self.pna_settings['s_param'] = self.s_param_combo.currentText()
+        self.pna_settings['power'] = self.pna_power.value()
+        self.pna_settings['freq_start'] = self.pna_start_freq.value() * 10**6
+        self.pna_settings['freq_stop'] = self.pna_stop_freq.value() * 10**6
+        self.pna_settings['freq_points'] = self.pna_number_of_points.currentText()
+        self.pna_settings['settings_file'] = self.settings_file_edit.text()
 
 
         coord_system_name = self.coord_system_combo.currentText()
@@ -518,23 +538,25 @@ class CheckMaWidget(QtWidgets.QWidget):
         
         self._stop_flag.clear()
         self._pause_flag.clear()
-        self.pause_btn.setText('Пауза') # Reset pause button text
+        self.pause_btn.setText('Пауза')
         
         self.results_table.clearContents()
         for row in range(32):
             self.results_table.setItem(row, 0, QtWidgets.QTableWidgetItem(f"{row+1}"))
             for col in range(1, 12):
                 self.results_table.setItem(row, col, QtWidgets.QTableWidgetItem(""))
-        
-        # Очищаем данные ППМ и сбрасываем 2D вид
+
         self.ppm_data.clear()
         for ppm_num, button in self.ppm_field_view.rects.items():
             button.set_status('')
 
         self.set_buttons_enabled(False)
         logger.info("Запуск проверки МА...")
+        self.apply_params()
         self._check_thread = threading.Thread(target=self._run_check, daemon=True)
         self._check_thread.start()
+
+
 
     def pause_check(self):
         """Ставит проверку на паузу"""
@@ -588,7 +610,29 @@ class CheckMaWidget(QtWidgets.QWidget):
                 except Exception as e:
                     logger.error(f'Ошибка применения параметров PSN перед измерением: {e}')
 
-            # Создаем модифицированный CheckMA с callback для обновления UI
+            if self.pna and self.pna_settings:
+                try:
+                    self.pna.preset()
+                    if self.pna_settings.get('settings_file'):
+                        self.pna.load_settings_file(self.pna_settings.get('settings_file'))
+                    else:
+                        self.pna.create_measure(self.pna_settings.get('s_param'))
+                        self.pna.turn_window(state=True)
+                        self.pna.put_and_visualize_trace()
+                    self.pna.set_freq_start(self.pna_settings.get('freq_start'))
+                    self.pna.set_freq_stop(self.pna_settings.get('freq_stop'))
+                    self.pna.set_points(self.pna_settings.get('freq_points'))
+                    self.pna.set_power(self.pna_settings.get('power'))
+                    self.pna.set_output(True)
+                    meas = self.pna.get_selected_meas()
+                    if not meas:
+                        measures = self.pna.get_all_meas()
+                        print(measures)
+                        self.pna.set_current_meas(measures[0])
+                except Exception as e:
+                    logger.error(f"Ошибка при настройке PNA: {e}")
+                    raise
+
             class CheckMAWithCallback(CheckMA):
                 def __init__(self, ma, psn, pna, stop_event, pause_event, callback):
                     super().__init__(ma, psn, pna, stop_event, pause_event)
@@ -785,4 +829,60 @@ class CheckMaWidget(QtWidgets.QWidget):
     def show_info_message(self, title: str, message: str):
         """Показывает всплывающее окно с информацией"""
         QMessageBox.information(self, title, message)
-        logger.info(f"{title}: {message}") 
+        logger.info(f"{title}: {message}")
+
+    def open_file_dialog(self):
+        """Открытие диалога выбора файла настроек PNA"""
+        try:
+            if not self.pna or not self.pna.connection:
+                QtWidgets.QMessageBox.warning(self, 'Предупреждение', 'Сначала подключитесь к PNA')
+                return
+
+            files_path = self.device_settings.get('pna_files_path', 'C:\\Users\\Public\\Documents\\Network Analyzer\\')
+
+            dialog = PnaFileDialog(self.pna, files_path, self)
+            
+            if dialog.exec_() == QtWidgets.QDialog.Accepted:
+                selected_file = dialog.selected_file
+                if selected_file:
+                    self.settings_file_edit.setText(selected_file)
+                    self.apply_parsed_settings()
+                        
+                    logger.info(f'Выбран файл настроек PNA: {selected_file}')
+                    
+        except Exception as e:
+            error_msg = f'Ошибка при выборе файла настроек: {e}'
+            QtWidgets.QMessageBox.critical(self, 'Ошибка', error_msg)
+            logger.error(error_msg)
+
+    def apply_parsed_settings(self):
+        """Применение параметров PNA настроек к интерфейсу"""
+        try:
+            s_param = self.pna.get_s_param()
+            logger.info(f'S_PARAM={s_param}')
+            if s_param:
+                index = self.s_param_combo.findText(s_param)
+                if index >= 0:
+                    self.s_param_combo.setCurrentIndex(index)
+
+            power = self.pna.get_power()
+            if power:
+                self.pna_power.setValue(power)
+
+            freq_start = self.pna.get_start_freq()
+            if freq_start:
+                self.pna_start_freq.setValue(int(freq_start/10**6))
+
+            freq_stop = self.pna.get_stop_freq()
+            if freq_stop:
+                self.pna_stop_freq.setValue(int(freq_stop/10**6))
+
+
+            points = self.pna.get_amount_of_points()
+            if points:
+                index = self.pna_number_of_points.findText(str(int(points)))
+                if index >= 0:
+                    self.pna_number_of_points.setCurrentIndex(index)
+
+        except Exception as e:
+            logger.error(f'Ошибка при применении настроек к интерфейсу: {e}')

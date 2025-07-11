@@ -33,7 +33,7 @@ class PNA:
             if self.mode == 0:  # Реальный режим
                 self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.connection.connect((self.ip, self.port))
-                self.connection.settimeout(3)
+                #self.connection.settimeout(1)
                 logger.debug(f"PNA подключен к {self.ip}:{self.port}")
                 logger.info('Произведено подлючение к PNA')
             else:  # Тестовый режим
@@ -72,7 +72,11 @@ class PNA:
             raise ConnectionError("PNA не подключен")
         if self.mode == 0:
             try:
-                response = self.connection.recv(4096).decode().encode()
+                response = self.connection.recv(4096).decode('ascii').strip()
+                if response.startswith('"'):
+                    response = response[1:]
+                if response.endswith('"'):
+                    response = response[:-1]
                 logger.debug(format_device_log('PNA', '<<', response))
                 return response
             except Exception as e:
@@ -86,17 +90,61 @@ class PNA:
 
     def preset(self) -> None:
         """Сброс PNA в начальное состояние"""
-        self._send_data("*RST")
+        self._send_data("SYST:FPRESET")
         logger.info("PNA сброшен в начальное состояние")
 
-    def set_s_param(self, s_param: str):
-        """Установка S-параметра"""
-        try:
-            self._send_data(f"CALC:PAR:SEL 'CH1_{s_param}_1'")
-            logger.info(f"Установлен S-параметр {s_param}")
-        except Exception as e:
-            logger.error(f"Ошибка установки S-параметра: {e}")
-            raise
+    def create_measure(self, s_param: str):
+        """Создание измерения"""
+        name = f'My'
+        self._send_data(f"CALC:PAR:DEF '{name}', {s_param}")
+        logger.info(f"Создано измерение {name} на PNA")
+
+    def turn_window(self, state: bool):
+        """Отображение экрана"""
+        self._send_data(f"DISPlay:WINDow1:STATE {'ON' if state else 'OFF'}")
+
+    def put_and_visualize_trace(self):
+        self._send_data("DISP:WIND1:TRACE1:FEED 'My'")
+
+    def get_power(self):
+        self._send_data("SOUR:POW?")
+        response = self._read_data()
+        return float(response)
+
+    def get_start_freq(self):
+        self._send_data("SENS:FREQ:STAR?")
+        response = self._read_data()
+        return float(response)
+
+    def get_stop_freq(self):
+        self._send_data("SENS:FREQ:STOP?")
+        response = self._read_data()
+        return float(response)
+
+    def get_amount_of_points(self):
+        self._send_data("SENS:SWE:POIN?")
+        response = self._read_data()
+        return float(response)
+
+    def get_s_param(self):
+        self._send_data("CALC:PAR:CAT?")
+        response = self._read_data()
+        result = response.split(',')[1]
+        return result
+
+    def get_selected_meas(self):
+        self._send_data("CALC:PAR:SEL?")
+        response = self._read_data()
+        return response
+
+    def get_all_meas(self):
+        self._send_data("CALC:PAR:CAT?")
+        response = self._read_data()
+        result = response.split(',')[::2]
+        return result
+
+    def set_current_meas(self, meas: str):
+        self._send_data(f"CALC:PAR:SEL '{meas}'")
 
     def set_power(self, power: float, port: int = 1):
         """Установка мощности"""
@@ -152,21 +200,14 @@ class PNA:
 
     def set_output(self, state: bool):
         """Включение/выключение порта на генерацию"""
-        try:
-            self._send_data(f"OUTP {'ON' if state else 'OFF'}")
-            logger.info(f"Выход PNA {'включен' if state else 'выключен'}")
-        except Exception as e:
-            logger.error(f"Ошибка управления выходом PNA: {e}")
-            raise
+        self._send_data(f"OUTP {'ON' if state else 'OFF'}")
+        logger.info(f"Выход PNA {'включен' if state else 'выключен'}")
 
     def load_state(self, filename: str):
         """Загрузка состояния из файла"""
-        try:
-            self._send_data(f'MMEM:LOAD "{filename}"')
-            logger.info(f"Загружено состояние из файла {filename}")
-        except Exception as e:
-            logger.error(f"Ошибка загрузки состояния: {e}")
-            raise
+        self._send_data(f'MMEM:LOAD "{filename}"')
+        logger.info(f"Загружено состояние из файла {filename}")
+
 
     def select_par(self, number: int) -> None:
         """Выбор параметра измерения"""
@@ -191,11 +232,9 @@ class PNA:
 
     def load_settings_file(self, filepath: str = None) -> None:
         """Загрузка файла настроек"""
-        if self.mode == 0:
-            self._send_data(f'MMEM:LOAD "{filepath}"')
-            logger.debug(f'Подгружен файл настроек pna {filepath}')
-        else:
-            logger.info('Эмуляция загрузки файла настроек PNA (dev-режим)')
+        self._send_data(f'MMEM:LOAD "{filepath}"')
+        logger.debug(f'Подгружен файл настроек pna {filepath}')
+
 
     def get_mean_value(self) -> float:
         """Получение среднего значения"""
@@ -225,6 +264,6 @@ class PNA:
         command = f'MMEM:CAT? \"{folder}\"'
         self._send_data(command)
         response = self._read_data()
-        result_list = response[1:len(response)-1].split(',')
+        result_list = response[2:len(response)-1].split(',')
         logger.debug(f'Запрошены файлы pna в folder={folder}')
         return result_list
