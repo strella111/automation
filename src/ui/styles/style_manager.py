@@ -73,13 +73,13 @@ class StyleManager:
         up_icon = style.standardIcon(QStyle.StandardPixmap.SP_ArrowUp)
         down_icon = style.standardIcon(QStyle.StandardPixmap.SP_ArrowDown)
         
-        # Сохраняем иконки в временные файлы для использования в CSS
+        # Сохраняем иконки в папку для использования в CSS
         icons_dir = self.icons_dir
         os.makedirs(icons_dir, exist_ok=True)
         
         # Создаем pixmap больших размеров для лучшей видимости
-        up_pixmap = up_icon.pixmap(16, 16)
-        down_pixmap = down_icon.pixmap(16, 16)
+        up_pixmap = up_icon.pixmap(20, 20)  # Увеличиваем размер для четкости
+        down_pixmap = down_icon.pixmap(20, 20)
         
         up_path = os.path.join(icons_dir, 'qt_arrow_up.png')
         down_path = os.path.join(icons_dir, 'qt_arrow_down.png')
@@ -87,15 +87,14 @@ class StyleManager:
         up_pixmap.save(up_path)
         down_pixmap.save(down_path)
         
-        # Обновляем стили с путями к иконкам
-        up_url = up_path.replace('\\', '/')
-        down_url = down_path.replace('\\', '/')
+        up_relative = 'src/ui/styles/icons/qt_arrow_up.png'
+        down_relative = 'src/ui/styles/icons/qt_arrow_down.png'
         
-        self.current_theme['QComboBox::down-arrow'] = f"image: url({down_url}); width: 16px; height: 16px;"
-        self.current_theme['QSpinBox::up-arrow'] = f"image: url({up_url}); width: 16px; height: 16px;"
-        self.current_theme['QSpinBox::down-arrow'] = f"image: url({down_url}); width: 16px; height: 16px;"
-        self.current_theme['QDoubleSpinBox::up-arrow'] = f"image: url({up_url}); width: 16px; height: 16px;"
-        self.current_theme['QDoubleSpinBox::down-arrow'] = f"image: url({down_url}); width: 16px; height: 16px;"
+        self.current_theme['QComboBox::down-arrow'] = f"image: url({down_relative}); width: 16px; height: 16px; subcontrol-origin: padding; subcontrol-position: center;"
+        self.current_theme['QSpinBox::up-arrow'] = f"image: url({up_relative}); width: 16px; height: 16px; subcontrol-origin: padding; subcontrol-position: center;"
+        self.current_theme['QSpinBox::down-arrow'] = f"image: url({down_relative}); width: 16px; height: 16px; subcontrol-origin: padding; subcontrol-position: center;"
+        self.current_theme['QDoubleSpinBox::up-arrow'] = f"image: url({up_relative}); width: 16px; height: 16px; subcontrol-origin: padding; subcontrol-position: center;"
+        self.current_theme['QDoubleSpinBox::down-arrow'] = f"image: url({down_relative}); width: 16px; height: 16px; subcontrol-origin: padding; subcontrol-position: center;"
     
     def apply_to_application(self, app: QApplication):
         """

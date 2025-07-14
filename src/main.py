@@ -12,6 +12,8 @@ if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
     
     if style_manager.load_theme('light_theme'):
+
+        style_manager.apply_builtin_arrows(app)
         style_manager.apply_to_application(app)
 
     

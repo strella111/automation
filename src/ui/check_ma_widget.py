@@ -341,137 +341,202 @@ class CheckMaWidget(QtWidgets.QWidget):
         
         # Meas tab
         self.meas_tab = QtWidgets.QWidget()
-        self.meas_tab_layout = QtWidgets.QFormLayout(self.meas_tab)
+        self.meas_tab_layout = QtWidgets.QVBoxLayout(self.meas_tab)
+        self.meas_tab_layout.setSpacing(15)
+        self.meas_tab_layout.setContentsMargins(15, 15, 15, 15)
 
+        # Система координат
+        coord_group = QtWidgets.QGroupBox('Система координат')
+        coord_layout = QtWidgets.QFormLayout(coord_group)
+        coord_layout.setContentsMargins(15, 15, 15, 15)
+        
         self.coord_system_combo = QtWidgets.QComboBox()
         self.coord_system_combo.addItems(self.coord_system_manager.get_system_names())
-        self.meas_tab_layout.addRow('Система координат:', self.coord_system_combo)
+        self.coord_system_combo.setMinimumWidth(200)
+        coord_layout.addRow('Система координат:', self.coord_system_combo)
         
-        # Добавляем разделитель
-        separator = QtWidgets.QFrame()
-        separator.setFrameShape(QtWidgets.QFrame.HLine)
-        separator.setFrameShadow(QtWidgets.QFrame.Sunken)
-        self.meas_tab_layout.addRow(separator)
+        # Стиль для групп
+        group_style = """
+        QGroupBox {
+            font-weight: bold;
+            font-size: 12px;
+            border: 2px solid #cccccc;
+            border-radius: 8px;
+            margin-top: 10px;
+            padding-top: 10px;
+            background-color: #f8f9fa;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 10px;
+            padding: 0 8px 0 8px;
+            background-color: #f8f9fa;
+        }
+        """
+        coord_group.setStyleSheet(group_style)
+        self.meas_tab_layout.addWidget(coord_group)
+
+        # Критерии проверки
+        criteria_group = QtWidgets.QGroupBox('Критерии проверки')
+        criteria_layout = QtWidgets.QGridLayout(criteria_group)
+        criteria_layout.setContentsMargins(15, 15, 15, 15)
+        criteria_layout.setSpacing(10)
         
-        # Добавляем заголовок критериев
-        criteria_label = QtWidgets.QLabel("Критерии проверки:")
-        criteria_label.setStyleSheet("font-weight: bold; color: #333333; margin-top: 5px;")
-        self.meas_tab_layout.addRow(criteria_label)
+        # Заголовки колонок
+        criteria_layout.addWidget(QtWidgets.QLabel(""), 0, 0)  # Пустая ячейка
+        rx_label = QtWidgets.QLabel("RX")
+        rx_label.setAlignment(QtCore.Qt.AlignCenter)
+        rx_label.setStyleSheet("font-weight: bold; color: #495057;")
+        criteria_layout.addWidget(rx_label, 0, 1)
         
-        # Допуски амплитуды
-        amp_tolerance_layout = QtWidgets.QHBoxLayout()
+        tx_label = QtWidgets.QLabel("TX")
+        tx_label.setAlignment(QtCore.Qt.AlignCenter)
+        tx_label.setStyleSheet("font-weight: bold; color: #495057;")
+        criteria_layout.addWidget(tx_label, 0, 2)
+        
+        # Допуск амплитуды
+        amp_label = QtWidgets.QLabel("Допуск амплитуды:")
+        amp_label.setStyleSheet("font-weight: bold;")
+        criteria_layout.addWidget(amp_label, 1, 0)
+        
         self.rx_amp_tolerance = QtWidgets.QDoubleSpinBox()
         self.rx_amp_tolerance.setRange(0.1, 10.0)
         self.rx_amp_tolerance.setSingleStep(0.1)
         self.rx_amp_tolerance.setDecimals(1)
-        self.rx_amp_tolerance.setValue(4.5)  # Значение по умолчанию для приемника
+        self.rx_amp_tolerance.setValue(4.5)
         self.rx_amp_tolerance.setSuffix(' дБ')
+        self.rx_amp_tolerance.setMinimumWidth(80)
+        criteria_layout.addWidget(self.rx_amp_tolerance, 1, 1)
         
         self.tx_amp_tolerance = QtWidgets.QDoubleSpinBox()
         self.tx_amp_tolerance.setRange(0.1, 10.0)
         self.tx_amp_tolerance.setSingleStep(0.1)
         self.tx_amp_tolerance.setDecimals(1)
-        self.tx_amp_tolerance.setValue(2.5)  # Значение по умолчанию для передатчика
+        self.tx_amp_tolerance.setValue(2.5)
         self.tx_amp_tolerance.setSuffix(' дБ')
+        self.tx_amp_tolerance.setMinimumWidth(80)
+        criteria_layout.addWidget(self.tx_amp_tolerance, 1, 2)
         
-        amp_tolerance_layout.addWidget(QtWidgets.QLabel("RX:"))
-        amp_tolerance_layout.addWidget(self.rx_amp_tolerance)
-        amp_tolerance_layout.addWidget(QtWidgets.QLabel("TX:"))
-        amp_tolerance_layout.addWidget(self.tx_amp_tolerance)
-        self.meas_tab_layout.addRow('Допуск амплитуды:', amp_tolerance_layout)
+        # Мин. фаза (все ФВ)
+        min_phase_label = QtWidgets.QLabel("Мин. фаза (все ФВ):")
+        min_phase_label.setStyleSheet("font-weight: bold;")
+        criteria_layout.addWidget(min_phase_label, 2, 0)
         
-        # Допуски фазы при включении всех ФВ
-        phase_tolerance_layout = QtWidgets.QHBoxLayout()
-        
-        # Минимальные значения фазы
-        rx_phase_min_layout = QtWidgets.QHBoxLayout()
         self.rx_phase_min = QtWidgets.QDoubleSpinBox()
         self.rx_phase_min.setRange(0.1, 50.0)
         self.rx_phase_min.setSingleStep(0.1)
         self.rx_phase_min.setDecimals(1)
-        self.rx_phase_min.setValue(2.0)  # Значение по умолчанию
+        self.rx_phase_min.setValue(2.0)
         self.rx_phase_min.setSuffix('°')
+        self.rx_phase_min.setMinimumWidth(80)
+        criteria_layout.addWidget(self.rx_phase_min, 2, 1)
         
         self.tx_phase_min = QtWidgets.QDoubleSpinBox()
         self.tx_phase_min.setRange(0.1, 50.0)
         self.tx_phase_min.setSingleStep(0.1)
         self.tx_phase_min.setDecimals(1)
-        self.tx_phase_min.setValue(2.0)  # Значение по умолчанию
+        self.tx_phase_min.setValue(2.0)
         self.tx_phase_min.setSuffix('°')
+        self.tx_phase_min.setMinimumWidth(80)
+        criteria_layout.addWidget(self.tx_phase_min, 2, 2)
         
-        rx_phase_min_layout.addWidget(QtWidgets.QLabel("RX:"))
-        rx_phase_min_layout.addWidget(self.rx_phase_min)
-        rx_phase_min_layout.addWidget(QtWidgets.QLabel("TX:"))
-        rx_phase_min_layout.addWidget(self.tx_phase_min)
-        self.meas_tab_layout.addRow('Мин. фаза (все ФВ):', rx_phase_min_layout)
+        # Макс. фаза (все ФВ)
+        max_phase_label = QtWidgets.QLabel("Макс. фаза (все ФВ):")
+        max_phase_label.setStyleSheet("font-weight: bold;")
+        criteria_layout.addWidget(max_phase_label, 3, 0)
         
-        # Максимальные значения фазы
-        rx_phase_max_layout = QtWidgets.QHBoxLayout()
         self.rx_phase_max = QtWidgets.QDoubleSpinBox()
         self.rx_phase_max.setRange(1.0, 100.0)
         self.rx_phase_max.setSingleStep(0.1)
         self.rx_phase_max.setDecimals(1)
-        self.rx_phase_max.setValue(12.0)  # Значение по умолчанию
+        self.rx_phase_max.setValue(12.0)
         self.rx_phase_max.setSuffix('°')
+        self.rx_phase_max.setMinimumWidth(80)
+        criteria_layout.addWidget(self.rx_phase_max, 3, 1)
         
         self.tx_phase_max = QtWidgets.QDoubleSpinBox()
         self.tx_phase_max.setRange(1.0, 100.0)
         self.tx_phase_max.setSingleStep(0.1)
         self.tx_phase_max.setDecimals(1)
-        self.tx_phase_max.setValue(20.0)  # Значение по умолчанию
+        self.tx_phase_max.setValue(20.0)
         self.tx_phase_max.setSuffix('°')
+        self.tx_phase_max.setMinimumWidth(80)
+        criteria_layout.addWidget(self.tx_phase_max, 3, 2)
         
-        rx_phase_max_layout.addWidget(QtWidgets.QLabel("RX:"))
-        rx_phase_max_layout.addWidget(self.rx_phase_max)
-        rx_phase_max_layout.addWidget(QtWidgets.QLabel("TX:"))
-        rx_phase_max_layout.addWidget(self.tx_phase_max)
-        self.meas_tab_layout.addRow('Макс. фаза (все ФВ):', rx_phase_max_layout)
+        criteria_group.setStyleSheet(group_style)
+        self.meas_tab_layout.addWidget(criteria_group)
+
+        # Допуски фазовращателей
+        ps_group = QtWidgets.QGroupBox('Допуски фазовращателей')
+        ps_main_layout = QtWidgets.QVBoxLayout(ps_group)
+        ps_main_layout.setContentsMargins(15, 15, 15, 15)
         
-        # Добавляем еще один разделитель
-        separator2 = QtWidgets.QFrame()
-        separator2.setFrameShape(QtWidgets.QFrame.HLine)
-        separator2.setFrameShadow(QtWidgets.QFrame.Sunken)
-        self.meas_tab_layout.addRow(separator2)
+        # Контейнер с прокруткой для фазовращателей
+        scroll_area = QtWidgets.QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setMaximumHeight(200)
+        scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         
-        # Допуски для каждого фазовращателя отдельно
-        phase_shifter_label = QtWidgets.QLabel("Допуски фазовращателей:")
-        phase_shifter_label.setStyleSheet("font-weight: bold; color: #333333; margin-top: 5px;")
-        self.meas_tab_layout.addRow(phase_shifter_label)
+        scroll_widget = QtWidgets.QWidget()
+        scroll_layout = QtWidgets.QGridLayout(scroll_widget)
+        scroll_layout.setSpacing(8)
+        
+        # Заголовки колонок для фазовращателей
+        scroll_layout.addWidget(QtWidgets.QLabel(""), 0, 0)  # Пустая ячейка
+        from_label = QtWidgets.QLabel("от:")
+        from_label.setAlignment(QtCore.Qt.AlignCenter)
+        from_label.setStyleSheet("font-weight: bold; color: #495057;")
+        scroll_layout.addWidget(from_label, 0, 1)
+        
+        to_label = QtWidgets.QLabel("до:")
+        to_label.setAlignment(QtCore.Qt.AlignCenter)
+        to_label.setStyleSheet("font-weight: bold; color: #495057;")
+        scroll_layout.addWidget(to_label, 0, 2)
         
         # Создаем элементы для каждого дискрета ФВ
         self.phase_shifter_tolerances = {}
         phase_angles = [5.625, 11.25, 22.5, 45, 90, 180]
         
-        for angle in phase_angles:
-            ps_layout = QtWidgets.QHBoxLayout()
+        for row, angle in enumerate(phase_angles, 1):
+            # Метка фазовращателя
+            ps_label = QtWidgets.QLabel(f"ФВ {angle}°:")
+            ps_label.setStyleSheet("font-weight: bold;")
+            ps_label.setMinimumWidth(80)
+            scroll_layout.addWidget(ps_label, row, 0)
             
             # Минимальное отклонение
             min_spinbox = QtWidgets.QDoubleSpinBox()
             min_spinbox.setRange(-50.0, 50.0)
             min_spinbox.setSingleStep(0.1)
             min_spinbox.setDecimals(1)
-            min_spinbox.setValue(-2.0)  # Значение по умолчанию
+            min_spinbox.setValue(-2.0)
             min_spinbox.setSuffix('°')
+            min_spinbox.setMinimumWidth(70)
+            scroll_layout.addWidget(min_spinbox, row, 1)
             
             # Максимальное отклонение
             max_spinbox = QtWidgets.QDoubleSpinBox()
             max_spinbox.setRange(-50.0, 50.0)
             max_spinbox.setSingleStep(0.1)
             max_spinbox.setDecimals(1)
-            max_spinbox.setValue(2.0)  # Значение по умолчанию
+            max_spinbox.setValue(2.0)
             max_spinbox.setSuffix('°')
-            
-            ps_layout.addWidget(QtWidgets.QLabel("от:"))
-            ps_layout.addWidget(min_spinbox)
-            ps_layout.addWidget(QtWidgets.QLabel("до:"))
-            ps_layout.addWidget(max_spinbox)
+            max_spinbox.setMinimumWidth(70)
+            scroll_layout.addWidget(max_spinbox, row, 2)
             
             self.phase_shifter_tolerances[angle] = {
                 'min': min_spinbox,
                 'max': max_spinbox
             }
-            
-            self.meas_tab_layout.addRow(f'ФВ {angle}°:', ps_layout)
+        
+        scroll_area.setWidget(scroll_widget)
+        ps_main_layout.addWidget(scroll_area)
+        ps_group.setStyleSheet(group_style)
+        self.meas_tab_layout.addWidget(ps_group)
+        
+        # Добавляем пружину в конец
+        self.meas_tab_layout.addStretch()
         
         self.param_tabs.addTab(self.meas_tab, 'Meas')
         self.left_layout.addWidget(self.param_tabs, 1)
