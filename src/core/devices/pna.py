@@ -72,7 +72,7 @@ class PNA:
             raise ConnectionError("PNA не подключен")
         if self.mode == 0:
             try:
-                response = self.connection.recv(4096).decode('ascii').strip()
+                response = self.connection.recv(8192).decode('ascii').strip()
                 if response.startswith('"'):
                     response = response[1:]
                 if response.endswith('"'):

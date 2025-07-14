@@ -266,7 +266,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.pna_tab_layout.addRow('Кон. частота:', self.pna_stop_freq)
 
         self.pna_number_of_points = QtWidgets.QComboBox()
-        self.pna_number_of_points.addItems(['3', '11', '101', '201', '401', '801'])
+        self.pna_number_of_points.addItems(['3', '11', '101', '201'])
         self.pna_number_of_points.setCurrentText('11')
         self.pna_tab_layout.addRow('Кол-во точек:', self.pna_number_of_points)
 
