@@ -1,6 +1,7 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
 from PyQt5.QtGui import QTextCursor
-from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtWidgets import QMessageBox, QStyle
+from PyQt5.QtCore import QSize
 from loguru import logger
 import threading
 import numpy as np
@@ -10,7 +11,10 @@ from core.devices.psn import PSN
 from core.measurements.check.check_ma import CheckMA
 from core.common.enums import Channel, Direction, PpmState
 from core.common.coordinate_system import CoordinateSystemManager
+from ui.styles.style_manager import style_manager
 from .pna_file_dialog import PnaFileDialog
+
+
 
 class QTextEditLogHandler(QtCore.QObject):
     log_signal = QtCore.pyqtSignal(str)
@@ -38,19 +42,51 @@ class PpmRect(QtWidgets.QGraphicsRectItem):
         self.parent_widget = parent_widget
         self.setAcceptHoverEvents(True)
         self.setFlag(QtWidgets.QGraphicsItem.ItemIsSelectable, True)
-        self.setBrush(QtGui.QBrush(QtGui.QColor("#f0f0f0")))
-        self.setPen(QtGui.QPen(QtGui.QColor("#ccc")))
+        
+        # Применяем стили из темы
+        from ui.styles.style_manager import style_manager
+        default_color = style_manager.get_style('PpmCellDefault') or "#f8f9fa"
+        border_color = style_manager.get_style('PpmCellBorder') or "#dee2e6"
+        
+        self.setBrush(QtGui.QBrush(QtGui.QColor(default_color)))
+        self.setPen(QtGui.QPen(QtGui.QColor(border_color), 1.5))
         self.text = None
         self.status = None
 
     def set_status(self, status):
-        color = "#f0f0f0"
+        from ui.styles.style_manager import style_manager
+        
         if status == "ok":
-            color = "#2ecc40"
+            color = style_manager.get_style('PpmCellOk') or "#28a745"
         elif status == "fail":
-            color = "#e74c3c"
+            color = style_manager.get_style('PpmCellFail') or "#dc3545"
+        else:
+            color = style_manager.get_style('PpmCellDefault') or "#f8f9fa"
+            
         self.setBrush(QtGui.QBrush(QtGui.QColor(color)))
         self.status = status
+
+    def hoverEnterEvent(self, event):
+        """Подсветка при наведении мыши"""
+        from ui.styles.style_manager import style_manager
+        hover_color = style_manager.get_style('PpmCellHover') or "#e9ecef"
+        
+        # Сохраняем текущий цвет если это статусный цвет
+        if self.status == "ok":
+            hover_color = style_manager.get_style('PpmCellOk') or "#28a745"
+        elif self.status == "fail":
+            hover_color = style_manager.get_style('PpmCellFail') or "#dc3545"
+            
+        # Делаем цвет немного ярче для эффекта hover
+        color = QtGui.QColor(hover_color)
+        color = color.lighter(110)
+        self.setBrush(QtGui.QBrush(color))
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        """Восстанавливаем цвет при уходе мыши"""
+        self.set_status(self.status)
+        super().hoverLeaveEvent(event)
 
     def mousePressEvent(self, event):
         # Обрабатываем только левый клик для выбора
@@ -78,14 +114,22 @@ class PpmFieldView(QtWidgets.QGraphicsView):
         self.scene().clear()
         self.rects.clear()
         self.texts.clear()
+        
+        from ui.styles.style_manager import style_manager
+        text_color = style_manager.get_style('PpmTextColor') or "#212529"
+        font_size = int(style_manager.get_style('PpmTextSize') or "10")
+        
         for col in range(4):
             for row in range(8):
                 ppm_num = col * 8 + row + 1
                 rect = PpmRect(ppm_num, self.parent_widget, 0, 0, 1, 1)
                 self.scene().addItem(rect)
                 self.rects[ppm_num] = rect
-                text = self.scene().addText(f"ППМ {ppm_num}", QtGui.QFont("Arial", 8))
-                text.setDefaultTextColor(QtGui.QColor("black"))
+                
+                # Создаем текст с лучшим шрифтом и размером
+                font = QtGui.QFont("Segoe UI", font_size, QtGui.QFont.Weight.DemiBold)
+                text = self.scene().addText(f"ППМ {ppm_num}", font)
+                text.setDefaultTextColor(QtGui.QColor(text_color))
                 self.texts[ppm_num] = text
         self.update_layout()
 
@@ -97,13 +141,32 @@ class PpmFieldView(QtWidgets.QGraphicsView):
     def update_layout(self):
         w = self.viewport().width() / 4
         h = self.viewport().height() / 8
+        
+        # Добавляем отступы между ячейками для красоты
+        margin = 2
+        cell_w = w - margin
+        cell_h = h - margin
+        
         for col in range(4):
             for row in range(8):
                 ppm_num = col * 8 + row + 1
                 rect = self.rects[ppm_num]
-                rect.setRect(col*w, row*h, w, h)
+                
+                # Позиционируем ячейки с отступами
+                x = col * w + margin / 2
+                y = row * h + margin / 2
+                rect.setRect(x, y, cell_w, cell_h)
+                
+                # Центрируем текст в ячейке
                 text = self.texts[ppm_num]
-                text.setPos(col*w+2, row*h+h/3)
+                text_rect = text.boundingRect()
+                
+                # Вычисляем центральную позицию
+                text_x = x + (cell_w - text_rect.width()) / 2
+                text_y = y + (cell_h - text_rect.height()) / 2
+                
+                text.setPos(text_x, text_y)
+                
         self.scene().setSceneRect(0, 0, 4*w, 8*h)
 
     def update_ppm(self, ppm_num, status):
@@ -114,14 +177,20 @@ class PpmFieldView(QtWidgets.QGraphicsView):
         """Определяет номер ППМ по позиции клика"""
         w = self.viewport().width() / 4
         h = self.viewport().height() / 8
+        margin = 2
         
         col = int(pos.x() / w)
         row = int(pos.y() / h)
         
-        # Проверяем границы
+        # Проверяем границы и учитываем отступы
         if 0 <= col < 4 and 0 <= row < 8:
-            ppm_num = col * 8 + row + 1
-            return ppm_num
+            # Проверяем, что клик попал именно в ячейку, а не в отступ
+            x_in_cell = pos.x() - col * w
+            y_in_cell = pos.y() - row * h
+            
+            if x_in_cell >= margin/2 and y_in_cell >= margin/2:
+                ppm_num = col * 8 + row + 1
+                return ppm_num
         return None
     
     def show_context_menu(self, pos):
@@ -144,33 +213,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.coord_system_manager = CoordinateSystemManager("config/coordinate_systems.json")
         self.coord_system = None
         
-        self.btn_style_disconnected = '''
-            QPushButton {
-                background: #e74c3c;
-                color: white;
-                border-radius: 7px;
-                border: 1px solid #666;
-                padding: 5px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background: #c0392b;
-            }
-        '''
-        
-        self.btn_style_connected = '''
-            QPushButton {
-                background: #2ecc40;
-                color: white;
-                border-radius: 7px;
-                border: 1px solid #666;
-                padding: 5px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background: #27ae60;
-            }
-        '''
+
 
         self.layout = QtWidgets.QHBoxLayout(self)
 
@@ -193,7 +236,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         pna_layout.setContentsMargins(0, 0, 0, 0)
         self.pna_connect_btn = QtWidgets.QPushButton('Анализатор')
         self.pna_connect_btn.setMinimumHeight(40)
-        self.pna_connect_btn.setStyleSheet(self.btn_style_disconnected)
+        self.set_button_connection_state(self.pna_connect_btn, False)
         pna_layout.addWidget(self.pna_connect_btn)
         self.connect_layout.addWidget(pna_widget)
 
@@ -202,7 +245,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         psn_layout.setContentsMargins(0, 0, 0, 0)
         self.psn_connect_btn = QtWidgets.QPushButton('Сканер')
         self.psn_connect_btn.setMinimumHeight(40)
-        self.psn_connect_btn.setStyleSheet(self.btn_style_disconnected)
+        self.set_button_connection_state(self.psn_connect_btn, False)
         psn_layout.addWidget(self.psn_connect_btn)
         self.connect_layout.addWidget(psn_widget)
 
@@ -211,7 +254,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         ma_layout.setContentsMargins(0, 0, 0, 0)
         self.ma_connect_btn = QtWidgets.QPushButton('МА')
         self.ma_connect_btn.setMinimumHeight(40)
-        self.ma_connect_btn.setStyleSheet(self.btn_style_disconnected)
+        self.set_button_connection_state(self.ma_connect_btn, False)
         ma_layout.addWidget(self.ma_connect_btn)
 
         self.connect_layout.addWidget(ma_widget)
@@ -271,13 +314,27 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.pna_tab_layout.addRow('Кол-во точек:', self.pna_number_of_points)
 
         settings_layout = QtWidgets.QHBoxLayout()
+        settings_layout.setSpacing(4)  # Уменьшаем отступ между элементами
         self.settings_file_edit = QtWidgets.QLineEdit()
         self.settings_file_edit.setReadOnly(True)
-        self.load_file_btn = QtWidgets.QPushButton('Выбрать файл...')
+        self.settings_file_edit.setPlaceholderText('Выберите файл настроек...')
+        
+        # Создаем кнопку с иконкой папки
+        self.load_file_btn = QtWidgets.QPushButton()
+        self.load_file_btn.setProperty("iconButton", True)  # Для применения специального стиля
+        self.load_file_btn.setFixedSize(32, 28)  # Квадратная кнопка
+        self.load_file_btn.setToolTip('Выбрать файл настроек')
+        
+        # Получаем встроенную иконку Qt для папки
+        style = self.style()
+        folder_icon = style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
+        self.load_file_btn.setIcon(folder_icon)
+        self.load_file_btn.setIconSize(QSize(16, 16))
+        
         self.load_file_btn.clicked.connect(self.open_file_dialog)
         
-        settings_layout.addWidget(self.settings_file_edit, 1)
-        settings_layout.addWidget(self.load_file_btn)
+        settings_layout.addWidget(self.settings_file_edit, 1)  # stretch=1 для расширения поля
+        settings_layout.addWidget(self.load_file_btn, 0)  # stretch=0 для фиксированного размера кнопки
         
         self.pna_tab_layout.addRow('Файл настроек:', settings_layout)
         self.param_tabs.addTab(self.pna_tab, 'PNA')
@@ -290,11 +347,138 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.coord_system_combo.addItems(self.coord_system_manager.get_system_names())
         self.meas_tab_layout.addRow('Система координат:', self.coord_system_combo)
         
+        # Добавляем разделитель
+        separator = QtWidgets.QFrame()
+        separator.setFrameShape(QtWidgets.QFrame.HLine)
+        separator.setFrameShadow(QtWidgets.QFrame.Sunken)
+        self.meas_tab_layout.addRow(separator)
+        
+        # Добавляем заголовок критериев
+        criteria_label = QtWidgets.QLabel("Критерии проверки:")
+        criteria_label.setStyleSheet("font-weight: bold; color: #333333; margin-top: 5px;")
+        self.meas_tab_layout.addRow(criteria_label)
+        
+        # Допуски амплитуды
+        amp_tolerance_layout = QtWidgets.QHBoxLayout()
+        self.rx_amp_tolerance = QtWidgets.QDoubleSpinBox()
+        self.rx_amp_tolerance.setRange(0.1, 10.0)
+        self.rx_amp_tolerance.setSingleStep(0.1)
+        self.rx_amp_tolerance.setDecimals(1)
+        self.rx_amp_tolerance.setValue(4.5)  # Значение по умолчанию для приемника
+        self.rx_amp_tolerance.setSuffix(' дБ')
+        
+        self.tx_amp_tolerance = QtWidgets.QDoubleSpinBox()
+        self.tx_amp_tolerance.setRange(0.1, 10.0)
+        self.tx_amp_tolerance.setSingleStep(0.1)
+        self.tx_amp_tolerance.setDecimals(1)
+        self.tx_amp_tolerance.setValue(2.5)  # Значение по умолчанию для передатчика
+        self.tx_amp_tolerance.setSuffix(' дБ')
+        
+        amp_tolerance_layout.addWidget(QtWidgets.QLabel("RX:"))
+        amp_tolerance_layout.addWidget(self.rx_amp_tolerance)
+        amp_tolerance_layout.addWidget(QtWidgets.QLabel("TX:"))
+        amp_tolerance_layout.addWidget(self.tx_amp_tolerance)
+        self.meas_tab_layout.addRow('Допуск амплитуды:', amp_tolerance_layout)
+        
+        # Допуски фазы при включении всех ФВ
+        phase_tolerance_layout = QtWidgets.QHBoxLayout()
+        
+        # Минимальные значения фазы
+        rx_phase_min_layout = QtWidgets.QHBoxLayout()
+        self.rx_phase_min = QtWidgets.QDoubleSpinBox()
+        self.rx_phase_min.setRange(0.1, 50.0)
+        self.rx_phase_min.setSingleStep(0.1)
+        self.rx_phase_min.setDecimals(1)
+        self.rx_phase_min.setValue(2.0)  # Значение по умолчанию
+        self.rx_phase_min.setSuffix('°')
+        
+        self.tx_phase_min = QtWidgets.QDoubleSpinBox()
+        self.tx_phase_min.setRange(0.1, 50.0)
+        self.tx_phase_min.setSingleStep(0.1)
+        self.tx_phase_min.setDecimals(1)
+        self.tx_phase_min.setValue(2.0)  # Значение по умолчанию
+        self.tx_phase_min.setSuffix('°')
+        
+        rx_phase_min_layout.addWidget(QtWidgets.QLabel("RX:"))
+        rx_phase_min_layout.addWidget(self.rx_phase_min)
+        rx_phase_min_layout.addWidget(QtWidgets.QLabel("TX:"))
+        rx_phase_min_layout.addWidget(self.tx_phase_min)
+        self.meas_tab_layout.addRow('Мин. фаза (все ФВ):', rx_phase_min_layout)
+        
+        # Максимальные значения фазы
+        rx_phase_max_layout = QtWidgets.QHBoxLayout()
+        self.rx_phase_max = QtWidgets.QDoubleSpinBox()
+        self.rx_phase_max.setRange(1.0, 100.0)
+        self.rx_phase_max.setSingleStep(0.1)
+        self.rx_phase_max.setDecimals(1)
+        self.rx_phase_max.setValue(12.0)  # Значение по умолчанию
+        self.rx_phase_max.setSuffix('°')
+        
+        self.tx_phase_max = QtWidgets.QDoubleSpinBox()
+        self.tx_phase_max.setRange(1.0, 100.0)
+        self.tx_phase_max.setSingleStep(0.1)
+        self.tx_phase_max.setDecimals(1)
+        self.tx_phase_max.setValue(20.0)  # Значение по умолчанию
+        self.tx_phase_max.setSuffix('°')
+        
+        rx_phase_max_layout.addWidget(QtWidgets.QLabel("RX:"))
+        rx_phase_max_layout.addWidget(self.rx_phase_max)
+        rx_phase_max_layout.addWidget(QtWidgets.QLabel("TX:"))
+        rx_phase_max_layout.addWidget(self.tx_phase_max)
+        self.meas_tab_layout.addRow('Макс. фаза (все ФВ):', rx_phase_max_layout)
+        
+        # Добавляем еще один разделитель
+        separator2 = QtWidgets.QFrame()
+        separator2.setFrameShape(QtWidgets.QFrame.HLine)
+        separator2.setFrameShadow(QtWidgets.QFrame.Sunken)
+        self.meas_tab_layout.addRow(separator2)
+        
+        # Допуски для каждого фазовращателя отдельно
+        phase_shifter_label = QtWidgets.QLabel("Допуски фазовращателей:")
+        phase_shifter_label.setStyleSheet("font-weight: bold; color: #333333; margin-top: 5px;")
+        self.meas_tab_layout.addRow(phase_shifter_label)
+        
+        # Создаем элементы для каждого дискрета ФВ
+        self.phase_shifter_tolerances = {}
+        phase_angles = [5.625, 11.25, 22.5, 45, 90, 180]
+        
+        for angle in phase_angles:
+            ps_layout = QtWidgets.QHBoxLayout()
+            
+            # Минимальное отклонение
+            min_spinbox = QtWidgets.QDoubleSpinBox()
+            min_spinbox.setRange(-50.0, 50.0)
+            min_spinbox.setSingleStep(0.1)
+            min_spinbox.setDecimals(1)
+            min_spinbox.setValue(-2.0)  # Значение по умолчанию
+            min_spinbox.setSuffix('°')
+            
+            # Максимальное отклонение
+            max_spinbox = QtWidgets.QDoubleSpinBox()
+            max_spinbox.setRange(-50.0, 50.0)
+            max_spinbox.setSingleStep(0.1)
+            max_spinbox.setDecimals(1)
+            max_spinbox.setValue(2.0)  # Значение по умолчанию
+            max_spinbox.setSuffix('°')
+            
+            ps_layout.addWidget(QtWidgets.QLabel("от:"))
+            ps_layout.addWidget(min_spinbox)
+            ps_layout.addWidget(QtWidgets.QLabel("до:"))
+            ps_layout.addWidget(max_spinbox)
+            
+            self.phase_shifter_tolerances[angle] = {
+                'min': min_spinbox,
+                'max': max_spinbox
+            }
+            
+            self.meas_tab_layout.addRow(f'ФВ {angle}°:', ps_layout)
+        
         self.param_tabs.addTab(self.meas_tab, 'Meas')
         self.left_layout.addWidget(self.param_tabs, 1)
 
         self.apply_btn = QtWidgets.QPushButton('Применить параметры')
         self.left_layout.addWidget(self.apply_btn)
+        
         self.btns_layout = QtWidgets.QHBoxLayout()
         self.pause_btn = QtWidgets.QPushButton('Пауза')
         self.stop_btn = QtWidgets.QPushButton('Стоп')
@@ -308,12 +492,27 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.results_table = QtWidgets.QTableWidget()
         self.results_table.setColumnCount(12)
         self.results_table.setHorizontalHeaderLabels([
-            'ППМ', 'Амплитуда', 'Фаза', 'Статус амплитуды', 'Статус фазы',
-            'Дельта ФВ', 'ФВ 5,625', 'ФВ 11,25', 'ФВ 22,5', 'ФВ 45', 'ФВ 90', 'ФВ 180'])
+            'ППМ', 'Амп.\n(дБ)', 'Фаза\n(°)', 'Ст.\nАмп.', 'Ст.\nФазы',
+            'Δ ФВ', '5.625°', '11.25°', '22.5°', '45°', '90°', '180°'])
         self.results_table.setRowCount(32)
-        self.results_table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
-        self.results_table.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
+        
+        # Настраиваем размеры колонок для лучшего отображения
+        header = self.results_table.horizontalHeader()
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.Fixed)  # ППМ - фиксированный
+        header.resizeSection(0, 50)  # ППМ - 50px
+        
+        for i in range(1, 5):  # Амплитуда, Фаза, Статусы
+            header.setSectionResizeMode(i, QtWidgets.QHeaderView.ResizeToContents)
+        
+        for i in range(5, 12):  # ФВ колонки
+            header.setSectionResizeMode(i, QtWidgets.QHeaderView.Stretch)
+        
+        self.results_table.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Fixed)
+        self.results_table.verticalHeader().setDefaultSectionSize(25)  # Уменьшаем высоту строк
         self.results_table.verticalHeader().setVisible(False)
+        # Настройки для красивого отображения
+        self.results_table.setAlternatingRowColors(True)
+        self.results_table.setShowGrid(True)
         for row in range(32):
             self.results_table.setItem(row, 0, QtWidgets.QTableWidgetItem(f"{row+1}"))
             for col in range(1, 12):
@@ -330,7 +529,6 @@ class CheckMaWidget(QtWidgets.QWidget):
 
         self.console = QtWidgets.QTextEdit()
         self.console.setReadOnly(True)
-        self.console.setStyleSheet('background: #fff; color: #000; font-family: "PT Mono";')
         self.console.setFixedHeight(200)
         self.right_layout.addWidget(self.console, stretch=1)
 
@@ -358,6 +556,24 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.set_buttons_enabled(True)
         self.device_settings = {}
         self.pna_settings = {}
+        
+        # Инициализация критериев проверки значениями по умолчанию
+        self.check_criteria = {
+            'rx_amp_max': 4.5,
+            'tx_amp_max': 2.5,
+            'rx_phase_min': 2.0,
+            'rx_phase_max': 12.0,
+            'tx_phase_min': 2.0,
+            'tx_phase_max': 20.0,
+            'phase_shifter_tolerances': {
+                5.625: {'min': -2.0, 'max': 2.0},
+                11.25: {'min': -2.0, 'max': 2.0},
+                22.5: {'min': -2.0, 'max': 2.0},
+                45: {'min': -2.0, 'max': 2.0},
+                90: {'min': -2.0, 'max': 2.0},
+                180: {'min': -2.0, 'max': 2.0}
+            }
+        }
         
         # Словарь для хранения данных ППМ
         self.ppm_data = {}
@@ -410,52 +626,77 @@ class CheckMaWidget(QtWidgets.QWidget):
 
             self.results_table.setItem(row, 0, QtWidgets.QTableWidgetItem(str(ppm_num)))
 
-            if np.isnan(amp) or np.isnan(phase):
-                self.results_table.setItem(row, 1, QtWidgets.QTableWidgetItem(""))
-                self.results_table.setItem(row, 2, QtWidgets.QTableWidgetItem(""))
+            # Обновляем значения амплитуды и фазы
+            # amp теперь уже содержит разность с нормировочным значением
+            if np.isnan(amp):
+                self.results_table.setItem(row, 1, self.create_centered_table_item(""))
             else:
-                self.results_table.setItem(row, 1, QtWidgets.QTableWidgetItem(f"{amp:.2f}"))
-                self.results_table.setItem(row, 2, QtWidgets.QTableWidgetItem(f"{phase:.1f}"))
-
-            # Определяем статусы амплитуды и фазы на основе критериев CheckMA
-            amp_ok = True
-            phase_ok = True
-            
-            if not np.isnan(amp):
-                # Критерии амплитуды (из CheckMA)
-                rx_amp_max = 4.5
-                tx_amp_max = 2.5
-                amp_max = rx_amp_max if self.channel_combo.currentText() == 'Приемник' else tx_amp_max
-                amp_ok = -amp_max <= amp <= amp_max
-            
-            if not np.isnan(phase):
-                # Критерии фазы (из CheckMA)
-                rx_phase_diff_min, rx_phase_diff_max = 2, 12
-                tx_phase_diff_min, tx_phase_diff_max = 2, 20
+                self.results_table.setItem(row, 1, self.create_centered_table_item(f"{amp:.2f}"))
                 
-                if self.channel_combo.currentText() == 'Приемник':
-                    phase_ok = rx_phase_diff_min <= phase <= rx_phase_diff_max
-                else:
-                    phase_ok = tx_phase_diff_min < phase < tx_phase_diff_max
-
-            # Статус амплитуды
-            amp_status = "OK" if amp_ok else "FAIL"
-            amp_status_item = QtWidgets.QTableWidgetItem(amp_status)
-            if amp_ok:
-                amp_status_item.setBackground(QtGui.QColor("#2ecc40"))
+            if np.isnan(phase):
+                self.results_table.setItem(row, 2, self.create_centered_table_item(""))
             else:
-                amp_status_item.setBackground(QtGui.QColor("#e74c3c"))
-            amp_status_item.setForeground(QtGui.QColor("white"))
+                self.results_table.setItem(row, 2, self.create_centered_table_item(f"{phase:.1f}"))
+
+            # Определяем статусы амплитуды и фазы на основе новой логики и критериев из интерфейса
+            # Статус амплитуды (amp уже содержит разность с нормировочным значением)
+            if np.isnan(amp):
+                # Для NaN значений создаем нейтральную ячейку
+                amp_status_item = self.create_neutral_status_item("-")
+            else:
+                # Критерии амплитуды из настроек интерфейса (amp уже разность с нормировочным)
+                amp_max = self.rx_amp_tolerance.value() if self.channel_combo.currentText() == 'Приемник' else self.tx_amp_tolerance.value()
+                amp_ok = -amp_max <= amp <= amp_max
+                
+                amp_status = "OK" if amp_ok else "FAIL"
+                amp_status_item = self.create_status_table_item(amp_status, amp_ok)
+            
             self.results_table.setItem(row, 3, amp_status_item)
             
-            # Статус фазы
-            phase_status = "OK" if phase_ok else "FAIL"
-            phase_status_item = QtWidgets.QTableWidgetItem(phase_status)
-            if phase_ok:
-                phase_status_item.setBackground(QtGui.QColor("#2ecc40"))
+            # Статус фазы - определяется по новой логике
+            if np.isnan(phase):
+                # Для NaN значений создаем нейтральную ячейку
+                phase_status_item = self.create_neutral_status_item("-")
             else:
-                phase_status_item.setBackground(QtGui.QColor("#e74c3c"))
-            phase_status_item.setForeground(QtGui.QColor("white"))
+                # Сначала проверяем фазу при включении всех ФВ
+                if self.channel_combo.currentText() == 'Приемник':
+                    phase_min = self.rx_phase_min.value()
+                    phase_max = self.rx_phase_max.value()
+                    phase_all_ok = phase_min <= phase <= phase_max
+                else:
+                    phase_min = self.tx_phase_min.value()
+                    phase_max = self.tx_phase_max.value()
+                    phase_all_ok = phase_min < phase < phase_max
+
+                if phase_all_ok:
+                    # Если все ФВ вместе прошли проверку - статус OK
+                    phase_final_ok = True
+                else:
+                    # Если все ФВ вместе не прошли, проверяем отдельные ФВ
+                    if fv_data and len(fv_data) > 6:  # Проверяем что есть данные отдельных ФВ
+                        individual_fv_ok = []
+                        fv_angles = [5.625, 11.25, 22.5, 45, 90, 180]
+                        
+                        for i, fv_angle in enumerate(fv_angles):
+                            if i + 1 < len(fv_data) and not np.isnan(fv_data[i + 1]):
+                                fv_diff = fv_data[i + 1]
+                                if fv_angle in self.check_criteria['phase_shifter_tolerances']:
+                                    min_tolerance = self.check_criteria['phase_shifter_tolerances'][fv_angle]['min']
+                                    max_tolerance = self.check_criteria['phase_shifter_tolerances'][fv_angle]['max']
+                                    fv_ok = min_tolerance <= fv_diff <= max_tolerance
+                                else:
+                                    # Допуски по умолчанию ±2°
+                                    fv_ok = -2.0 <= fv_diff <= 2.0
+                                individual_fv_ok.append(fv_ok)
+                        
+                        # Все отдельные ФВ должны пройти проверку
+                        phase_final_ok = len(individual_fv_ok) > 0 and all(individual_fv_ok)
+                    else:
+                        phase_final_ok = False
+
+                phase_status = "OK" if phase_final_ok else "FAIL"
+                phase_status_item = self.create_status_table_item(phase_status, phase_final_ok)
+            
             self.results_table.setItem(row, 4, phase_status_item)
 
             # Обработка данных ФВ
@@ -488,11 +729,52 @@ class CheckMaWidget(QtWidgets.QWidget):
                 for i in range(6):
                     self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(""))
 
-            # Обновляем 2D вид
-            if result:
-                self.ppm_field_view.update_ppm(ppm_num, "ok")
+            # Обновляем 2D вид на основе реальных статусов амплитуды и фазы
+            # Определяем общий статус на основе статусов амплитуды и фазы
+            if np.isnan(amp) or np.isnan(phase):
+                overall_status = "fail"
             else:
-                self.ppm_field_view.update_ppm(ppm_num, "fail")
+                # Проверяем амплитуду (amp уже содержит разность с нормировочным значением)
+                amp_max = self.rx_amp_tolerance.value() if self.channel_combo.currentText() == 'Приемник' else self.tx_amp_tolerance.value()
+                amp_ok = -amp_max <= amp <= amp_max
+                
+                # Проверяем фазу по новой логике
+                if self.channel_combo.currentText() == 'Приемник':
+                    phase_min = self.rx_phase_min.value()
+                    phase_max = self.rx_phase_max.value()
+                    phase_all_ok = phase_min <= phase <= phase_max
+                else:
+                    phase_min = self.tx_phase_min.value()
+                    phase_max = self.tx_phase_max.value()
+                    phase_all_ok = phase_min < phase < phase_max
+
+                if phase_all_ok:
+                    phase_final_ok = True
+                else:
+                    # Проверяем отдельные ФВ
+                    if fv_data and len(fv_data) > 6:
+                        individual_fv_ok = []
+                        fv_angles = [5.625, 11.25, 22.5, 45, 90, 180]
+                        
+                        for i, fv_angle in enumerate(fv_angles):
+                            if i + 1 < len(fv_data) and not np.isnan(fv_data[i + 1]):
+                                fv_diff = fv_data[i + 1]
+                                if fv_angle in self.check_criteria['phase_shifter_tolerances']:
+                                    min_tolerance = self.check_criteria['phase_shifter_tolerances'][fv_angle]['min']
+                                    max_tolerance = self.check_criteria['phase_shifter_tolerances'][fv_angle]['max']
+                                    fv_ok = min_tolerance <= fv_diff <= max_tolerance
+                                else:
+                                    fv_ok = -2.0 <= fv_diff <= 2.0
+                                individual_fv_ok.append(fv_ok)
+                        
+                        phase_final_ok = len(individual_fv_ok) > 0 and all(individual_fv_ok)
+                    else:
+                        phase_final_ok = False
+                
+                # Общий статус: и амплитуда, и фаза должны быть OK
+                overall_status = "ok" if (amp_ok and phase_final_ok) else "fail"
+            
+            self.ppm_field_view.update_ppm(ppm_num, overall_status)
 
             self.results_table.viewport().update()
             QtCore.QCoreApplication.processEvents()
@@ -512,6 +794,55 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.stop_btn.setEnabled(not enabled)
         self.pause_btn.setEnabled(not enabled)
 
+    def set_button_connection_state(self, button: QtWidgets.QPushButton, connected: bool):
+        """Устанавливает состояние подключения кнопки через динамические стили"""
+        if connected:
+            style = style_manager.get_style('ButtonConnected')
+        else:
+            style = style_manager.get_style('ButtonDisconnected')
+        
+        if style:
+            button.setStyleSheet(style)
+    
+    def create_status_table_item(self, text: str, is_success: bool) -> QtWidgets.QTableWidgetItem:
+        """Создает красиво стилизованную ячейку таблицы для статуса"""
+        item = QtWidgets.QTableWidgetItem(text)
+        item.setTextAlignment(QtCore.Qt.AlignCenter)
+        
+        if is_success:
+            item.setBackground(QtGui.QColor("#d4edda"))  # Светло-зеленый фон
+            item.setForeground(QtGui.QColor("#155724"))  # Темно-зеленый текст
+        else:
+            item.setBackground(QtGui.QColor("#f8d7da"))  # Светло-красный фон  
+            item.setForeground(QtGui.QColor("#721c24"))  # Темно-красный текст
+        
+        # Делаем ячейку нередактируемой
+        item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEditable)
+        
+        return item
+    
+    def create_centered_table_item(self, text: str) -> QtWidgets.QTableWidgetItem:
+        """Создает центрированную ячейку таблицы"""
+        item = QtWidgets.QTableWidgetItem(text)
+        item.setTextAlignment(QtCore.Qt.AlignCenter)
+        # Делаем ячейку нередактируемой
+        item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEditable)
+        return item
+    
+    def create_neutral_status_item(self, text: str = "-") -> QtWidgets.QTableWidgetItem:
+        """Создает нейтральную ячейку статуса для случаев отсутствия данных"""
+        item = QtWidgets.QTableWidgetItem(text)
+        item.setTextAlignment(QtCore.Qt.AlignCenter)
+        
+        # Используем нейтральный цвет для отсутствующих данных
+        item.setBackground(QtGui.QColor("#f8f9fa"))  # Светло-серый фон
+        item.setForeground(QtGui.QColor("#6c757d"))  # Серый текст
+        
+        # Делаем ячейку нередактируемой
+        item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEditable)
+        
+        return item
+
     def apply_params(self):
         """Сохраняет параметры из вкладок"""
         # MA
@@ -524,7 +855,24 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.pna_settings['freq_stop'] = self.pna_stop_freq.value() * 10**6
         self.pna_settings['freq_points'] = self.pna_number_of_points.currentText()
         self.pna_settings['settings_file'] = self.settings_file_edit.text()
-
+        
+        # Meas - критерии проверки
+        self.check_criteria = {
+            'rx_amp_max': self.rx_amp_tolerance.value(),
+            'tx_amp_max': self.tx_amp_tolerance.value(),
+            'rx_phase_min': self.rx_phase_min.value(),
+            'rx_phase_max': self.rx_phase_max.value(),
+            'tx_phase_min': self.tx_phase_min.value(),
+            'tx_phase_max': self.tx_phase_max.value(),
+            'phase_shifter_tolerances': {}
+        }
+        
+        # Сохраняем допуски для каждого фазовращателя
+        for angle, controls in self.phase_shifter_tolerances.items():
+            self.check_criteria['phase_shifter_tolerances'][angle] = {
+                'min': controls['min'].value(),
+                'max': controls['max'].value()
+            }
 
         coord_system_name = self.coord_system_combo.currentText()
         self.coord_system = self.coord_system_manager.get_system_by_name(coord_system_name)
@@ -634,9 +982,19 @@ class CheckMaWidget(QtWidgets.QWidget):
                     raise
 
             class CheckMAWithCallback(CheckMA):
-                def __init__(self, ma, psn, pna, stop_event, pause_event, callback):
+                def __init__(self, ma, psn, pna, stop_event, pause_event, callback, criteria=None):
                     super().__init__(ma, psn, pna, stop_event, pause_event)
                     self.callback = callback
+                    
+                    # Применяем новые критерии проверки если они переданы
+                    if criteria:
+                        self.rx_amp_max = criteria.get('rx_amp_max', self.rx_amp_max)
+                        self.tx_amp_max = criteria.get('tx_amp_max', self.tx_amp_max)
+                        self.rx_phase_diff_min = criteria.get('rx_phase_min', self.rx_phase_diff_min)
+                        self.rx_phase_diff_max = criteria.get('rx_phase_max', self.rx_phase_diff_max)
+                        self.tx_phase_diff_min = criteria.get('tx_phase_min', self.tx_phase_diff_min)
+                        self.tx_phase_diff_max = criteria.get('tx_phase_max', self.tx_phase_diff_max)
+                        self.phase_shifter_tolerances = criteria.get('phase_shifter_tolerances', None)
                 
                 def check_ppm(self, ppm_num: int, channel: Channel, direction: Direction):
                     """Переопределяем метод для отправки результатов через callback"""
@@ -654,7 +1012,8 @@ class CheckMaWidget(QtWidgets.QWidget):
                 pna=self.pna, 
                 stop_event=self._stop_flag, 
                 pause_event=self._pause_flag,
-                callback=self.update_table_signal
+                callback=self.update_table_signal,
+                criteria=self.check_criteria
             )
 
             check.start(channel=channel, direction=direction)
@@ -681,7 +1040,7 @@ class CheckMaWidget(QtWidgets.QWidget):
             try:
                 self.ma.disconnect()
                 self.ma = None
-                self.ma_connect_btn.setStyleSheet(self.btn_style_disconnected)
+                self.set_button_connection_state(self.ma_connect_btn, False)
                 logger.info('МА успешно отключен')
                 return
             except Exception as e:
@@ -696,11 +1055,11 @@ class CheckMaWidget(QtWidgets.QWidget):
             self.ma.connect()
             if self.ma.bu_addr:
                 self.ma_connect_btn.setText(f'МА №{self.ma.bu_addr}')
-            self.ma_connect_btn.setStyleSheet(self.btn_style_connected)
+            self.set_button_connection_state(self.ma_connect_btn, True)
             logger.info(f'МА успешно подключен {"" if mode == 0 else "(тестовый режим)"}')
         except Exception as e:
             self.ma = None
-            self.ma_connect_btn.setStyleSheet(self.btn_style_disconnected)
+            self.set_button_connection_state(self.ma_connect_btn, False)
             self.show_error_message("Ошибка подключения МА", f"Не удалось подключиться к МА: {str(e)}")
 
     def connect_pna(self):
@@ -709,7 +1068,7 @@ class CheckMaWidget(QtWidgets.QWidget):
             try:
                 self.pna.disconnect()
                 self.pna = None
-                self.pna_connect_btn.setStyleSheet(self.btn_style_disconnected)
+                self.set_button_connection_state(self.pna_connect_btn, False)
                 logger.info('PNA успешно отключен')
                 return
             except Exception as e:
@@ -723,11 +1082,11 @@ class CheckMaWidget(QtWidgets.QWidget):
         try:
             self.pna = PNA(ip=ip, port=port, mode=mode)
             self.pna.connect()
-            self.pna_connect_btn.setStyleSheet(self.btn_style_connected)
+            self.set_button_connection_state(self.pna_connect_btn, True)
             logger.info(f'PNA успешно подключен {"" if mode == 0 else "(тестовый режим)"}')
         except Exception as e:
             self.pna = None
-            self.pna_connect_btn.setStyleSheet(self.btn_style_disconnected)
+            self.set_button_connection_state(self.pna_connect_btn, False)
             self.show_error_message("Ошибка подключения PNA", f"Не удалось подключиться к PNA: {str(e)}")
 
     def connect_psn(self):
@@ -736,7 +1095,7 @@ class CheckMaWidget(QtWidgets.QWidget):
             try:
                 self.psn.disconnect()
                 self.psn = None
-                self.psn_connect_btn.setStyleSheet(self.btn_style_disconnected)
+                self.set_button_connection_state(self.psn_connect_btn, False)
                 logger.info('PSN успешно отключен')
                 return
             except Exception as e:
@@ -750,11 +1109,11 @@ class CheckMaWidget(QtWidgets.QWidget):
         try:
             self.psn = PSN(ip=ip, port=port, mode=mode)
             self.psn.connect()
-            self.psn_connect_btn.setStyleSheet(self.btn_style_connected)
+            self.set_button_connection_state(self.psn_connect_btn, True)
             logger.info(f'PSN успешно подключен {"" if mode == 0 else "(тестовый режим)"}')
         except Exception as e:
             self.psn = None
-            self.psn_connect_btn.setStyleSheet(self.btn_style_disconnected)
+            self.set_button_connection_state(self.psn_connect_btn, False)
             self.show_error_message("Ошибка подключения PSN", f"Не удалось подключиться к PSN: {str(e)}")
 
     def set_device_settings(self, settings: dict):
@@ -886,3 +1245,4 @@ class CheckMaWidget(QtWidgets.QWidget):
 
         except Exception as e:
             logger.error(f'Ошибка при применении настроек к интерфейсу: {e}')
+

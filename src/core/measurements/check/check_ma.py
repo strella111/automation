@@ -49,6 +49,9 @@ class CheckMA:
         # Дискреты ФВ для проверки
         self.phase_shifts = [5.625, 11.25, 22.5, 45, 90, 180]
         
+        # Допуски для отдельных фазовращателей (будут переданы из интерфейса)
+        self.phase_shifter_tolerances = None
+        
         self.ppm_norm_number = 12
         self.ppm_norm_cords = [-14, 1.1]
         self.x_cords = [-42, -14, 14, 42]
@@ -56,6 +59,10 @@ class CheckMA:
         self._last_measurement = None 
         self.channel = None
         self.direction = None
+        
+        # Нормировочные значения (будут установлены при нормировке)
+        self.norm_amp = None
+        self.norm_phase = None
 
     def _check_connections(self) -> bool:
         """
@@ -77,15 +84,28 @@ class CheckMA:
         else:  # Transmitter
             return self.tx_phase_diff_min < phase_diff < self.tx_phase_diff_max
             
-    def _check_amplitude(self, amp_zero: float, amp_all: float, channel: Channel) -> bool:
-        """Проверяет амплитуду в соответствии с требованиями для канала"""
-        amp_min = min(amp_zero, amp_all)
-        amp_max = max(amp_zero, amp_all)
+    def _check_individual_phase_shifter(self, phase_diff: float, expected_angle: float, tolerances=None) -> bool:
+        """Проверяет отдельный фазовращатель с учетом его ожидаемого угла и допусков"""
+        if tolerances and expected_angle in tolerances:
+            min_tolerance = tolerances[expected_angle]['min']
+            max_tolerance = tolerances[expected_angle]['max']
+            return min_tolerance <= phase_diff <= max_tolerance
+        else:
+            # Допуски по умолчанию ±2°
+            return -2.0 <= phase_diff <= 2.0
+            
+    def _check_amplitude(self, amp_current: float, channel: Channel) -> bool:
+        """Проверяет амплитуду относительно нормировочного значения"""
+        if self.norm_amp is None:
+            logger.warning("Нормировочное значение амплитуды не установлено")
+            return False
+            
+        amp_diff = amp_current - self.norm_amp  # Разность с нормировочным значением
         
         if channel == Channel.Receiver:
-            return -self.rx_amp_max <= amp_min and amp_max <= self.rx_amp_max
+            return -self.rx_amp_max <= amp_diff <= self.rx_amp_max
         else:  # Transmitter
-            return -self.tx_amp_max <= amp_min and amp_max <= self.tx_amp_max
+            return -self.tx_amp_max <= amp_diff <= self.tx_amp_max
             
     def _normalize_phase(self, phase: float) -> float:
         """Нормализует фазу в диапазон [-180, 180]"""
@@ -101,43 +121,62 @@ class CheckMA:
         return phase_diff
         
     def _check_ppm(self, ppm_num: int, channel: Channel, direction: Direction) -> tuple[bool, tuple[float, float, list]]:
-        """Проверяет один ППМ"""
+        """Проверяет один ППМ согласно новой логике"""
         try:
             self.ma.switch_ppm(ppm_num, channel, direction, PpmState.ON)
             self.ma.set_phase_shifter(ppm_num, channel, direction, 0)
 
+            # Измеряем нормировочные значения (ФВ = 0)
             amp_zero, phase_zero = self.pna.get_center_freq_data()
 
-            # Устанавливаем максимальное значение ФВ
+            # Устанавливаем максимальное значение ФВ (все включены)
             self.ma.set_phase_shifter(ppm_num, channel, direction, 63)
             
-            # Измеряем амплитуду и фазу с включенным ФВ
+            # Измеряем амплитуду и фазу с включенными всеми ФВ
             amp_all, phase_all = self.pna.get_center_freq_data()
             
-            # Вычисляем разность фаз
+            # Вычисляем разности
+            amp_diff = amp_all - self.norm_amp if self.norm_amp is not None else amp_all
             phase_diff = self._calculate_phase_diff(phase_all, phase_zero)
             
-            # Проверяем разность фаз
-            phase_ok = self._check_phase_diff(phase_diff, channel)
+            # Проверяем амплитуду относительно нормировочного значения
+            amp_ok = self._check_amplitude(amp_all, channel)
             
-            # Проверяем амплитуду
-            amp_ok = self._check_amplitude(amp_zero, amp_all, channel)
+            # Проверяем фазу при включении всех ФВ
+            phase_all_ok = self._check_phase_diff(phase_diff, channel)
             
-            # Если фаза не прошла проверку, проверяем все значения ФВ
+            # Инициализируем список значений ФВ
             phase_vals = [phase_diff]
-            if not phase_ok:
-                fv_angles = [5.625, 11.25, 22.5, 45, 90, 180]
-                for fv_angle in fv_angles:
-                    value = int(fv_angle / 5.625)
-                    self.ma.set_phase_shifter(ppm_num, channel, direction, value)
-                    _, phase_err = self.pna.get_center_freq_data()
-                    phase_vals.append(self._calculate_phase_diff(phase_err, phase_zero))
-            else:
+            
+            # Определяем финальный статус фазы
+            if phase_all_ok:
+                # Если все ФВ вместе прошли проверку - статус OK
+                phase_final_ok = True
+                # Заполняем остальные значения как NaN (не измерялись)
                 phase_vals.extend([np.nan] * 6)
+            else:
+                                 # Если все ФВ вместе не прошли, проверяем каждый ФВ отдельно
+                 fv_angles = [5.625, 11.25, 22.5, 45, 90, 180]
+                 individual_fv_results = []
+                 
+                 for fv_angle in fv_angles:
+                     value = int(fv_angle / 5.625)
+                     self.ma.set_phase_shifter(ppm_num, channel, direction, value)
+                     _, phase_fv = self.pna.get_center_freq_data()
+                     phase_fv_diff = self._calculate_phase_diff(phase_fv, phase_zero)
+                     phase_vals.append(phase_fv_diff)
+                     
+                     # Проверяем каждый ФВ отдельно с его собственными допусками
+                     fv_ok = self._check_individual_phase_shifter(phase_fv_diff, fv_angle, self.phase_shifter_tolerances)
+                     individual_fv_results.append(fv_ok)
+                 
+                 # Все отдельные ФВ должны пройти проверку для статуса OK
+                 phase_final_ok = all(individual_fv_results)
 
-            result = phase_ok and amp_ok
+            # Общий результат: и амплитуда, и фаза должны быть OK
+            result = amp_ok and phase_final_ok
 
-            return result, (amp_all, phase_all, phase_vals)
+            return result, (amp_diff, phase_diff, phase_vals)
             
         except Exception as e:
             logger.error(f"Ошибка при проверке ППМ {ppm_num}: {e}")
@@ -201,6 +240,15 @@ class CheckMA:
                 self.psn.move(self.ppm_norm_cords[0], self.ppm_norm_cords[1])
             except Exception as e:
                 raise PlanarScannerError(f"Ошибка перемещения к нормализующему ППМ: {e}")
+            
+            try:
+                logger.info("Нормировка PNA...")
+                self.norm_amp, self.norm_phase = self.pna.get_center_freq_data()
+                logger.info(f"Нормировочные значения: амплитуда={self.norm_amp:.2f} дБ, фаза={self.norm_phase:.1f}°")
+            except Exception as e:
+                logger.warning(f"Ошибка при нормировке PNA: {e}")
+                self.norm_amp = None
+                self.norm_phase = None
             
             self.ma.turn_on_vips()
             
