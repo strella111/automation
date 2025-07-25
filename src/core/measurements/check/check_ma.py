@@ -4,6 +4,7 @@ from ...devices.ma import MA
 from ...devices.pna import PNA
 from ...devices.psn import PSN
 from core.common.enums import Channel, Direction, PpmState
+from utils.excel_module import get_or_create_excel
 from ...common.exceptions import WrongInstrumentError, PlanarScannerError
 from PyQt5.QtCore import QThread
 import threading
@@ -21,7 +22,7 @@ class CheckMA:
         
         Args:
             ma: Модуль антенный
-            psn: Позиционер
+            psn: Планарный сканер
             pna: Анализатор цепей
             stop_event: Событие для остановки измерений
             pause_event: Событие для приостановки измерений
@@ -37,19 +38,17 @@ class CheckMA:
         self.pna = pna
         self._stop_event = stop_event or threading.Event()
         self._pause_event = pause_event or threading.Event()
-        
-        # Параметры проверки
+
         self.rx_phase_diff_max = 12  # Максимальная разность фаз для RX
         self.rx_phase_diff_min = 2   # Минимальная разность фаз для RX
         self.tx_phase_diff_max = 20  # Максимальная разность фаз для TX
         self.tx_phase_diff_min = 2   # Минимальная разность фаз для TX
         self.rx_amp_max = 4.5        # Максимальная амплитуда для RX
         self.tx_amp_max = 2.5        # Максимальная амплитуда для TX
-        
-        # Дискреты ФВ для проверки
+
         self.phase_shifts = [5.625, 11.25, 22.5, 45, 90, 180]
-        
-        # Допуски для отдельных фазовращателей (будут переданы из интерфейса)
+        self.delay_lines = [0, 1, 2, 4, 8]
+
         self.phase_shifter_tolerances = None
         
         self.ppm_norm_number = 12
@@ -59,8 +58,7 @@ class CheckMA:
         self._last_measurement = None 
         self.channel = None
         self.direction = None
-        
-        # Нормировочные значения (будут установлены при нормировке)
+
         self.norm_amp = None
         self.norm_phase = None
 
@@ -91,7 +89,6 @@ class CheckMA:
             max_tolerance = tolerances[expected_angle]['max']
             return min_tolerance <= phase_diff <= max_tolerance
         else:
-            # Допуски по умолчанию ±2°
             return -2.0 <= phase_diff <= 2.0
             
     def _check_amplitude(self, amp_current: float, channel: Channel) -> bool:
@@ -100,7 +97,7 @@ class CheckMA:
             logger.warning("Нормировочное значение амплитуды не установлено")
             return False
             
-        amp_diff = amp_current - self.norm_amp  # Разность с нормировочным значением
+        amp_diff = amp_current - self.norm_amp
         
         if channel == Channel.Receiver:
             return -self.rx_amp_max <= amp_diff <= self.rx_amp_max
@@ -121,41 +118,29 @@ class CheckMA:
         return phase_diff
         
     def _check_ppm(self, ppm_num: int, channel: Channel, direction: Direction) -> tuple[bool, tuple[float, float, list]]:
-        """Проверяет один ППМ согласно новой логике"""
+        """Проверяет один ППМ"""
         try:
             self.ma.switch_ppm(ppm_num, channel, direction, PpmState.ON)
             self.ma.set_phase_shifter(ppm_num, channel, direction, 0)
 
-            # Измеряем нормировочные значения (ФВ = 0)
             amp_zero, phase_zero = self.pna.get_center_freq_data()
-
-            # Устанавливаем максимальное значение ФВ (все включены)
             self.ma.set_phase_shifter(ppm_num, channel, direction, 63)
-            
-            # Измеряем амплитуду и фазу с включенными всеми ФВ
+
             amp_all, phase_all = self.pna.get_center_freq_data()
-            
-            # Вычисляем разности
+
             amp_diff = amp_all - self.norm_amp if self.norm_amp is not None else amp_all
             phase_diff = self._calculate_phase_diff(phase_all, phase_zero)
-            
-            # Проверяем амплитуду относительно нормировочного значения
+
             amp_ok = self._check_amplitude(amp_all, channel)
-            
-            # Проверяем фазу при включении всех ФВ
+
             phase_all_ok = self._check_phase_diff(phase_diff, channel)
-            
-            # Инициализируем список значений ФВ
+
             phase_vals = [phase_diff]
-            
-            # Определяем финальный статус фазы
+
             if phase_all_ok:
-                # Если все ФВ вместе прошли проверку - статус OK
                 phase_final_ok = True
-                # Заполняем остальные значения как NaN (не измерялись)
                 phase_vals.extend([np.nan] * 6)
             else:
-                                 # Если все ФВ вместе не прошли, проверяем каждый ФВ отдельно
                  fv_angles = [5.625, 11.25, 22.5, 45, 90, 180]
                  individual_fv_results = []
                  
@@ -165,15 +150,12 @@ class CheckMA:
                      _, phase_fv = self.pna.get_center_freq_data()
                      phase_fv_diff = self._calculate_phase_diff(phase_fv, phase_zero)
                      phase_vals.append(phase_fv_diff)
-                     
-                     # Проверяем каждый ФВ отдельно с его собственными допусками
+
                      fv_ok = self._check_individual_phase_shifter(phase_fv_diff, fv_angle, self.phase_shifter_tolerances)
                      individual_fv_results.append(fv_ok)
-                 
-                 # Все отдельные ФВ должны пройти проверку для статуса OK
+
                  phase_final_ok = all(individual_fv_results)
 
-            # Общий результат: и амплитуда, и фаза должны быть OK
             result = amp_ok and phase_final_ok
 
             return result, (amp_diff, phase_diff, phase_vals)
@@ -232,7 +214,18 @@ class CheckMA:
             WrongInstrumentError: При ошибке работы с устройствами
         """
         results = []
+        delay_results = []
         try:
+
+            worksheet, workbook, file_path = get_or_create_excel(dir_name=f'check_data_collector',
+                                                                 file_name=f'{self.ma.bu_addr}.xlsx',
+                                                                 mode='check',
+                                                                 chanel=channel,
+                                                                 direction=direction)
+
+
+
+
             if not self._check_connections():
                 raise ConnectionError("Не все устройства подключены")
 
@@ -243,8 +236,21 @@ class CheckMA:
             
             try:
                 logger.info("Нормировка PNA...")
+                self.ma.switch_ppm(self.ppm_norm_number, chanel=channel, direction=direction, state=PpmState.ON)
+                self.ma.set_delay(chanel=channel, value=0)
                 self.norm_amp, self.norm_phase = self.pna.get_center_freq_data()
+                #нормируем задержку self.norm_delay
                 logger.info(f"Нормировочные значения: амплитуда={self.norm_amp:.2f} дБ, фаза={self.norm_phase:.1f}°")
+
+                for delay in self.delay_lines:
+                    self.ma.set_delay(chanel=channel, value=delay)
+                    # delay_abs, amp_abs = измеряем среднее значение задержки и амплитуды
+                    # delay_delta, amp_delta = delay_abs - self.norm_delay, amp_abs - self.norm_amp
+                    # delay_results.append((delay_delta, amp_delta))
+
+                self.ma.set_delay(chanel=channel, value=0)
+                self.ma.switch_ppm(self.ppm_norm_number, chanel=channel, direction=direction, state=PpmState.OFF)
+
             except Exception as e:
                 logger.warning(f"Ошибка при нормировке PNA: {e}")
                 self.norm_amp = None
@@ -265,6 +271,9 @@ class CheckMA:
                     logger.info(f"Проверка ППМ {ppm_num}")
                     
                     result, measurements = self.check_ppm(ppm_num, channel, direction)
+                    excel_row = [ppm_num, result, measurements[0], measurements[1]] + measurements[2]
+                    for k, value in enumerate(excel_row):
+                        worksheet.cell(row=ppm_num+2, column=k + 1).value = value
                     results.append((ppm_num, (result, measurements)))
 
             try:
@@ -282,5 +291,6 @@ class CheckMA:
             except Exception as e:
                 logger.error(f"Ошибка при аварийном выключении PNA: {e}")
             raise
-            
+
+        workbook.save(file_path)
         return results 

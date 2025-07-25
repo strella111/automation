@@ -156,10 +156,10 @@ class PSN:
         Установить скорость осей сканера в см/сек
         Args:
             axis: Ось (0: x, 1: y)
-            value: Скорость в см/сек
+            value: Скорость в RPM
         """
         self.write(f'AXIS{axis}:SPE {value}')
-        logger.info(f'Для AXIS{axis} установлена скорость {value} см/сек')
+        logger.info(f'Для AXIS{axis} установлена скорость {value} RPM')
 
     def set_acc(self, axis: int, value: int) -> None:
         """

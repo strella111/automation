@@ -42,9 +42,8 @@ class PpmRect(QtWidgets.QGraphicsRectItem):
         self.parent_widget = parent_widget
         self.setAcceptHoverEvents(True)
         self.setFlag(QtWidgets.QGraphicsItem.ItemIsSelectable, True)
-        
-        # Применяем стили из темы
-        from ui.styles.style_manager import style_manager
+
+
         default_color = style_manager.get_style('PpmCellDefault') or "#f8f9fa"
         border_color = style_manager.get_style('PpmCellBorder') or "#dee2e6"
         
@@ -54,8 +53,6 @@ class PpmRect(QtWidgets.QGraphicsRectItem):
         self.status = None
 
     def set_status(self, status):
-        from ui.styles.style_manager import style_manager
-        
         if status == "ok":
             color = style_manager.get_style('PpmCellOk') or "#28a745"
         elif status == "fail":
@@ -68,7 +65,6 @@ class PpmRect(QtWidgets.QGraphicsRectItem):
 
     def hoverEnterEvent(self, event):
         """Подсветка при наведении мыши"""
-        from ui.styles.style_manager import style_manager
         hover_color = style_manager.get_style('PpmCellHover') or "#e9ecef"
         
         # Сохраняем текущий цвет если это статусный цвет
@@ -89,7 +85,58 @@ class PpmRect(QtWidgets.QGraphicsRectItem):
         super().hoverLeaveEvent(event)
 
     def mousePressEvent(self, event):
-        # Обрабатываем только левый клик для выбора
+        if event.button() == QtCore.Qt.LeftButton:
+            self.setSelected(True)
+        super().mousePressEvent(event)
+
+
+class BottomRect(QtWidgets.QGraphicsRectItem):
+    def __init__(self, parent_widget, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.parent_widget = parent_widget
+        self.setAcceptHoverEvents(True)
+        self.setFlag(QtWidgets.QGraphicsItem.ItemIsSelectable, True)
+
+        default_color = style_manager.get_style('PpmCellDefault') or "#f8f9fa"
+        border_color = style_manager.get_style('PpmCellBorder') or "#dee2e6"
+        
+        self.setBrush(QtGui.QBrush(QtGui.QColor(default_color)))
+        self.setPen(QtGui.QPen(QtGui.QColor(border_color), 1.5))
+        self.status = None
+
+    def set_status(self, status):
+        if status == "ok":
+            color = style_manager.get_style('PpmCellOk') or "#28a745"
+        elif status == "fail":
+            color = style_manager.get_style('PpmCellFail') or "#dc3545"
+        else:
+            color = style_manager.get_style('PpmCellDefault') or "#f8f9fa"
+            
+        self.setBrush(QtGui.QBrush(QtGui.QColor(color)))
+        self.status = status
+
+    def hoverEnterEvent(self, event):
+        """Подсветка при наведении мыши"""
+        hover_color = style_manager.get_style('PpmCellHover') or "#e9ecef"
+        
+        # Сохраняем текущий цвет если это статусный цвет
+        if self.status == "ok":
+            hover_color = style_manager.get_style('PpmCellOk') or "#28a745"
+        elif self.status == "fail":
+            hover_color = style_manager.get_style('PpmCellFail') or "#dc3545"
+            
+        # Делаем цвет немного ярче для эффекта hover
+        color = QtGui.QColor(hover_color)
+        color = color.lighter(110)
+        self.setBrush(QtGui.QBrush(color))
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        """Восстанавливаем цвет при уходе мыши"""
+        self.set_status(self.status)
+        super().hoverLeaveEvent(event)
+
+    def mousePressEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton:
             self.setSelected(True)
         super().mousePressEvent(event)
@@ -100,10 +147,13 @@ class PpmFieldView(QtWidgets.QGraphicsView):
         self.setScene(QtWidgets.QGraphicsScene(self))
         self.rects = {}
         self.texts = {}
+        self.bottom_rect = None
+        self.bottom_text = None
+        self.bottom_rect_height = 60  # Высота нижнего прямоугольника
         self.setRenderHint(QtGui.QPainter.Antialiasing)
         self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        self.parent_widget = parent  # Сохраняем ссылку на CheckMaWidget
+        self.parent_widget = parent
         self.create_rects()
         
         # Включаем контекстное меню
@@ -114,23 +164,31 @@ class PpmFieldView(QtWidgets.QGraphicsView):
         self.scene().clear()
         self.rects.clear()
         self.texts.clear()
-        
-        from ui.styles.style_manager import style_manager
+
         text_color = style_manager.get_style('PpmTextColor') or "#212529"
         font_size = int(style_manager.get_style('PpmTextSize') or "10")
         
+        # Создаем основные ППМ прямоугольники
         for col in range(4):
             for row in range(8):
                 ppm_num = col * 8 + row + 1
                 rect = PpmRect(ppm_num, self.parent_widget, 0, 0, 1, 1)
                 self.scene().addItem(rect)
                 self.rects[ppm_num] = rect
-                
-                # Создаем текст с лучшим шрифтом и размером
+
                 font = QtGui.QFont("Segoe UI", font_size, QtGui.QFont.Weight.DemiBold)
                 text = self.scene().addText(f"ППМ {ppm_num}", font)
                 text.setDefaultTextColor(QtGui.QColor(text_color))
                 self.texts[ppm_num] = text
+
+        # Создаем нижний прямоугольник с интерактивностью
+        self.bottom_rect = BottomRect(self.parent_widget, 0, 0, 1, 1)
+        self.scene().addItem(self.bottom_rect)
+        
+        font = QtGui.QFont("Segoe UI", font_size, QtGui.QFont.Weight.DemiBold)
+        self.bottom_text = self.scene().addText("Линии задержки", font)
+        self.bottom_text.setDefaultTextColor(QtGui.QColor(text_color))
+        
         self.update_layout()
 
     def resizeEvent(self, event):
@@ -139,46 +197,82 @@ class PpmFieldView(QtWidgets.QGraphicsView):
         self.fitInView(self.sceneRect(), QtCore.Qt.KeepAspectRatio)
 
     def update_layout(self):
-        w = self.viewport().width() / 4
-        h = self.viewport().height() / 8
+        total_height = self.viewport().height()
+        ppm_area_height = total_height - self.bottom_rect_height - 4  # 4 пикселя отступ
         
-        # Добавляем отступы между ячейками для красоты
+        w = self.viewport().width() / 4
+        h = ppm_area_height / 8
+
         margin = 2
         cell_w = w - margin
         cell_h = h - margin
         
+        # Размещаем основные ППМ прямоугольники
         for col in range(4):
             for row in range(8):
                 ppm_num = col * 8 + row + 1
                 rect = self.rects[ppm_num]
-                
-                # Позиционируем ячейки с отступами
+
                 x = col * w + margin / 2
                 y = row * h + margin / 2
                 rect.setRect(x, y, cell_w, cell_h)
-                
-                # Центрируем текст в ячейке
+
                 text = self.texts[ppm_num]
                 text_rect = text.boundingRect()
-                
-                # Вычисляем центральную позицию
+
                 text_x = x + (cell_w - text_rect.width()) / 2
                 text_y = y + (cell_h - text_rect.height()) / 2
                 
                 text.setPos(text_x, text_y)
+        
+        # Размещаем нижний прямоугольник
+        if self.bottom_rect:
+            bottom_y = 8 * h + 2  # 2 пикселя отступ сверху
+            bottom_w = 4 * w - margin
+            
+            self.bottom_rect.setRect(margin / 2, bottom_y, bottom_w, self.bottom_rect_height - margin)
+            
+            if self.bottom_text:
+                text_rect = self.bottom_text.boundingRect()
+                text_x = margin / 2 + (bottom_w - text_rect.width()) / 2
+                text_y = bottom_y + (self.bottom_rect_height - margin - text_rect.height()) / 2
+                self.bottom_text.setPos(text_x, text_y)
                 
-        self.scene().setSceneRect(0, 0, 4*w, 8*h)
+        self.scene().setSceneRect(0, 0, 4*w, total_height)
 
     def update_ppm(self, ppm_num, status):
         if ppm_num in self.rects:
             self.rects[ppm_num].set_status(status)
     
+    def update_bottom_rect_status(self, status):
+        """Обновляет статус нижнего прямоугольника"""
+        if self.bottom_rect:
+            self.bottom_rect.set_status(status)
+    
+    def set_bottom_rect_text(self, text):
+        """Изменяет текст нижнего прямоугольника"""
+        if self.bottom_text:
+            self.bottom_text.setPlainText(text)
+            self.update_layout()  # Обновляем layout для правильного центрирования текста
+    
     def get_ppm_at_position(self, pos):
-        """Определяет номер ППМ по позиции клика"""
+        """Определяет номер ППМ или нижний прямоугольник по позиции клика"""
+        # Учитываем высоту нижнего прямоугольника
+        total_height = self.viewport().height()
+        ppm_area_height = total_height - self.bottom_rect_height - 4  # 4 пикселя отступ
+        
         w = self.viewport().width() / 4
-        h = self.viewport().height() / 8
+        h = ppm_area_height / 8
         margin = 2
         
+        # Сначала проверяем нижний прямоугольник
+        bottom_y = 8 * h + 2  # 2 пикселя отступ сверху
+        if pos.y() >= bottom_y and pos.y() <= (bottom_y + self.bottom_rect_height - margin):
+            bottom_w = 4 * w - margin
+            if pos.x() >= margin/2 and pos.x() <= (margin/2 + bottom_w):
+                return "bottom_rect"  # Специальное значение для нижнего прямоугольника
+        
+        # Затем проверяем область ППМ
         col = int(pos.x() / w)
         row = int(pos.y() / h)
         
@@ -194,17 +288,23 @@ class PpmFieldView(QtWidgets.QGraphicsView):
         return None
     
     def show_context_menu(self, pos):
-        """Показывает контекстное меню для ППМ в указанной позиции"""
-        ppm_num = self.get_ppm_at_position(pos)
-        if ppm_num is not None and self.parent_widget is not None:
-            # Выбираем соответствующий элемент
-            if ppm_num in self.rects:
-                self.rects[ppm_num].setSelected(True)
-            # Показываем информацию
-            self.parent_widget.show_ppm_details_graphics(ppm_num, self.mapToGlobal(pos))
+        """Показывает контекстное меню для ППМ или нижнего прямоугольника в указанной позиции"""
+        element = self.get_ppm_at_position(pos)
+        if element is not None and self.parent_widget is not None:
+            if element == "bottom_rect":
+                # Выделяем нижний прямоугольник и показываем контекстное меню
+                if self.bottom_rect:
+                    self.bottom_rect.setSelected(True)
+                self.parent_widget.show_bottom_rect_details(self.mapToGlobal(pos))
+            else:
+                # Обрабатываем как ППМ
+                ppm_num = element
+                if ppm_num in self.rects:
+                    self.rects[ppm_num].setSelected(True)
+                # Показываем информацию
+                self.parent_widget.show_ppm_details_graphics(ppm_num, self.mapToGlobal(pos))
 
 class CheckMaWidget(QtWidgets.QWidget):
-    # Сигнал для обновления таблицы в реальном времени
     update_table_signal = QtCore.pyqtSignal(int, bool, float, float, list)
     
     def __init__(self):
@@ -212,8 +312,6 @@ class CheckMaWidget(QtWidgets.QWidget):
 
         self.coord_system_manager = CoordinateSystemManager("config/coordinate_systems.json")
         self.coord_system = None
-        
-
 
         self.layout = QtWidgets.QHBoxLayout(self)
 
@@ -275,35 +373,30 @@ class CheckMaWidget(QtWidgets.QWidget):
         
         self.param_tabs.addTab(self.ma_tab, 'MA')
 
-        # === Настройки PNA ===
         self.pna_tab = QtWidgets.QWidget()
         self.pna_tab_layout = QtWidgets.QFormLayout(self.pna_tab)
-        
-        # S-параметр
+
         self.s_param_combo = QtWidgets.QComboBox()
         self.s_param_combo.addItems(['S21', 'S12', 'S11', 'S22'])
         self.pna_tab_layout.addRow('S-параметр:', self.s_param_combo)
 
-        # Входная мощность
         self.pna_power = QtWidgets.QDoubleSpinBox()
         self.pna_power.setRange(-20, 18)
         self.pna_power.setSingleStep(1)
         self.pna_power.setDecimals(0)
-        self.pna_power.setValue(0)  # Значение по умолчанию
+        self.pna_power.setValue(0)
         self.pna_tab_layout.addRow('Входная мощность (дБм):', self.pna_power)
 
-        # Начальная частота
         self.pna_start_freq = QtWidgets.QSpinBox()
         self.pna_start_freq.setRange(1, 50000)
-        self.pna_start_freq.setSingleStep(1)
+        self.pna_start_freq.setSingleStep(50)
         self.pna_start_freq.setValue(9300)
         self.pna_start_freq.setSuffix(' МГц')
         self.pna_tab_layout.addRow('Нач. частота:', self.pna_start_freq)
 
-        # Конечная частота
         self.pna_stop_freq = QtWidgets.QSpinBox()
         self.pna_stop_freq.setRange(1, 50000)
-        self.pna_stop_freq.setSingleStep(1)
+        self.pna_stop_freq.setSingleStep(50)
         self.pna_stop_freq.setValue(9800)
         self.pna_stop_freq.setSuffix(' МГц')
         self.pna_tab_layout.addRow('Кон. частота:', self.pna_stop_freq)
@@ -314,38 +407,35 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.pna_tab_layout.addRow('Кол-во точек:', self.pna_number_of_points)
 
         settings_layout = QtWidgets.QHBoxLayout()
-        settings_layout.setSpacing(4)  # Уменьшаем отступ между элементами
+        settings_layout.setSpacing(4)
         self.settings_file_edit = QtWidgets.QLineEdit()
         self.settings_file_edit.setReadOnly(True)
         self.settings_file_edit.setPlaceholderText('Выберите файл настроек...')
-        
-        # Создаем кнопку с иконкой папки
+        self.settings_file_edit.setFixedHeight(32)
+
         self.load_file_btn = QtWidgets.QPushButton()
-        self.load_file_btn.setProperty("iconButton", True)  # Для применения специального стиля
-        self.load_file_btn.setFixedSize(32, 28)  # Квадратная кнопка
+        self.load_file_btn.setProperty("iconButton", True)
+        self.load_file_btn.setFixedSize(32, 28)
         self.load_file_btn.setToolTip('Выбрать файл настроек')
-        
-        # Получаем встроенную иконку Qt для папки
+
         style = self.style()
         folder_icon = style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
         self.load_file_btn.setIcon(folder_icon)
         self.load_file_btn.setIconSize(QSize(16, 16))
-        
+        self.load_file_btn.setFixedHeight(32)
         self.load_file_btn.clicked.connect(self.open_file_dialog)
-        
-        settings_layout.addWidget(self.settings_file_edit, 1)  # stretch=1 для расширения поля
-        settings_layout.addWidget(self.load_file_btn, 0)  # stretch=0 для фиксированного размера кнопки
+
+        settings_layout.addWidget(self.settings_file_edit, 1)
+        settings_layout.addWidget(self.load_file_btn, 0)
         
         self.pna_tab_layout.addRow('Файл настроек:', settings_layout)
         self.param_tabs.addTab(self.pna_tab, 'PNA')
-        
-        # Meas tab
+
         self.meas_tab = QtWidgets.QWidget()
         self.meas_tab_layout = QtWidgets.QVBoxLayout(self.meas_tab)
         self.meas_tab_layout.setSpacing(15)
         self.meas_tab_layout.setContentsMargins(15, 15, 15, 15)
 
-        # Система координат
         coord_group = QtWidgets.QGroupBox('Система координат')
         coord_layout = QtWidgets.QFormLayout(coord_group)
         coord_layout.setContentsMargins(15, 15, 15, 15)
@@ -354,8 +444,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.coord_system_combo.addItems(self.coord_system_manager.get_system_names())
         self.coord_system_combo.setMinimumWidth(200)
         coord_layout.addRow('Система координат:', self.coord_system_combo)
-        
-        # Стиль для групп
+
         group_style = """
         QGroupBox {
             font-weight: bold;
@@ -376,13 +465,11 @@ class CheckMaWidget(QtWidgets.QWidget):
         coord_group.setStyleSheet(group_style)
         self.meas_tab_layout.addWidget(coord_group)
 
-        # Критерии проверки
         criteria_group = QtWidgets.QGroupBox('Критерии проверки')
         criteria_layout = QtWidgets.QGridLayout(criteria_group)
         criteria_layout.setContentsMargins(15, 15, 15, 15)
         criteria_layout.setSpacing(10)
-        
-        # Заголовки колонок
+
         criteria_layout.addWidget(QtWidgets.QLabel(""), 0, 0)  # Пустая ячейка
         rx_label = QtWidgets.QLabel("RX")
         rx_label.setAlignment(QtCore.Qt.AlignCenter)
@@ -393,8 +480,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         tx_label.setAlignment(QtCore.Qt.AlignCenter)
         tx_label.setStyleSheet("font-weight: bold; color: #495057;")
         criteria_layout.addWidget(tx_label, 0, 2)
-        
-        # Допуск амплитуды
+
         amp_label = QtWidgets.QLabel("Допуск амплитуды:")
         amp_label.setStyleSheet("font-weight: bold;")
         criteria_layout.addWidget(amp_label, 1, 0)
@@ -416,8 +502,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.tx_amp_tolerance.setSuffix(' дБ')
         self.tx_amp_tolerance.setMinimumWidth(80)
         criteria_layout.addWidget(self.tx_amp_tolerance, 1, 2)
-        
-        # Мин. фаза (все ФВ)
+
         min_phase_label = QtWidgets.QLabel("Мин. фаза (все ФВ):")
         min_phase_label.setStyleSheet("font-weight: bold;")
         criteria_layout.addWidget(min_phase_label, 2, 0)
@@ -439,8 +524,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.tx_phase_min.setSuffix('°')
         self.tx_phase_min.setMinimumWidth(80)
         criteria_layout.addWidget(self.tx_phase_min, 2, 2)
-        
-        # Макс. фаза (все ФВ)
+
         max_phase_label = QtWidgets.QLabel("Макс. фаза (все ФВ):")
         max_phase_label.setStyleSheet("font-weight: bold;")
         criteria_layout.addWidget(max_phase_label, 3, 0)
@@ -466,7 +550,6 @@ class CheckMaWidget(QtWidgets.QWidget):
         criteria_group.setStyleSheet(group_style)
         self.meas_tab_layout.addWidget(criteria_group)
 
-        # Допуски фазовращателей
         ps_group = QtWidgets.QGroupBox('Допуски фазовращателей')
         ps_main_layout = QtWidgets.QVBoxLayout(ps_group)
         ps_main_layout.setContentsMargins(15, 15, 15, 15)
@@ -481,9 +564,8 @@ class CheckMaWidget(QtWidgets.QWidget):
         scroll_widget = QtWidgets.QWidget()
         scroll_layout = QtWidgets.QGridLayout(scroll_widget)
         scroll_layout.setSpacing(8)
-        
-        # Заголовки колонок для фазовращателей
-        scroll_layout.addWidget(QtWidgets.QLabel(""), 0, 0)  # Пустая ячейка
+
+        scroll_layout.addWidget(QtWidgets.QLabel(""), 0, 0)
         from_label = QtWidgets.QLabel("от:")
         from_label.setAlignment(QtCore.Qt.AlignCenter)
         from_label.setStyleSheet("font-weight: bold; color: #495057;")
@@ -493,19 +575,16 @@ class CheckMaWidget(QtWidgets.QWidget):
         to_label.setAlignment(QtCore.Qt.AlignCenter)
         to_label.setStyleSheet("font-weight: bold; color: #495057;")
         scroll_layout.addWidget(to_label, 0, 2)
-        
-        # Создаем элементы для каждого дискрета ФВ
+
         self.phase_shifter_tolerances = {}
         phase_angles = [5.625, 11.25, 22.5, 45, 90, 180]
         
         for row, angle in enumerate(phase_angles, 1):
-            # Метка фазовращателя
             ps_label = QtWidgets.QLabel(f"ФВ {angle}°:")
             ps_label.setStyleSheet("font-weight: bold;")
             ps_label.setMinimumWidth(80)
             scroll_layout.addWidget(ps_label, row, 0)
-            
-            # Минимальное отклонение
+
             min_spinbox = QtWidgets.QDoubleSpinBox()
             min_spinbox.setRange(-50.0, 50.0)
             min_spinbox.setSingleStep(0.1)
@@ -514,8 +593,7 @@ class CheckMaWidget(QtWidgets.QWidget):
             min_spinbox.setSuffix('°')
             min_spinbox.setMinimumWidth(70)
             scroll_layout.addWidget(min_spinbox, row, 1)
-            
-            # Максимальное отклонение
+
             max_spinbox = QtWidgets.QDoubleSpinBox()
             max_spinbox.setRange(-50.0, 50.0)
             max_spinbox.setSingleStep(0.1)
@@ -534,8 +612,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         ps_main_layout.addWidget(scroll_area)
         ps_group.setStyleSheet(group_style)
         self.meas_tab_layout.addWidget(ps_group)
-        
-        # Добавляем пружину в конец
+
         self.meas_tab_layout.addStretch()
         
         self.param_tabs.addTab(self.meas_tab, 'Meas')
@@ -560,33 +637,33 @@ class CheckMaWidget(QtWidgets.QWidget):
             'ППМ', 'Амп.\n(дБ)', 'Фаза\n(°)', 'Ст.\nАмп.', 'Ст.\nФазы',
             'Δ ФВ', '5.625°', '11.25°', '22.5°', '45°', '90°', '180°'])
         self.results_table.setRowCount(32)
-        
-        # Настраиваем размеры колонок для лучшего отображения
+
         header = self.results_table.horizontalHeader()
-        header.setSectionResizeMode(0, QtWidgets.QHeaderView.Fixed)  # ППМ - фиксированный
-        header.resizeSection(0, 50)  # ППМ - 50px
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.Fixed)
+        header.resizeSection(0, 50)
         
-        for i in range(1, 5):  # Амплитуда, Фаза, Статусы
-            header.setSectionResizeMode(i, QtWidgets.QHeaderView.ResizeToContents)
-        
-        for i in range(5, 12):  # ФВ колонки
+        for i in range(1, 12):
             header.setSectionResizeMode(i, QtWidgets.QHeaderView.Stretch)
+
         
         self.results_table.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Fixed)
-        self.results_table.verticalHeader().setDefaultSectionSize(25)  # Уменьшаем высоту строк
+        self.results_table.verticalHeader().setDefaultSectionSize(25)
         self.results_table.verticalHeader().setVisible(False)
-        # Настройки для красивого отображения
+
         self.results_table.setAlternatingRowColors(True)
         self.results_table.setShowGrid(True)
-        for row in range(32):
-            self.results_table.setItem(row, 0, QtWidgets.QTableWidgetItem(f"{row+1}"))
-            for col in range(1, 12):
-                self.results_table.setItem(row, col, QtWidgets.QTableWidgetItem(""))
 
-        # --- 2D поле ---
+        for row in range(32):
+            item = QtWidgets.QTableWidgetItem(f"{row + 1}")
+            item.setTextAlignment(QtCore.Qt.AlignCenter)
+            self.results_table.setItem(row, 0, item)
+            for col in range(1, 12):
+                item = QtWidgets.QTableWidgetItem("")
+                item.setTextAlignment(QtCore.Qt.AlignCenter)
+                self.results_table.setItem(row, col, item)
+
         self.ppm_field_view = PpmFieldView(self)
 
-        # --- Tabs ---
         self.view_tabs = QtWidgets.QTabWidget()
         self.view_tabs.addTab(self.results_table, "Таблица")
         self.view_tabs.addTab(self.ppm_field_view, "2D поле")
@@ -614,15 +691,13 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.start_btn.clicked.connect(self.start_check)
         self.stop_btn.clicked.connect(self.stop_check)
         self.pause_btn.clicked.connect(self.pause_check)
-        
-        # Подключаем сигнал для обновления таблицы
+
         self.update_table_signal.connect(self.update_table_row)
 
         self.set_buttons_enabled(True)
         self.device_settings = {}
         self.pna_settings = {}
-        
-        # Инициализация критериев проверки значениями по умолчанию
+
         self.check_criteria = {
             'rx_amp_max': 4.5,
             'tx_amp_max': 2.5,
@@ -640,16 +715,16 @@ class CheckMaWidget(QtWidgets.QWidget):
             }
         }
         
-        # Словарь для хранения данных ППМ
+
         self.ppm_data = {}
+        self.bottom_rect_data = {}  # Данные для линий задержки
 
     def show_ppm_details(self, button: QtWidgets.QPushButton, ppm_num: int):
         """Показывает детальную информацию о ППМ в контекстном меню"""
         if ppm_num in self.ppm_data:
             data = self.ppm_data[ppm_num]
             menu = QtWidgets.QMenu()
-            
-            # Создаем детальную информацию
+
             details = f"ППМ {ppm_num}\n"
             details += f"Результат: {'OK' if data['result'] else 'FAIL'}\n"
             details += f"Амплитуда: {data['amp']:.2f} дБ\n"
@@ -660,15 +735,12 @@ class CheckMaWidget(QtWidgets.QWidget):
                 for i, value in enumerate(data['fv_data']):
                     if not np.isnan(value):
                         details += f"  {value:.1f}°\n"
-            
-            # Создаем действие с деталями
+
             action = menu.addAction(details)
-            action.setEnabled(False)  # Делаем неактивным, чтобы показать как текст
-            
-            # Показываем меню
+            action.setEnabled(False)
+
             menu.exec_(button.mapToGlobal(QtCore.QPoint(0, 0)))
         else:
-            # Если данных нет, показываем простое сообщение
             menu = QtWidgets.QMenu()
             action = menu.addAction(f"ППМ {ppm_num} - данные не готовы")
             action.setEnabled(False)
@@ -678,21 +750,17 @@ class CheckMaWidget(QtWidgets.QWidget):
     def update_table_row(self, ppm_num: int, result: bool, amp: float, phase: float, fv_data: list):
         """Обновляет строку таблицы и 2D вид с результатами измерения"""
         try:
-            # Сохраняем данные ППМ
             self.ppm_data[ppm_num] = {
                 'result': result,
                 'amp': amp,
                 'phase': phase,
                 'fv_data': fv_data
             }
-            
-            # Обновляем таблицу
+
             row = ppm_num - 1
 
-            self.results_table.setItem(row, 0, QtWidgets.QTableWidgetItem(str(ppm_num)))
+            self.results_table.setItem(row, 0, self.create_centered_table_item(str(ppm_num)))
 
-            # Обновляем значения амплитуды и фазы
-            # amp теперь уже содержит разность с нормировочным значением
             if np.isnan(amp):
                 self.results_table.setItem(row, 1, self.create_centered_table_item(""))
             else:
@@ -703,13 +771,9 @@ class CheckMaWidget(QtWidgets.QWidget):
             else:
                 self.results_table.setItem(row, 2, self.create_centered_table_item(f"{phase:.1f}"))
 
-            # Определяем статусы амплитуды и фазы на основе новой логики и критериев из интерфейса
-            # Статус амплитуды (amp уже содержит разность с нормировочным значением)
             if np.isnan(amp):
-                # Для NaN значений создаем нейтральную ячейку
                 amp_status_item = self.create_neutral_status_item("-")
             else:
-                # Критерии амплитуды из настроек интерфейса (amp уже разность с нормировочным)
                 amp_max = self.rx_amp_tolerance.value() if self.channel_combo.currentText() == 'Приемник' else self.tx_amp_tolerance.value()
                 amp_ok = -amp_max <= amp <= amp_max
                 
@@ -717,13 +781,10 @@ class CheckMaWidget(QtWidgets.QWidget):
                 amp_status_item = self.create_status_table_item(amp_status, amp_ok)
             
             self.results_table.setItem(row, 3, amp_status_item)
-            
-            # Статус фазы - определяется по новой логике
+
             if np.isnan(phase):
-                # Для NaN значений создаем нейтральную ячейку
                 phase_status_item = self.create_neutral_status_item("-")
             else:
-                # Сначала проверяем фазу при включении всех ФВ
                 if self.channel_combo.currentText() == 'Приемник':
                     phase_min = self.rx_phase_min.value()
                     phase_max = self.rx_phase_max.value()
@@ -734,11 +795,9 @@ class CheckMaWidget(QtWidgets.QWidget):
                     phase_all_ok = phase_min < phase < phase_max
 
                 if phase_all_ok:
-                    # Если все ФВ вместе прошли проверку - статус OK
                     phase_final_ok = True
                 else:
-                    # Если все ФВ вместе не прошли, проверяем отдельные ФВ
-                    if fv_data and len(fv_data) > 6:  # Проверяем что есть данные отдельных ФВ
+                    if fv_data and len(fv_data) > 6:
                         individual_fv_ok = []
                         fv_angles = [5.625, 11.25, 22.5, 45, 90, 180]
                         
@@ -750,11 +809,9 @@ class CheckMaWidget(QtWidgets.QWidget):
                                     max_tolerance = self.check_criteria['phase_shifter_tolerances'][fv_angle]['max']
                                     fv_ok = min_tolerance <= fv_diff <= max_tolerance
                                 else:
-                                    # Допуски по умолчанию ±2°
                                     fv_ok = -2.0 <= fv_diff <= 2.0
                                 individual_fv_ok.append(fv_ok)
-                        
-                        # Все отдельные ФВ должны пройти проверку
+
                         phase_final_ok = len(individual_fv_ok) > 0 and all(individual_fv_ok)
                     else:
                         phase_final_ok = False
@@ -764,16 +821,13 @@ class CheckMaWidget(QtWidgets.QWidget):
             
             self.results_table.setItem(row, 4, phase_status_item)
 
-            # Обработка данных ФВ
             if fv_data and len(fv_data) > 0:
                 try:
-                    # Отображаем дельту ФВ (первое значение) для всех измерений
                     if not np.isnan(fv_data[0]):
                         self.results_table.setItem(row, 5, QtWidgets.QTableWidgetItem(f"{fv_data[0]:.1f}"))
                     else:
                         self.results_table.setItem(row, 5, QtWidgets.QTableWidgetItem(""))
-                    
-                    # Остальные значения ФВ только для неуспешных измерений
+
                     if not result:
                         for i in range(1, len(fv_data)):
                             if not np.isnan(fv_data[i]):
@@ -781,7 +835,6 @@ class CheckMaWidget(QtWidgets.QWidget):
                             else:
                                 self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(""))
                     else:
-                        # Для успешных измерений очищаем остальные столбцы ФВ
                         for i in range(1, 6):
                             self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(""))
                             
@@ -790,20 +843,15 @@ class CheckMaWidget(QtWidgets.QWidget):
                     for i in range(6):
                         self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(""))
             else:
-                # Если данных ФВ нет, очищаем все столбцы ФВ
                 for i in range(6):
                     self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(""))
 
-            # Обновляем 2D вид на основе реальных статусов амплитуды и фазы
-            # Определяем общий статус на основе статусов амплитуды и фазы
             if np.isnan(amp) or np.isnan(phase):
                 overall_status = "fail"
             else:
-                # Проверяем амплитуду (amp уже содержит разность с нормировочным значением)
                 amp_max = self.rx_amp_tolerance.value() if self.channel_combo.currentText() == 'Приемник' else self.tx_amp_tolerance.value()
                 amp_ok = -amp_max <= amp <= amp_max
-                
-                # Проверяем фазу по новой логике
+
                 if self.channel_combo.currentText() == 'Приемник':
                     phase_min = self.rx_phase_min.value()
                     phase_max = self.rx_phase_max.value()
@@ -816,7 +864,6 @@ class CheckMaWidget(QtWidgets.QWidget):
                 if phase_all_ok:
                     phase_final_ok = True
                 else:
-                    # Проверяем отдельные ФВ
                     if fv_data and len(fv_data) > 6:
                         individual_fv_ok = []
                         fv_angles = [5.625, 11.25, 22.5, 45, 90, 180]
@@ -835,8 +882,7 @@ class CheckMaWidget(QtWidgets.QWidget):
                         phase_final_ok = len(individual_fv_ok) > 0 and all(individual_fv_ok)
                     else:
                         phase_final_ok = False
-                
-                # Общий статус: и амплитуда, и фаза должны быть OK
+
                 overall_status = "ok" if (amp_ok and phase_final_ok) else "fail"
             
             self.ppm_field_view.update_ppm(ppm_num, overall_status)
@@ -870,18 +916,16 @@ class CheckMaWidget(QtWidgets.QWidget):
             button.setStyleSheet(style)
     
     def create_status_table_item(self, text: str, is_success: bool) -> QtWidgets.QTableWidgetItem:
-        """Создает красиво стилизованную ячейку таблицы для статуса"""
         item = QtWidgets.QTableWidgetItem(text)
         item.setTextAlignment(QtCore.Qt.AlignCenter)
-        
         if is_success:
-            item.setBackground(QtGui.QColor("#d4edda"))  # Светло-зеленый фон
-            item.setForeground(QtGui.QColor("#155724"))  # Темно-зеленый текст
+            item.setBackground(QtGui.QColor("#d4edda"))
+            item.setForeground(QtGui.QColor("#155724"))
         else:
-            item.setBackground(QtGui.QColor("#f8d7da"))  # Светло-красный фон  
-            item.setForeground(QtGui.QColor("#721c24"))  # Темно-красный текст
-        
-        # Делаем ячейку нередактируемой
+            item.setBackground(QtGui.QColor("#f8d7da"))
+            item.setForeground(QtGui.QColor("#721c24"))
+
+
         item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEditable)
         
         return item
@@ -890,7 +934,6 @@ class CheckMaWidget(QtWidgets.QWidget):
         """Создает центрированную ячейку таблицы"""
         item = QtWidgets.QTableWidgetItem(text)
         item.setTextAlignment(QtCore.Qt.AlignCenter)
-        # Делаем ячейку нередактируемой
         item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEditable)
         return item
     
@@ -898,12 +941,10 @@ class CheckMaWidget(QtWidgets.QWidget):
         """Создает нейтральную ячейку статуса для случаев отсутствия данных"""
         item = QtWidgets.QTableWidgetItem(text)
         item.setTextAlignment(QtCore.Qt.AlignCenter)
-        
-        # Используем нейтральный цвет для отсутствующих данных
-        item.setBackground(QtGui.QColor("#f8f9fa"))  # Светло-серый фон
-        item.setForeground(QtGui.QColor("#6c757d"))  # Серый текст
-        
-        # Делаем ячейку нередактируемой
+
+        item.setBackground(QtGui.QColor("#f8f9fa"))
+        item.setForeground(QtGui.QColor("#6c757d"))
+
         item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEditable)
         
         return item
@@ -955,13 +996,17 @@ class CheckMaWidget(QtWidgets.QWidget):
         
         self.results_table.clearContents()
         for row in range(32):
-            self.results_table.setItem(row, 0, QtWidgets.QTableWidgetItem(f"{row+1}"))
+            self.results_table.setItem(row, 0, self.create_centered_table_item(str(row+1)))
             for col in range(1, 12):
                 self.results_table.setItem(row, col, QtWidgets.QTableWidgetItem(""))
 
         self.ppm_data.clear()
+        self.bottom_rect_data.clear()
         for ppm_num, button in self.ppm_field_view.rects.items():
             button.set_status('')
+        
+        # Сбрасываем состояние нижнего прямоугольника
+        self.ppm_field_view.update_bottom_rect_status('')
 
         self.set_buttons_enabled(False)
         logger.info("Запуск проверки МА...")
@@ -1040,7 +1085,6 @@ class CheckMaWidget(QtWidgets.QWidget):
                     meas = self.pna.get_selected_meas()
                     if not meas:
                         measures = self.pna.get_all_meas()
-                        print(measures)
                         self.pna.set_current_meas(measures[0])
                 except Exception as e:
                     logger.error(f"Ошибка при настройке PNA: {e}")
@@ -1195,29 +1239,25 @@ class CheckMaWidget(QtWidgets.QWidget):
         
         data = self.ppm_data[ppm_num]
         menu = QtWidgets.QMenu()
-        
-        # Заголовок с номером ППМ и статусом
+
         status_text = "OK" if data['result'] else "FAIL"
         status_color = "🟢" if data['result'] else "🔴"
         header_action = menu.addAction(f"{status_color} ППМ {ppm_num} - {status_text}")
         header_action.setEnabled(False)
         menu.addSeparator()
-        
-        # Амплитуда
+
         if not np.isnan(data['amp']):
             amp_action = menu.addAction(f"Амплитуда: {data['amp']:.2f} дБ")
         else:
             amp_action = menu.addAction("Амплитуда: ---")
         amp_action.setEnabled(False)
-        
-        # Фаза
+
         if not np.isnan(data['phase']):
             phase_action = menu.addAction(f"Фаза: {data['phase']:.1f}°")
         else:
             phase_action = menu.addAction("Фаза: ---")
         phase_action.setEnabled(False)
-        
-        # Значения ФВ (если есть)
+
         if data['fv_data'] and len(data['fv_data']) > 0:
             menu.addSeparator()
             fv_header = menu.addAction("Значения ФВ:")
@@ -1239,6 +1279,32 @@ class CheckMaWidget(QtWidgets.QWidget):
                     fv_action.setEnabled(False)
         
         menu.exec_(global_pos) 
+
+    def show_bottom_rect_details(self, global_pos):
+        """Показывает контекстное меню для нижнего прямоугольника (Линии задержки)"""
+        menu = QtWidgets.QMenu()
+        
+        header_action = menu.addAction("📡 Линии задержки")
+        header_action.setEnabled(False)
+        menu.addSeparator()
+        
+        if self.bottom_rect_data:
+            # Если есть данные - отобразим их
+            for key, value in self.bottom_rect_data.items():
+                data_action = menu.addAction(f"{key}: {value}")
+                data_action.setEnabled(False)
+        else:
+            # Если данных нет - показываем заглушку
+            info_action = menu.addAction("Данные будут добавлены позже...")
+            info_action.setEnabled(False)
+        
+        menu.exec_(global_pos)
+
+    def update_bottom_rect_data(self, data: dict):
+        """Обновляет данные для нижнего прямоугольника (Линии задержки)"""
+        self.bottom_rect_data = data
+        # При необходимости можно также обновить статус
+        # self.ppm_field_view.update_bottom_rect_status("ok" if data else "")
 
     def show_error_message(self, title: str, message: str):
         """Показывает всплывающее окно с ошибкой"""

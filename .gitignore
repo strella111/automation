@@ -21,3 +21,5 @@ dist/
 
 .ipynb_checkpoints
 backend.py
+
+src/check_data_collector/

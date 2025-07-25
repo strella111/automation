@@ -29,6 +29,7 @@ class MA:
         self.CRC_INIT = 0x1d0f
         self.ppm_data = bytearray(25)
         self.retry_counter = 0
+        self.command_delay = 0.05
 
     def connect(self) -> None:
         """Подключение к модулю антенному"""
@@ -84,13 +85,14 @@ class MA:
         Отправка сообщения модулю
         
         Args:
-            string: Сообщение для отправки
+            string: Данные
         """
         if self.mode == 0:
             if not self.connection or not self.connection.is_open:
                 logger.error('Не обнаружено подключение к MA при попытке отправки данных')
                 raise WrongInstrumentError('При попытке обращения к connection MA произошла ошибка')
             self.connection.write(string if isinstance(string, bytes) else string.encode())
+            time.sleep(self.command_delay)
             logger.debug(format_device_log('MA', '>>', string))
 
     def read(self) -> bytes:
@@ -184,7 +186,7 @@ class MA:
             self.retry_counter += 1
 
     def turn_on_vips(self) -> None:
-        logger.info('Отключение ВИПов')
+        logger.info('Включение ВИПов')
         if self.mode == 1:
             time.sleep(0.1)
         else:
@@ -353,6 +355,24 @@ class MA:
         data[index] = value
         data = bytes(data)
         command_code = b'\x01'
+        command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
+        self._send_command(command)
+
+
+    def set_delay(self, chanel: Channel, value: int):
+        logger.info(f'Включение ЛЗ№{value}. Канал - {chanel}')
+        command_code = b'\x02'
+        data_fv = bytearray(64)
+        data = b''
+        if chanel == Channel.Receiver:
+            data_lz_prm = value.to_bytes(1, 'big')
+            data_lz_prd = b'\x00'
+            data = b''.join([data_fv, data_lz_prd, data_lz_prm])
+        elif chanel == Channel.Transmitter:
+            data_lz_prd = value.to_bytes(1, 'big')
+            data_lz_prm = b'\x00'
+            data = b''.join([data_fv, data_lz_prd, data_lz_prm])
+
         command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
         self._send_command(command)
 
