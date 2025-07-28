@@ -306,6 +306,9 @@ class PpmFieldView(QtWidgets.QGraphicsView):
 
 class CheckMaWidget(QtWidgets.QWidget):
     update_table_signal = QtCore.pyqtSignal(int, bool, float, float, list)
+    error_signal = QtCore.pyqtSignal(str, str)  # title, message
+    buttons_enabled_signal = QtCore.pyqtSignal(bool)  # enabled
+    check_finished_signal = QtCore.pyqtSignal()  # когда проверка завершена
     
     def __init__(self):
         super().__init__()
@@ -692,7 +695,11 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.stop_btn.clicked.connect(self.stop_check)
         self.pause_btn.clicked.connect(self.pause_check)
 
+        # Подключение сигналов к слотам
         self.update_table_signal.connect(self.update_table_row)
+        self.error_signal.connect(self.show_error_message)
+        self.buttons_enabled_signal.connect(self.set_buttons_enabled)
+        self.check_finished_signal.connect(self.on_check_finished)
 
         self.set_buttons_enabled(True)
         self.device_settings = {}
@@ -888,13 +895,21 @@ class CheckMaWidget(QtWidgets.QWidget):
             self.ppm_field_view.update_ppm(ppm_num, overall_status)
 
             self.results_table.viewport().update()
-            QtCore.QCoreApplication.processEvents()
+            # Убираем processEvents() - Qt сам обработает события GUI
         except Exception as e:
             self.show_error_message("Ошибка обновления таблицы", f"Ошибка при обновлении данных ППМ {ppm_num}: {str(e)}")
             logger.error(f'Ошибка при обновлении значений ФВ для ППМ {ppm_num}: {e}')
             for i in range(6):
                 self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(""))
 
+    @QtCore.pyqtSlot()
+    def on_check_finished(self):
+        """Слот для завершения проверки - выполняется в главном потоке GUI"""
+        self.set_buttons_enabled(True)
+        self.pause_btn.setText('Пауза')
+        logger.info('Проверка завершена, интерфейс восстановлен')
+
+    @QtCore.pyqtSlot(bool)
     def set_buttons_enabled(self, enabled: bool):
         """Управляет доступностью кнопок"""
         self.ma_connect_btn.setEnabled(enabled)
@@ -1041,6 +1056,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         logger.info('Проверка остановлена.')
 
     def _run_check(self):
+        logger.info("Начало выполнения проверки в отдельном потоке")
         try:
             channel = Channel.Receiver if self.channel_combo.currentText()== 'Приемник' else Channel.Transmitter
             direction = Direction.Horizontal if self.direction_combo.currentText()=='Горизонтальная' else Direction.Vertical
@@ -1131,17 +1147,17 @@ class CheckMaWidget(QtWidgets.QWidget):
                 logger.info('Проверка завершена успешно.')
 
         except Exception as e:
-            self.show_error_message("Ошибка проверки", f"Произошла ошибка при выполнении проверки: {str(e)}")
+            # Используем сигнал для показа ошибки из потока
+            self.error_signal.emit("Ошибка проверки", f"Произошла ошибка при выполнении проверки: {str(e)}")
             logger.error(f"Ошибка при выполнении проверки: {e}")
             try:
-                self.pna.power_off()
-            except Exception as e:
-                logger.error(f"Ошибка при аварийном выключении PNA: {e}")
-            raise
+                if self.pna:
+                    self.pna.power_off()
+            except Exception as pna_error:
+                logger.error(f"Ошибка при аварийном выключении PNA: {pna_error}")
         finally:
-            if not self.start_btn.isEnabled():
-                self.set_buttons_enabled(True)
-                self.pause_btn.setText('Пауза')
+            # Используем сигнал для восстановления интерфейса из потока
+            self.check_finished_signal.emit()
 
     def connect_ma(self):
         """Подключает/отключает МА"""
@@ -1158,6 +1174,13 @@ class CheckMaWidget(QtWidgets.QWidget):
 
         com_port = self.device_settings.get('ma_com_port', '')
         mode = self.device_settings.get('ma_mode', 0)
+
+        # В реальном режиме проверяем, что COM-порт задан
+        if mode == 0 and (not com_port or com_port == 'Тестовый'):
+            self.show_error_message("Ошибка настроек", "COM-порт не выбран. Откройте настройки и выберите COM-порт.")
+            return
+
+        logger.info(f'Попытка подключения к МА через {com_port if mode == 0 else "тестовый режим"}, режим: {"реальный" if mode == 0 else "тестовый"}')
 
         try:
             self.ma = MA(com_port=com_port, mode=mode)
@@ -1226,8 +1249,10 @@ class CheckMaWidget(QtWidgets.QWidget):
             self.show_error_message("Ошибка подключения PSN", f"Не удалось подключиться к PSN: {str(e)}")
 
     def set_device_settings(self, settings: dict):
-        """Сохраняет параметры устройств из настроек"""
-        self.device_settings = settings or {} 
+        """Сохраняет параметры устройств из настроек для последующего применения."""
+        self.device_settings = settings or {}
+        logger.info('Настройки устройств обновлены в CheckMaWidget')
+        logger.debug(f'Новые настройки: {self.device_settings}')
 
     def show_ppm_details_graphics(self, ppm_num, global_pos):
         if ppm_num not in self.ppm_data:
@@ -1306,6 +1331,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         # При необходимости можно также обновить статус
         # self.ppm_field_view.update_bottom_rect_status("ok" if data else "")
 
+    @QtCore.pyqtSlot(str, str)
     def show_error_message(self, title: str, message: str):
         """Показывает всплывающее окно с ошибкой"""
         QMessageBox.critical(self, title, message)

@@ -35,18 +35,30 @@ class MA:
         """Подключение к модулю антенному"""
         try:
             if self.mode == 0:
-                self.connection = serial.Serial(
-                    port=self.com_port,
-                    baudrate=921600,
-                    parity=serial.PARITY_NONE,
-                    stopbits=serial.STOPBITS_TWO,
-                    timeout=1
-                )
+                logger.info(f'Попытка подключения к COM-порту: {self.com_port}')
+                
+                # Проверяем доступность порта
+                try:
+                    self.connection = serial.Serial(
+                        port=self.com_port,
+                        baudrate=921600,
+                        parity=serial.PARITY_NONE,
+                        stopbits=serial.STOPBITS_TWO,
+                        timeout=1
+                    )
+                except serial.SerialException as serial_error:
+                    logger.error(f'Не удалось открыть COM-порт {self.com_port}: {serial_error}')
+                    raise WrongInstrumentError(f'Не удалось открыть COM-порт {self.com_port}. Проверьте: 1) Правильность номера порта, 2) Что порт не занят другим приложением, 3) Что устройство подключено') from serial_error
+                
                 if not self.connection.is_open:
                     raise WrongInstrumentError(f'Не удалось подключиться к {self.com_port}. Порт закрыт.')
+                
+                logger.info(f'COM-порт {self.com_port} успешно открыт, ищем БУ...')
+                
                 bu_num = self.search_bu_num()
                 if bu_num == 0:
-                    raise BuAddrNotFound('Не удалось найти нужный адрес БУ')
+                    self.connection.close()
+                    raise BuAddrNotFound('Не удалось найти нужный адрес БУ. Проверьте: 1) Что устройство включено, 2) Правильность подключения, 3) Настройки COM-порта')
                 else:
                     self.bu_addr = bu_num
                     logger.info(f'Произведено подключение к БУ№{self.bu_addr}')
@@ -164,14 +176,26 @@ class MA:
             if not self.connection:
                 logger.error('Не обнаружено подключение к MA')
                 raise WrongInstrumentError('При попытке обращения к connection MA произошла ошибка')
+            
+            logger.info('Начинаем поиск БУ (адреса 1-44)...')
             for i in range(1, 45):
-                command = self._generate_command(i, command_code=b'\xfa')
-                logger.debug(format_device_log(device='MA', direction='>>', data=command))
-                self.write(command)
-                response = self.read()
-                if response:
-                    logger.debug(f'Ответ от МА - {response.hex(" ")}')
-                    return int(response[1])
+                try:
+                    command = self._generate_command(i, command_code=b'\xfa')
+                    logger.debug(format_device_log(device='MA', direction='>>', data=command))
+                    self.write(command)
+                    time.sleep(0.1)  # Небольшая задержка между командами
+                    response = self.read()
+                    if response:
+                        logger.debug(f'Ответ от МА (БУ #{i}) - {response.hex(" ")}')
+                        logger.info(f'Найден БУ с адресом: {int(response[1])}')
+                        return int(response[1])
+                    else:
+                        logger.debug(f'Нет ответа от БУ #{i}')
+                except Exception as e:
+                    logger.debug(f'Ошибка при опросе БУ #{i}: {e}')
+                    continue
+            
+            logger.warning('Поиск БУ завершен, ни один БУ не ответил')
         return 0
 
     def _send_command(self, command: bytes):

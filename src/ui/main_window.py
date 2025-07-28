@@ -56,12 +56,15 @@ class SettingsDialog(QtWidgets.QDialog):
         com_port_layout = QtWidgets.QHBoxLayout()
         com_port_layout.addWidget(self.ma_com_combo)
         com_port_layout.addWidget(self.update_com_ports_btn)
+        
         ma_layout.addRow('COM-порт:', com_port_layout)
         self.ma_mode_combo = QtWidgets.QComboBox()
         self.ma_mode_combo.addItems(['Реальный', 'Тестовый'])
         ma_layout.addRow('Режим:', self.ma_mode_combo)
         layout.addWidget(ma_group)
 
+        # Обновляем список COM портов сразу при создании диалога
+        self.update_com_ports()
 
         # --- Кнопки ---
         btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
@@ -79,8 +82,8 @@ class SettingsDialog(QtWidgets.QDialog):
         filtered_ports = []
         for port in serial.tools.list_ports.comports():
             if any(x in port.device for x in ['usbserial', 'usbmodem', 'ttyUSB', 'ttyACM', 'wchusbserial', 'SLAB_USBtoUART', 'COM']):
-                display = f"{port.device} ({port.description})"
-                filtered_ports.append(display)
+                # Показываем только имя порта без описания
+                filtered_ports.append(port.device)
         self.ma_com_combo.addItems(filtered_ports)
         # Восстанавливаем предыдущий выбор, если возможно
         index = self.ma_com_combo.findText(current_port)
@@ -170,9 +173,38 @@ class MainWindow(QtWidgets.QMainWindow):
         
         self.menu_params.addAction('Настройки устройств', self.open_settings_dialog)
 
-        self.show_check_ma()  # По умолчанию - проверка МА
-
+        # Восстанавливаем состояние интерфейса
+        self.restore_ui_state()
+        
+        # Загружаем настройки устройств
         self.load_settings()
+
+    def restore_ui_state(self):
+        """Восстанавливает состояние интерфейса"""
+        # Восстанавливаем размер и позицию окна
+        self.restoreGeometry(self.settings.value('window_geometry', b''))
+        self.restoreState(self.settings.value('window_state', b''))
+        
+        # Восстанавливаем выбранную вкладку
+        last_mode = self.settings.value('last_mode', 'check')  # По умолчанию - проверка
+        if last_mode == 'phase':
+            self.show_phase_ma()
+        else:
+            self.show_check_ma()
+
+    def closeEvent(self, event):
+        """Сохраняет состояние при закрытии окна"""
+        self.settings.setValue('window_geometry', self.saveGeometry())
+        self.settings.setValue('window_state', self.saveState())
+        
+        # Сохраняем текущую вкладку
+        if self.central_widget.currentWidget() == self.phase_ma_widget:
+            self.settings.setValue('last_mode', 'phase')
+        else:
+            self.settings.setValue('last_mode', 'check')
+            
+        self.settings.sync()
+        super().closeEvent(event)
         
     def show_phase_ma(self):
         self.central_widget.setCurrentWidget(self.phase_ma_widget)
@@ -185,31 +217,60 @@ class MainWindow(QtWidgets.QMainWindow):
     def open_settings_dialog(self):
         dlg = SettingsDialog(self)
 
+        # Загружаем текущие настройки в диалог
         dlg.pna_ip_edit.setText(self.settings.value('pna_ip', ''))
         dlg.pna_port_edit.setText(self.settings.value('pna_port', ''))
-        dlg.pna_mode_combo.setCurrentIndex(self.settings.value('pna_mode', 0))
+        dlg.pna_mode_combo.setCurrentIndex(int(self.settings.value('pna_mode', 0)))
+        dlg.pna_files_path.setText(self.settings.value('pna_files_path', 'C:\\Users\\Public\\Documents\\Network Analyzer\\'))
+        
         dlg.psn_ip_edit.setText(self.settings.value('psn_ip', ''))
         dlg.psn_port_edit.setText(self.settings.value('psn_port', ''))
-        dlg.psn_mode_combo.setCurrentIndex(self.settings.value('psn_mode', 0))
-        dlg.psn_speed_x.setValue(int(self.settings.value('psn_speed_x', 0)))
-        dlg.psn_speed_y.setValue(int(self.settings.value('psn_speed_y', 0)))
-        dlg.psn_acc_x.setValue(int(self.settings.value('psn_acc_x', 0)))
-        dlg.psn_acc_y.setValue(int(self.settings.value('psn_acc_y', 0)))
+        dlg.psn_mode_combo.setCurrentIndex(int(self.settings.value('psn_mode', 0)))
+        dlg.psn_speed_x.setValue(int(self.settings.value('psn_speed_x', 10)))
+        dlg.psn_speed_y.setValue(int(self.settings.value('psn_speed_y', 10)))
+        dlg.psn_acc_x.setValue(int(self.settings.value('psn_acc_x', 5)))
+        dlg.psn_acc_y.setValue(int(self.settings.value('psn_acc_y', 5)))
+        
         dlg.ma_com_combo.setCurrentText(self.settings.value('ma_com_port', ''))
-        dlg.ma_mode_combo.setCurrentIndex(self.settings.value('ma_mode', 0))
-        dlg.pna_files_path.setText(self.settings.value('pna_files_path', 'C:\\Users\\Public\\Documents\\Network Analyzer\\'))
+        dlg.ma_mode_combo.setCurrentIndex(int(self.settings.value('ma_mode', 0)))
+        
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
             settings = dlg.get_settings()
+            # Сохраняем все настройки
             for k, v in settings.items():
                 self.settings.setValue(k, v)
             self.settings.sync()
+            
+            logger.info('Настройки сохранены')
+            logger.debug(f'Сохраненные настройки: {settings}')
+            
             # Передаём параметры в оба виджета
             self.phase_ma_widget.set_device_settings(settings)
             self.check_ma_widget.set_device_settings(settings)
 
     def load_settings(self):
         # При запуске приложения сразу применяем параметры к обоим виджетам
-        settings = {k: self.settings.value(k) for k in self.settings.allKeys()}
+        settings = {}
+        # Загружаем все сохраненные настройки с значениями по умолчанию
+        settings['pna_ip'] = self.settings.value('pna_ip', '')
+        settings['pna_port'] = self.settings.value('pna_port', '')
+        settings['pna_mode'] = int(self.settings.value('pna_mode', 0))
+        settings['pna_files_path'] = self.settings.value('pna_files_path', 'C:\\Users\\Public\\Documents\\Network Analyzer\\')
+        
+        settings['psn_ip'] = self.settings.value('psn_ip', '')
+        settings['psn_port'] = self.settings.value('psn_port', '')
+        settings['psn_mode'] = int(self.settings.value('psn_mode', 0))
+        settings['psn_speed_x'] = int(self.settings.value('psn_speed_x', 10))
+        settings['psn_speed_y'] = int(self.settings.value('psn_speed_y', 10))
+        settings['psn_acc_x'] = int(self.settings.value('psn_acc_x', 5))
+        settings['psn_acc_y'] = int(self.settings.value('psn_acc_y', 5))
+        
+        settings['ma_com_port'] = self.settings.value('ma_com_port', '')
+        settings['ma_mode'] = int(self.settings.value('ma_mode', 0))
+        
+        logger.info('Настройки загружены из реестра')
+        logger.debug(f'Загруженные настройки: {settings}')
+        
         self.phase_ma_widget.set_device_settings(settings)
         self.check_ma_widget.set_device_settings(settings)
 
