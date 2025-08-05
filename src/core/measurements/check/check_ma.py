@@ -245,8 +245,10 @@ class CheckMA:
                 for delay in self.delay_lines:
                     self.ma.set_delay(chanel=channel, value=delay)
                     # delay_abs, amp_abs = измеряем среднее значение задержки и амплитуды
+                    # phase_abs = измеряем фазу (наверное на центральной частоте)
+                    # delay_phase = self.norm_phase - phase_abs
                     # delay_delta, amp_delta = delay_abs - self.norm_delay, amp_abs - self.norm_amp
-                    # delay_results.append((delay_delta, amp_delta))
+                    # delay_results.append((delay_delta, amp_delta, phase_delta))
 
                 self.ma.set_delay(chanel=channel, value=0)
                 self.ma.switch_ppm(self.ppm_norm_number, chanel=channel, direction=direction, state=PpmState.OFF)

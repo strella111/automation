@@ -70,4 +70,79 @@ class CoordinateSystemManager:
         for system in self.systems:
             if system.name == name:
                 return system
-        return None 
+        return None
+    
+    def add_system(self, name: str, x_offset: float, y_offset: float) -> bool:
+        """Добавляет новую систему координат"""
+        # Проверяем, что такое имя еще не используется
+        if any(system.name == name for system in self.systems):
+            logger.error(f"Система координат с именем '{name}' уже существует")
+            return False
+        
+        new_system = CoordinateSystem(name=name, x_offset=x_offset, y_offset=y_offset)
+        self.systems.append(new_system)
+        
+        # Сохраняем в файл
+        if self.save_systems():
+            logger.info(f"Добавлена новая система координат: {name} (x={x_offset}, y={y_offset})")
+            return True
+        else:
+            # Если сохранение не удалось, удаляем из списка
+            self.systems.remove(new_system)
+            return False
+    
+    def remove_system(self, name: str) -> bool:
+        """Удаляет систему координат по имени"""
+        # Нельзя удалить последнюю систему координат
+        if len(self.systems) <= 1:
+            logger.error("Нельзя удалить последнюю систему координат")
+            return False
+        
+        # Ищем систему для удаления
+        system_to_remove = None
+        for system in self.systems:
+            if system.name == name:
+                system_to_remove = system
+                break
+        
+        if system_to_remove is None:
+            logger.error(f"Система координат с именем '{name}' не найдена")
+            return False
+        
+        # Удаляем систему
+        self.systems.remove(system_to_remove)
+        
+        # Сохраняем изменения
+        if self.save_systems():
+            logger.info(f"Система координат '{name}' успешно удалена")
+            return True
+        else:
+            # Если сохранение не удалось, возвращаем систему обратно
+            self.systems.append(system_to_remove)
+            return False
+
+    def save_systems(self) -> bool:
+        """Сохраняет все системы координат в конфигурационный файл"""
+        try:
+            systems_data = {
+                "coordinate_systems": [
+                    {
+                        "name": system.name,
+                        "x_offset": system.x_offset,
+                        "y_offset": system.y_offset
+                    }
+                    for system in self.systems
+                ]
+            }
+            
+            config_path = Path(self.config_path)
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(systems_data, f, indent=4, ensure_ascii=False)
+            
+            logger.info(f"Сохранено {len(self.systems)} систем координат в {self.config_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка при сохранении систем координат: {e}")
+            return False 

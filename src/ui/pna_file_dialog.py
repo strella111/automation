@@ -30,7 +30,6 @@ class PnaFileDialog(QtWidgets.QDialog):
         layout.setContentsMargins(16, 16, 16, 16)
 
         title = QtWidgets.QLabel('Выберите файл настроек PNA')
-        title.setStyleSheet('font-size: 16px; font-weight: bold; margin-bottom: 8px;')
         layout.addWidget(title)
 
         path_layout = QtWidgets.QHBoxLayout()
@@ -49,7 +48,6 @@ class PnaFileDialog(QtWidgets.QDialog):
         layout.addWidget(self.file_list)
 
         self.status_label = QtWidgets.QLabel('Загрузка файлов...')
-        self.status_label.setStyleSheet('color: #666; font-size: 12px;')
         layout.addWidget(self.status_label)
 
         button_layout = QtWidgets.QHBoxLayout()

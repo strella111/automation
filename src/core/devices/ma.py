@@ -181,14 +181,12 @@ class MA:
             for i in range(1, 45):
                 try:
                     command = self._generate_command(i, command_code=b'\xfa')
-                    logger.debug(format_device_log(device='MA', direction='>>', data=command))
                     self.write(command)
-                    time.sleep(0.1)  # Небольшая задержка между командами
+                    time.sleep(0.1)
                     response = self.read()
-                    if response:
-                        logger.debug(f'Ответ от МА (БУ #{i}) - {response.hex(" ")}')
+                    if response and len(response) >= 2:
                         logger.info(f'Найден БУ с адресом: {int(response[1])}')
-                        return int(response[1])
+                        return int(response[1] & 0x3f)
                     else:
                         logger.debug(f'Нет ответа от БУ #{i}')
                 except Exception as e:
@@ -209,25 +207,42 @@ class MA:
                 raise MaCommandNotDelivered(f'После 3 попыток не удалось отправить команду {command.hex(" ")} на БУ')
             self.retry_counter += 1
 
-    def turn_on_vips(self) -> None:
-        logger.info('Включение ВИПов')
-        if self.mode == 1:
-            time.sleep(0.1)
-        else:
-            command_code = b'\x0b'
-            data = b'\x3f'
-            command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
-            self._send_command(command)
 
-    def turn_off_vips(self):
-        logger.info('Отключение ВИПов')
-        if self.mode == 1:
-            time.sleep(0.1)
-        else:
-            command_code = b'\x0b'
-            data = b'\x00'
-            command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
-            self._send_command(command)
+    def set_ppm_att(self, chanel: Channel, direction: Direction, ppm_num:int, value: int):
+        logger.info(f'Установка аттенюатора {value} в ППМ№{ppm_num}. Канал - {chanel}, поляризация {direction}')
+        command_code = b'\x09'
+        data = bytearray(99)
+        offset = 0
+        if chanel == Channel.Transmitter:
+            offset = 0
+        elif chanel == chanel.Receiver and direction == Direction.Horizontal:
+            offset = 1
+        elif chanel == chanel.Receiver and direction == Direction.Vertical:
+            offset = 2
+
+        index = (ppm_num - 1) * 3 + offset
+        data[index] = value
+        data = bytes(data)
+        command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
+        self._send_command(command)
+
+    def set_mdo_att(self, chanel: Channel, direction: Direction, value: int):
+        logger.info(f'Установка аттенюатора {value} в МДО. Канал - {chanel}, поляризация {direction}')
+        command_code = b'\x09'
+        data = bytearray(99)
+        index = 0
+        if chanel == Channel.Transmitter:
+            index = 96
+        elif chanel == chanel.Receiver and direction == Direction.Horizontal:
+            index = 97
+        elif chanel == chanel.Receiver and direction == Direction.Vertical:
+            index = 98
+
+        data[index] = value
+        data = bytes(data)
+        command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
+        self._send_command(command)
+
 
     def switch_ppm(self, ppm_num: int, chanel: Channel, direction: Direction, state: PpmState):
         if state == PpmState.ON:
@@ -328,75 +343,62 @@ class MA:
         command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
         self._send_command(command)
 
-    def switch_mdo(self, chanel: Channel, direction: Direction, state: MdoState):
-        if state == MdoState.ON:
-            logger.info(f'Включение МДО. Канал - {chanel}, поляризация - {direction}')
-        else:
-            logger.info(f'Выключение МДО. Канал - {chanel}, поляризация - {direction}')
 
+    def set_phase_shifter(self, ppm_num: int, chanel: Channel, direction: Direction, value: int):
+        logger.info(f'Включение рабочего значения ФВ№{value}({value*5.625}). Канал - {chanel}, поляризация - {direction}')
+        data = bytearray(34)
+        chanel_byte = b''
         if chanel == Channel.Transmitter and direction == Direction.Horizontal:
-            if state == MdoState.ON:
-                self.ppm_data[16] = self.ppm_data[16] | 1
-            else:
-                self.ppm_data[16] = self.ppm_data[16] & ~ 1
-        if chanel == Channel.Transmitter and direction == Direction.Vertical:
-            if state == MdoState.ON:
-                self.ppm_data[16] = self.ppm_data[16] | (1 << 1)
-            else:
-                self.ppm_data[16] = self.ppm_data[16] & ~ (1 << 1)
-
-        if chanel == Channel.Receiver and direction == Direction.Horizontal:
-            if state == MdoState.ON:
-                self.ppm_data[16] = self.ppm_data[16] | (1 << 2)
-            else:
-                self.ppm_data[16] = self.ppm_data[16] & ~ (1 << 2)
-
-        if chanel == Channel.Receiver and direction == Direction.Vertical:
-            if state == MdoState.ON:
-                self.ppm_data[16] = self.ppm_data[16] | (1 << 3)
-            else:
-                self.ppm_data[16] = self.ppm_data[16] & ~ (1 << 3)
-
-        data = self.ppm_data
-        command_code = b'\x33'
+            chanel_byte = 0x80
+        elif chanel == Channel.Transmitter and direction == Direction.Vertical:
+            chanel_byte = 0x81
+        elif chanel == Channel.Receiver and direction == Direction.Vertical:
+            chanel_byte = 0x82
+        elif chanel == Channel.Receiver and direction == Direction.Horizontal:
+            chanel_byte = 0x83
+        data[0] = chanel_byte
+        data[ppm_num] = value
+        data = bytes(data)
+        command_code = b'\x01'
         command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
         self._send_command(command)
 
-    def set_phase_shifter(self, ppm_num: int, chanel: Channel, direction: Direction, value: int):
-        logger.info(f'Включение ФВ№{value}({value*5.625}). Канал - {chanel}, поляризация - {direction}')
-        data = bytearray(32 * 4)
-        base_index = (ppm_num - 1) * 4
-        offset = 0
-        if chanel == Channel.Transmitter and direction == Direction.Horizontal:
-            offset = 0
-        elif chanel == Channel.Transmitter and direction == Direction.Vertical:
-            offset = 1
-        elif chanel == Channel.Receiver and direction == Direction.Vertical:
-            offset = 2
-        elif chanel == Channel.Receiver and direction == Direction.Horizontal:
-            offset = 3
-        index = base_index + offset
-        data[index] = value
+    def turn_on_vips(self):
+        logger.info(f'Включение ВИПов')
+        data = b'\xf8\xf8'
         data = bytes(data)
-        command_code = b'\x01'
+        command_code = b'\x0b'
+        command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
+        self._send_command(command)
+
+    def turn_off_vips(self):
+        logger.info(f'Выключение ВИПов')
+        data = b'\x00\x00'
+        data = bytes(data)
+        command_code = b'\x0b'
         command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
         self._send_command(command)
 
 
     def set_delay(self, chanel: Channel, value: int):
         logger.info(f'Включение ЛЗ№{value}. Канал - {chanel}')
-        command_code = b'\x02'
-        data_fv = bytearray(64)
-        data = b''
+        command_code = b'\x01'
+        data = bytearray(34)
+        chanel_byte = b''
         if chanel == Channel.Receiver:
-            data_lz_prm = value.to_bytes(1, 'big')
-            data_lz_prd = b'\x00'
-            data = b''.join([data_fv, data_lz_prd, data_lz_prm])
+            chanel_byte = 0x82
         elif chanel == Channel.Transmitter:
-            data_lz_prd = value.to_bytes(1, 'big')
-            data_lz_prm = b'\x00'
-            data = b''.join([data_fv, data_lz_prd, data_lz_prm])
+            chanel_byte = 0x81
+        data[0] = chanel_byte
+        data[33] = value
+        data = bytes(data)
 
         command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
         self._send_command(command)
+
+
+if __name__ == '__main__':
+    ma = MA('Тестовый', mode=1)
+    ma.connect()
+
 

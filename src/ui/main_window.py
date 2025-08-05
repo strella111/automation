@@ -1,6 +1,7 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
 from .phase_ma_widget import PhaseMaWidget
 from .check_ma_widget import CheckMaWidget
+from .check_stend_ma_widget import CheckStendMaWidget
 import serial.tools.list_ports
 from loguru import logger
 
@@ -25,6 +26,10 @@ class SettingsDialog(QtWidgets.QDialog):
         pna_layout.addRow('Режим:', self.pna_mode_combo)
         pna_layout.addRow('Путь к файлам:', self.pna_files_path)
         layout.addWidget(pna_group)
+
+        # --- Настройки Генератора АКИП ---
+        akip_group = QtWidgets.QGroupBox('Настройки генератора АКИП')
+        akip_layout = QtWidgets.QFormLayout(akip_group)
 
         # --- Настройки PSN ---
         psn_group = QtWidgets.QGroupBox('Настройки PSN')
@@ -153,17 +158,23 @@ class MainWindow(QtWidgets.QMainWindow):
         # --- Виджеты режимов ---
         self.phase_ma_widget = PhaseMaWidget()
         self.check_ma_widget = CheckMaWidget()
+        self.check_stend_ma_widget = CheckStendMaWidget()
         self.central_widget.addWidget(self.phase_ma_widget)
         self.central_widget.addWidget(self.check_ma_widget)
+        self.central_widget.addWidget(self.check_stend_ma_widget)
 
         # --- Привязка меню ---
-        self.phase_action = self.menu_mode.addAction('Фазировка МА')
+        self.phase_action = self.menu_mode.addAction('Фазировка МА в БЭК')
         self.phase_action.setCheckable(True)
         self.phase_action.triggered.connect(self.show_phase_ma)
         
-        self.check_action = self.menu_mode.addAction('Проверка МА')
+        self.check_action = self.menu_mode.addAction('Проверка МА в БЭК')
         self.check_action.setCheckable(True)
         self.check_action.triggered.connect(self.show_check_ma)
+
+        self.check_action = self.menu_mode.addAction('Проверка МА на стенде')
+        self.check_action.setCheckable(True)
+        self.check_action.triggered.connect(self.show_check_stend_ma)
         
         # Группа для взаимоисключающих действий
         mode_group = QtWidgets.QActionGroup(self)
@@ -214,6 +225,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.central_widget.setCurrentWidget(self.check_ma_widget)
         self.check_action.setChecked(True)
 
+    def show_check_stend_ma(self):
+        self.central_widget.setCurrentWidget(self.check_stend_ma_widget)
+        self.check_action.setChecked(True)
+
     def open_settings_dialog(self):
         dlg = SettingsDialog(self)
 
@@ -247,6 +262,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # Передаём параметры в оба виджета
             self.phase_ma_widget.set_device_settings(settings)
             self.check_ma_widget.set_device_settings(settings)
+            self.check_stend_ma_widget.set_device_settings(settings)
 
     def load_settings(self):
         # При запуске приложения сразу применяем параметры к обоим виджетам
@@ -273,6 +289,7 @@ class MainWindow(QtWidgets.QMainWindow):
         
         self.phase_ma_widget.set_device_settings(settings)
         self.check_ma_widget.set_device_settings(settings)
+        self.check_stend_ma_widget.set_device_settings(settings)
 
 if __name__ == '__main__':
     import sys

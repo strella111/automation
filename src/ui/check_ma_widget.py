@@ -11,9 +11,70 @@ from core.devices.psn import PSN
 from core.measurements.check.check_ma import CheckMA
 from core.common.enums import Channel, Direction, PpmState
 from core.common.coordinate_system import CoordinateSystemManager
-from ui.styles.style_manager import style_manager
-from .pna_file_dialog import PnaFileDialog
 
+from ui.pna_file_dialog import PnaFileDialog
+
+
+class AddCoordinateSystemDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Добавить систему координат')
+        self.setModal(True)
+        self.setFixedSize(350, 200)
+        
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Поля ввода
+        form_layout = QtWidgets.QFormLayout()
+        form_layout.setSpacing(10)
+        
+        self.name_edit = QtWidgets.QLineEdit()
+        self.name_edit.setPlaceholderText('Введите название системы координат')
+        form_layout.addRow('Название:', self.name_edit)
+        
+        self.x_offset_spinbox = QtWidgets.QDoubleSpinBox()
+        self.x_offset_spinbox.setRange(-9999.0, 9999.0)
+        self.x_offset_spinbox.setDecimals(2)
+        self.x_offset_spinbox.setSuffix(' см')
+        self.x_offset_spinbox.setValue(0.0)
+        form_layout.addRow('Смещение X:', self.x_offset_spinbox)
+        
+        self.y_offset_spinbox = QtWidgets.QDoubleSpinBox()
+        self.y_offset_spinbox.setRange(-9999.0, 9999.0)
+        self.y_offset_spinbox.setDecimals(2)
+        self.y_offset_spinbox.setSuffix(' см')
+        self.y_offset_spinbox.setValue(0.0)
+        form_layout.addRow('Смещение Y:', self.y_offset_spinbox)
+        
+        layout.addLayout(form_layout)
+        
+        # Кнопки
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        
+        # Валидация при изменении текста
+        self.name_edit.textChanged.connect(self.validate_input)
+        self.validate_input()
+        
+    def validate_input(self):
+        """Проверяет корректность введенных данных"""
+        name = self.name_edit.text().strip()
+        ok_button = self.findChild(QtWidgets.QDialogButtonBox).button(QtWidgets.QDialogButtonBox.Ok)
+        ok_button.setEnabled(len(name) > 0)
+        
+    def get_values(self):
+        """Возвращает введенные значения"""
+        return (
+            self.name_edit.text().strip(),
+            self.x_offset_spinbox.value(),
+            self.y_offset_spinbox.value()
+        )
 
 
 class QTextEditLogHandler(QtCore.QObject):
@@ -43,9 +104,8 @@ class PpmRect(QtWidgets.QGraphicsRectItem):
         self.setAcceptHoverEvents(True)
         self.setFlag(QtWidgets.QGraphicsItem.ItemIsSelectable, True)
 
-
-        default_color = style_manager.get_style('PpmCellDefault') or "#f8f9fa"
-        border_color = style_manager.get_style('PpmCellBorder') or "#dee2e6"
+        default_color = "#f8f9fa"
+        border_color = "#dee2e6"
         
         self.setBrush(QtGui.QBrush(QtGui.QColor(default_color)))
         self.setPen(QtGui.QPen(QtGui.QColor(border_color), 1.5))
@@ -54,24 +114,24 @@ class PpmRect(QtWidgets.QGraphicsRectItem):
 
     def set_status(self, status):
         if status == "ok":
-            color = style_manager.get_style('PpmCellOk') or "#28a745"
+            color = "#28a745"  # зеленый
         elif status == "fail":
-            color = style_manager.get_style('PpmCellFail') or "#dc3545"
+            color = "#dc3545"  # красный
         else:
-            color = style_manager.get_style('PpmCellDefault') or "#f8f9fa"
+            color = "#f8f9fa"  # серый по умолчанию
             
         self.setBrush(QtGui.QBrush(QtGui.QColor(color)))
         self.status = status
 
     def hoverEnterEvent(self, event):
         """Подсветка при наведении мыши"""
-        hover_color = style_manager.get_style('PpmCellHover') or "#e9ecef"
+        hover_color = "#e9ecef"
         
         # Сохраняем текущий цвет если это статусный цвет
         if self.status == "ok":
-            hover_color = style_manager.get_style('PpmCellOk') or "#28a745"
+            hover_color = "#28a745"  # зеленый
         elif self.status == "fail":
-            hover_color = style_manager.get_style('PpmCellFail') or "#dc3545"
+            hover_color = "#dc3545"  # красный
             
         # Делаем цвет немного ярче для эффекта hover
         color = QtGui.QColor(hover_color)
@@ -97,8 +157,8 @@ class BottomRect(QtWidgets.QGraphicsRectItem):
         self.setAcceptHoverEvents(True)
         self.setFlag(QtWidgets.QGraphicsItem.ItemIsSelectable, True)
 
-        default_color = style_manager.get_style('PpmCellDefault') or "#f8f9fa"
-        border_color = style_manager.get_style('PpmCellBorder') or "#dee2e6"
+        default_color = "#f8f9fa"
+        border_color = "#dee2e6"
         
         self.setBrush(QtGui.QBrush(QtGui.QColor(default_color)))
         self.setPen(QtGui.QPen(QtGui.QColor(border_color), 1.5))
@@ -106,24 +166,24 @@ class BottomRect(QtWidgets.QGraphicsRectItem):
 
     def set_status(self, status):
         if status == "ok":
-            color = style_manager.get_style('PpmCellOk') or "#28a745"
+            color = "#28a745"  # зеленый
         elif status == "fail":
-            color = style_manager.get_style('PpmCellFail') or "#dc3545"
+            color = "#dc3545"  # красный
         else:
-            color = style_manager.get_style('PpmCellDefault') or "#f8f9fa"
+            color = "#f8f9fa"  # серый по умолчанию
             
         self.setBrush(QtGui.QBrush(QtGui.QColor(color)))
         self.status = status
 
     def hoverEnterEvent(self, event):
         """Подсветка при наведении мыши"""
-        hover_color = style_manager.get_style('PpmCellHover') or "#e9ecef"
+        hover_color = "#e9ecef"
         
         # Сохраняем текущий цвет если это статусный цвет
         if self.status == "ok":
-            hover_color = style_manager.get_style('PpmCellOk') or "#28a745"
+            hover_color = "#28a745"  # зеленый
         elif self.status == "fail":
-            hover_color = style_manager.get_style('PpmCellFail') or "#dc3545"
+            hover_color = "#dc3545"  # красный
             
         # Делаем цвет немного ярче для эффекта hover
         color = QtGui.QColor(hover_color)
@@ -165,8 +225,8 @@ class PpmFieldView(QtWidgets.QGraphicsView):
         self.rects.clear()
         self.texts.clear()
 
-        text_color = style_manager.get_style('PpmTextColor') or "#212529"
-        font_size = int(style_manager.get_style('PpmTextSize') or "10")
+        text_color = "#212529"
+        font_size = 10
         
         # Создаем основные ППМ прямоугольники
         for col in range(4):
@@ -443,29 +503,34 @@ class CheckMaWidget(QtWidgets.QWidget):
         coord_layout = QtWidgets.QFormLayout(coord_group)
         coord_layout.setContentsMargins(15, 15, 15, 15)
         
+        # Создаем горизонтальный layout для комбобокса и кнопок
+        coord_selection_layout = QtWidgets.QHBoxLayout()
+        coord_selection_layout.setSpacing(5)
+        coord_selection_layout.setContentsMargins(0, 0, 0, 0)
+        
         self.coord_system_combo = QtWidgets.QComboBox()
         self.coord_system_combo.addItems(self.coord_system_manager.get_system_names())
         self.coord_system_combo.setMinimumWidth(200)
-        coord_layout.addRow('Система координат:', self.coord_system_combo)
+        self.coord_system_combo.currentTextChanged.connect(self.update_coord_buttons_state)
+        coord_selection_layout.addWidget(self.coord_system_combo, 1)
+        
+        # Кнопка добавления системы координат
+        self.add_coord_system_btn = QtWidgets.QPushButton('+')
+        self.add_coord_system_btn.setFixedSize(24, 22)
+        self.add_coord_system_btn.setToolTip('Добавить новую систему координат')
+        self.add_coord_system_btn.clicked.connect(self.add_coordinate_system)
+        coord_selection_layout.addWidget(self.add_coord_system_btn, 0, QtCore.Qt.AlignVCenter)
+        
+        # Кнопка удаления системы координат
+        self.remove_coord_system_btn = QtWidgets.QPushButton('−')
+        self.remove_coord_system_btn.setFixedSize(24, 22)
+        self.remove_coord_system_btn.setToolTip('Удалить выбранную систему координат')
+        self.remove_coord_system_btn.clicked.connect(self.remove_coordinate_system)
+        coord_selection_layout.addWidget(self.remove_coord_system_btn, 0, QtCore.Qt.AlignVCenter)
+        
+        coord_layout.addRow('Система координат:', coord_selection_layout)
 
-        group_style = """
-        QGroupBox {
-            font-weight: bold;
-            font-size: 12px;
-            border: 2px solid #cccccc;
-            border-radius: 8px;
-            margin-top: 10px;
-            padding-top: 10px;
-            background-color: #f8f9fa;
-        }
-        QGroupBox::title {
-            subcontrol-origin: margin;
-            left: 10px;
-            padding: 0 8px 0 8px;
-            background-color: #f8f9fa;
-        }
-        """
-        coord_group.setStyleSheet(group_style)
+
         self.meas_tab_layout.addWidget(coord_group)
 
         criteria_group = QtWidgets.QGroupBox('Критерии проверки')
@@ -476,16 +541,13 @@ class CheckMaWidget(QtWidgets.QWidget):
         criteria_layout.addWidget(QtWidgets.QLabel(""), 0, 0)  # Пустая ячейка
         rx_label = QtWidgets.QLabel("RX")
         rx_label.setAlignment(QtCore.Qt.AlignCenter)
-        rx_label.setStyleSheet("font-weight: bold; color: #495057;")
         criteria_layout.addWidget(rx_label, 0, 1)
         
         tx_label = QtWidgets.QLabel("TX")
         tx_label.setAlignment(QtCore.Qt.AlignCenter)
-        tx_label.setStyleSheet("font-weight: bold; color: #495057;")
         criteria_layout.addWidget(tx_label, 0, 2)
 
         amp_label = QtWidgets.QLabel("Допуск амплитуды:")
-        amp_label.setStyleSheet("font-weight: bold;")
         criteria_layout.addWidget(amp_label, 1, 0)
         
         self.rx_amp_tolerance = QtWidgets.QDoubleSpinBox()
@@ -507,7 +569,6 @@ class CheckMaWidget(QtWidgets.QWidget):
         criteria_layout.addWidget(self.tx_amp_tolerance, 1, 2)
 
         min_phase_label = QtWidgets.QLabel("Мин. фаза (все ФВ):")
-        min_phase_label.setStyleSheet("font-weight: bold;")
         criteria_layout.addWidget(min_phase_label, 2, 0)
         
         self.rx_phase_min = QtWidgets.QDoubleSpinBox()
@@ -529,7 +590,6 @@ class CheckMaWidget(QtWidgets.QWidget):
         criteria_layout.addWidget(self.tx_phase_min, 2, 2)
 
         max_phase_label = QtWidgets.QLabel("Макс. фаза (все ФВ):")
-        max_phase_label.setStyleSheet("font-weight: bold;")
         criteria_layout.addWidget(max_phase_label, 3, 0)
         
         self.rx_phase_max = QtWidgets.QDoubleSpinBox()
@@ -550,7 +610,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.tx_phase_max.setMinimumWidth(80)
         criteria_layout.addWidget(self.tx_phase_max, 3, 2)
         
-        criteria_group.setStyleSheet(group_style)
+
         self.meas_tab_layout.addWidget(criteria_group)
 
         ps_group = QtWidgets.QGroupBox('Допуски фазовращателей')
@@ -571,12 +631,10 @@ class CheckMaWidget(QtWidgets.QWidget):
         scroll_layout.addWidget(QtWidgets.QLabel(""), 0, 0)
         from_label = QtWidgets.QLabel("от:")
         from_label.setAlignment(QtCore.Qt.AlignCenter)
-        from_label.setStyleSheet("font-weight: bold; color: #495057;")
         scroll_layout.addWidget(from_label, 0, 1)
         
         to_label = QtWidgets.QLabel("до:")
         to_label.setAlignment(QtCore.Qt.AlignCenter)
-        to_label.setStyleSheet("font-weight: bold; color: #495057;")
         scroll_layout.addWidget(to_label, 0, 2)
 
         self.phase_shifter_tolerances = {}
@@ -584,7 +642,6 @@ class CheckMaWidget(QtWidgets.QWidget):
         
         for row, angle in enumerate(phase_angles, 1):
             ps_label = QtWidgets.QLabel(f"ФВ {angle}°:")
-            ps_label.setStyleSheet("font-weight: bold;")
             ps_label.setMinimumWidth(80)
             scroll_layout.addWidget(ps_label, row, 0)
 
@@ -613,7 +670,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         
         scroll_area.setWidget(scroll_widget)
         ps_main_layout.addWidget(scroll_area)
-        ps_group.setStyleSheet(group_style)
+
         self.meas_tab_layout.addWidget(ps_group)
 
         self.meas_tab_layout.addStretch()
@@ -725,6 +782,14 @@ class CheckMaWidget(QtWidgets.QWidget):
 
         self.ppm_data = {}
         self.bottom_rect_data = {}  # Данные для линий задержки
+        
+        # Обновляем состояние кнопок системы координат
+        self.update_coord_buttons_state()
+        
+        # Устанавливаем начальные стили кнопок подключения (отключено)
+        self.set_button_connection_state(self.pna_connect_btn, False)
+        self.set_button_connection_state(self.psn_connect_btn, False)
+        self.set_button_connection_state(self.ma_connect_btn, False)
 
     def show_ppm_details(self, button: QtWidgets.QPushButton, ppm_num: int):
         """Показывает детальную информацию о ППМ в контекстном меню"""
@@ -921,14 +986,13 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.pause_btn.setEnabled(not enabled)
 
     def set_button_connection_state(self, button: QtWidgets.QPushButton, connected: bool):
-        """Устанавливает состояние подключения кнопки через динамические стили"""
+        """Устанавливает состояние подключения кнопки"""
         if connected:
-            style = style_manager.get_style('ButtonConnected')
+            # Зеленый фон для подключенного состояния
+            button.setStyleSheet("QPushButton { background-color: #28a745; color: white; }")
         else:
-            style = style_manager.get_style('ButtonDisconnected')
-        
-        if style:
-            button.setStyleSheet(style)
+            # Красный фон для отключенного состояния
+            button.setStyleSheet("QPushButton { background-color: #dc3545; color: white; }")
     
     def create_status_table_item(self, text: str, is_success: bool) -> QtWidgets.QTableWidgetItem:
         item = QtWidgets.QTableWidgetItem(text)
@@ -1165,6 +1229,7 @@ class CheckMaWidget(QtWidgets.QWidget):
             try:
                 self.ma.disconnect()
                 self.ma = None
+                self.ma_connect_btn.setText('МА')  # Восстанавливаем исходный текст
                 self.set_button_connection_state(self.ma_connect_btn, False)
                 logger.info('МА успешно отключен')
                 return
@@ -1309,7 +1374,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         """Показывает контекстное меню для нижнего прямоугольника (Линии задержки)"""
         menu = QtWidgets.QMenu()
         
-        header_action = menu.addAction("📡 Линии задержки")
+        header_action = menu.addAction("Линии задержки")
         header_action.setEnabled(False)
         menu.addSeparator()
         
@@ -1328,8 +1393,80 @@ class CheckMaWidget(QtWidgets.QWidget):
     def update_bottom_rect_data(self, data: dict):
         """Обновляет данные для нижнего прямоугольника (Линии задержки)"""
         self.bottom_rect_data = data
-        # При необходимости можно также обновить статус
-        # self.ppm_field_view.update_bottom_rect_status("ok" if data else "")
+
+        self.ppm_field_view.update_bottom_rect_status("ok" if data else "")
+
+    def add_coordinate_system(self):
+        """Открывает диалог для добавления новой системы координат"""
+        dialog = AddCoordinateSystemDialog(self)
+        
+        if dialog.exec_() == QtWidgets.QDialog.Accepted:
+            name, x_offset, y_offset = dialog.get_values()
+            
+            # Добавляем систему координат через менеджер
+            if self.coord_system_manager.add_system(name, x_offset, y_offset):
+                # Обновляем список в комбобоксе
+                current_text = self.coord_system_combo.currentText()
+                self.coord_system_combo.clear()
+                self.coord_system_combo.addItems(self.coord_system_manager.get_system_names())
+                
+                # Выбираем только что добавленную систему
+                index = self.coord_system_combo.findText(name)
+                if index >= 0:
+                    self.coord_system_combo.setCurrentIndex(index)
+                
+                # Обновляем состояние кнопок
+                self.update_coord_buttons_state()
+                
+                self.show_info_message("Успех", f"Система координат '{name}' успешно добавлена")
+            else:
+                self.show_error_message("Ошибка", "Не удалось добавить систему координат. Возможно, такое имя уже используется.")
+
+    def remove_coordinate_system(self):
+        """Удаляет выбранную систему координат"""
+        current_name = self.coord_system_combo.currentText()
+        
+        if not current_name:
+            self.show_error_message("Ошибка", "Нет выбранной системы координат для удаления")
+            return
+        
+        # Проверяем количество систем координат
+        if len(self.coord_system_manager.get_system_names()) <= 1:
+            self.show_error_message("Ошибка", "Нельзя удалить последнюю систему координат")
+            return
+        
+        # Запрашиваем подтверждение
+        reply = QMessageBox.question(
+            self, 
+            'Подтверждение удаления',
+            f'Вы уверены, что хотите удалить систему координат "{current_name}"?',
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Удаляем систему через менеджер
+            if self.coord_system_manager.remove_system(current_name):
+                # Обновляем список в комбобоксе
+                self.coord_system_combo.clear()
+                self.coord_system_combo.addItems(self.coord_system_manager.get_system_names())
+                
+                # Выбираем первую доступную систему
+                if self.coord_system_combo.count() > 0:
+                    self.coord_system_combo.setCurrentIndex(0)
+                
+                # Обновляем состояние кнопок
+                self.update_coord_buttons_state()
+                
+                self.show_info_message("Успех", f"Система координат '{current_name}' успешно удалена")
+            else:
+                self.show_error_message("Ошибка", "Не удалось удалить систему координат")
+
+    def update_coord_buttons_state(self):
+        """Обновляет состояние кнопок управления системами координат"""
+        # Кнопка удаления активна только если есть больше одной системы координат
+        can_remove = len(self.coord_system_manager.get_system_names()) > 1
+        self.remove_coord_system_btn.setEnabled(can_remove)
 
     @QtCore.pyqtSlot(str, str)
     def show_error_message(self, title: str, message: str):

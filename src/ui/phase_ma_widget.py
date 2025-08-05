@@ -50,33 +50,7 @@ class PhaseMaWidget(QtWidgets.QWidget):
         self.coord_system_manager = CoordinateSystemManager("config/coordinate_systems.json")
         self.coord_system = None
         
-        self.btn_style_disconnected = '''
-            QPushButton {
-                background: #e74c3c;
-                color: white;
-                border-radius: 7px;
-                border: 1px solid #666;
-                padding: 5px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background: #c0392b;
-            }
-        '''
-        
-        self.btn_style_connected = '''
-            QPushButton {
-                background: #2ecc40;
-                color: white;
-                border-radius: 7px;
-                border: 1px solid #666;
-                padding: 5px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background: #27ae60;
-            }
-        '''
+
 
         self.layout = QtWidgets.QHBoxLayout(self)
 
@@ -103,7 +77,6 @@ class PhaseMaWidget(QtWidgets.QWidget):
         pna_layout.setContentsMargins(0, 0, 0, 0)
         self.pna_connect_btn = QtWidgets.QPushButton('Анализатор')
         self.pna_connect_btn.setMinimumHeight(40)
-        self.pna_connect_btn.setStyleSheet(self.btn_style_disconnected) # Initial style
         pna_layout.addWidget(self.pna_connect_btn)
         self.connect_layout.addWidget(pna_widget)
 
@@ -113,7 +86,7 @@ class PhaseMaWidget(QtWidgets.QWidget):
         psn_layout.setContentsMargins(0, 0, 0, 0)
         self.psn_connect_btn = QtWidgets.QPushButton('Сканер')
         self.psn_connect_btn.setMinimumHeight(40)
-        self.psn_connect_btn.setStyleSheet(self.btn_style_disconnected) # Initial style
+
         psn_layout.addWidget(self.psn_connect_btn)
         self.connect_layout.addWidget(psn_widget)
 
@@ -123,7 +96,7 @@ class PhaseMaWidget(QtWidgets.QWidget):
         ma_layout.setContentsMargins(0, 0, 0, 0)
         self.ma_connect_btn = QtWidgets.QPushButton('МА')
         self.ma_connect_btn.setMinimumHeight(40)
-        self.ma_connect_btn.setStyleSheet(self.btn_style_disconnected)
+
         ma_layout.addWidget(self.ma_connect_btn)
 
         self.connect_layout.addWidget(ma_widget)
@@ -215,7 +188,7 @@ class PhaseMaWidget(QtWidgets.QWidget):
         # --- Консоль логов ---
         self.console = QtWidgets.QTextEdit()
         self.console.setReadOnly(True)
-        self.console.setStyleSheet('background: #fff; color: #000; font-family: "PT Mono";')
+
         self.console.setFixedHeight(200)
         self.right_layout.addWidget(self.console, stretch=1)
 
@@ -248,6 +221,11 @@ class PhaseMaWidget(QtWidgets.QWidget):
 
         self.set_buttons_enabled(True)
         self.device_settings = {}
+        
+        # Устанавливаем начальные стили кнопок подключения (отключено)
+        self.set_button_connection_state(self.pna_connect_btn, False)
+        self.set_button_connection_state(self.psn_connect_btn, False)
+        self.set_button_connection_state(self.ma_connect_btn, False)
 
 
     def update_pna_settings_files(self):
@@ -426,12 +404,22 @@ class PhaseMaWidget(QtWidgets.QWidget):
         self.set_buttons_enabled(True)
 
 
+    def set_button_connection_state(self, button: QtWidgets.QPushButton, connected: bool):
+        """Устанавливает состояние подключения кнопки"""
+        if connected:
+            # Зеленый фон для подключенного состояния
+            button.setStyleSheet("QPushButton { background-color: #28a745; color: white; }")
+        else:
+            # Красный фон для отключенного состояния
+            button.setStyleSheet("QPushButton { background-color: #dc3545; color: white; }")
+
     def connect_ma(self):
         if self.ma and self.ma.connection:
             try:
                 self.ma.disconnect()
                 self.ma = None
-                self.ma_connect_btn.setStyleSheet(self.btn_style_disconnected)
+                self.ma_connect_btn.setText('МА')  # Восстанавливаем исходный текст
+                self.set_button_connection_state(self.ma_connect_btn, False)
                 logger.info('МА успешно отключен')
                 return
             except Exception as e:
@@ -445,11 +433,13 @@ class PhaseMaWidget(QtWidgets.QWidget):
         try:
             self.ma = MA(bu_addr=int(addr), ma_num=1, com_port=com_port, mode=mode)
             self.ma.connect()
-            self.ma_connect_btn.setStyleSheet(self.btn_style_connected)
+            if self.ma.bu_addr:
+                self.ma_connect_btn.setText(f'МА №{self.ma.bu_addr}')
+            self.set_button_connection_state(self.ma_connect_btn, True)
             logger.info(f'МА успешно подключен {" " if mode == 0 else "(тестовый режим)"}')
         except Exception as e:
             self.ma = None
-            self.ma_connect_btn.setStyleSheet(self.btn_style_disconnected)
+            self.set_button_connection_state(self.ma_connect_btn, False)
             logger.error(f'Ошибка подключения МА: {e}')
 
     def connect_pna(self):
@@ -457,7 +447,7 @@ class PhaseMaWidget(QtWidgets.QWidget):
             try:
                 self.pna.disconnect()
                 self.pna = None
-                self.pna_connect_btn.setStyleSheet(self.btn_style_disconnected)
+                self.set_button_connection_state(self.pna_connect_btn, False)
                 logger.info('PNA успешно отключен')
                 return
             except Exception as e:
@@ -471,12 +461,12 @@ class PhaseMaWidget(QtWidgets.QWidget):
         try:
             self.pna = PNA(ip=ip, port=port, mode=mode)
             self.pna.connect()
-            self.pna_connect_btn.setStyleSheet(self.btn_style_connected)
+            self.set_button_connection_state(self.pna_connect_btn, True)
             logger.info(f'PNA успешно подключен {"" if mode == 0 else "(тестовый режим)"}')
             self.update_pna_settings_files()
         except Exception as e:
             self.pna = None
-            self.pna_connect_btn.setStyleSheet(self.btn_style_disconnected)
+            self.set_button_connection_state(self.pna_connect_btn, False)
             logger.error(f'Ошибка подключения PNA: {e}')
 
     def connect_psn(self):
@@ -484,7 +474,7 @@ class PhaseMaWidget(QtWidgets.QWidget):
             try:
                 self.psn.disconnect()
                 self.psn = None
-                self.psn_connect_btn.setStyleSheet(self.btn_style_disconnected)
+                self.set_button_connection_state(self.psn_connect_btn, False)
                 logger.info('PSN успешно отключен')
                 return
             except Exception as e:
@@ -498,11 +488,11 @@ class PhaseMaWidget(QtWidgets.QWidget):
         try:
             self.psn = PSN(ip=ip, port=port, mode=mode)
             self.psn.connect()
-            self.psn_connect_btn.setStyleSheet(self.btn_style_connected)
+            self.set_button_connection_state(self.psn_connect_btn, True)
             logger.info(f'PSN успешно подключен {"" if mode == 0 else "(тестовый режим)"}')
         except Exception as e:
             self.psn = None
-            self.psn_connect_btn.setStyleSheet(self.btn_style_disconnected)
+            self.set_button_connection_state(self.psn_connect_btn, False)
             logger.error(f'Ошибка подключения PSN: {e}')
 
     def set_device_settings(self, settings: dict):
