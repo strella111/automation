@@ -914,6 +914,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.bottom_rect_data = {}  # Данные для линий задержки
         self.check_completed = False  # Флаг завершения основной проверки
         self.last_excel_path = None  # Путь к последнему Excel файлу
+        self.last_normalization_values = None  # Последние нормировочные значения (amp, phase, delay)
         
         # Обновляем состояние кнопок системы координат
         self.update_coord_buttons_state()
@@ -1281,6 +1282,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.ppm_data.clear()
         self.bottom_rect_data.clear()
         self.check_completed = False  # Сбрасываем флаг завершения проверки
+        self.last_normalization_values = None  # Сбрасываем нормировочные значения
         for ppm_num, button in self.ppm_field_view.rects.items():
             button.set_status('')
         
@@ -1376,10 +1378,11 @@ class CheckMaWidget(QtWidgets.QWidget):
                     raise
 
             class CheckMAWithCallback(CheckMA):
-                def __init__(self, ma, psn, pna, stop_event, pause_event, callback, delay_callback=None, criteria=None):
+                def __init__(self, ma, psn, pna, stop_event, pause_event, callback, delay_callback=None, criteria=None, parent_widget=None):
                     super().__init__(ma, psn, pna, stop_event, pause_event)
                     self.callback = callback
                     self.delay_callback = delay_callback
+                    self.parent_widget = parent_widget
                     
                     # Применяем новые критерии проверки если они переданы
                     if criteria:
@@ -1396,6 +1399,17 @@ class CheckMaWidget(QtWidgets.QWidget):
                             self.delay_amp_tolerance = criteria['delay_amp_tolerance']
                         if 'delay_tolerances' in criteria:
                             self.delay_tolerances.update(criteria['delay_tolerances'])
+                
+                def start(self, channel: Channel, direction: Direction):
+                    """Переопределяем метод start для сохранения нормировочных значений"""
+                    results = super().start(channel, direction)
+                    
+                    # Сохраняем нормировочные значения в родительском виджете
+                    if self.parent_widget and hasattr(self, 'norm_amp') and hasattr(self, 'norm_phase') and hasattr(self, 'norm_delay'):
+                        self.parent_widget.last_normalization_values = (self.norm_amp, self.norm_phase, self.norm_delay)
+                        logger.info(f"Сохранены нормировочные значения: amp={self.norm_amp}, phase={self.norm_phase}, delay={self.norm_delay}")
+                    
+                    return results
                 
                 def check_ppm(self, ppm_num: int, channel: Channel, direction: Direction):
                     """Переопределяем метод для отправки результатов через callback"""
@@ -1415,7 +1429,8 @@ class CheckMaWidget(QtWidgets.QWidget):
                 pause_event=self._pause_flag,
                 callback=self.update_table_signal,
                 delay_callback=self.update_delay_signal,
-                criteria=self.check_criteria
+                criteria=self.check_criteria,
+                parent_widget=self
             )
 
             check.start(channel=channel, direction=direction)
@@ -1770,6 +1785,10 @@ class CheckMaWidget(QtWidgets.QWidget):
         if not self.check_completed:
             self.show_error_message("Ошибка", "Перемер доступен только после завершения основной проверки.")
             return
+        
+        if not self.last_normalization_values:
+            self.show_error_message("Ошибка", "Нет сохраненных нормировочных значений. Выполните полную проверку сначала.")
+            return
 
         reply = QtWidgets.QMessageBox.question(
             self, 
@@ -1812,9 +1831,14 @@ class CheckMaWidget(QtWidgets.QWidget):
                     logger.error(f"Ошибка при настройке PNA для перемера: {e}")
 
             class SinglePpmCheckMA(CheckMA):
-                def __init__(self, ma, psn, pna, callback, criteria=None):
+                def __init__(self, ma, psn, pna, callback, criteria=None, normalization_values=None):
                     super().__init__(ma, psn, pna, threading.Event(), threading.Event())
                     self.callback = callback
+                    
+                    # Используем сохраненные нормировочные значения
+                    if normalization_values:
+                        self.norm_amp, self.norm_phase, self.norm_delay = normalization_values
+                        logger.info(f"Используем нормировочные значения: amp={self.norm_amp}, phase={self.norm_phase}, delay={self.norm_delay}")
                     
                     if criteria:
                         self.rx_amp_max = criteria.get('rx_amp_max', self.rx_amp_max)
@@ -1868,7 +1892,8 @@ class CheckMaWidget(QtWidgets.QWidget):
                 psn=self.psn, 
                 pna=self.pna,
                 callback=self.update_table_signal,
-                criteria=self.check_criteria
+                criteria=self.check_criteria,
+                normalization_values=self.last_normalization_values
             )
 
             check.single_ppm_check(ppm_num, channel, direction)
