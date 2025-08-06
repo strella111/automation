@@ -95,14 +95,14 @@ class PSN:
             if not self.connection:
                 logger.error('Не обнаружено подключение к PSN при попытке запроса данных')
                 raise WrongInstrumentError('Не обнаружено подключение к PSN')
-            logger.debug(format_device_log('PSN', '>>', string))
+            #logger.debug(format_device_log('PSN', '>>', string))
             response = self.connection.query(string)
-            logger.debug(format_device_log('PSN', '<<', response))
+            #logger.debug(format_device_log('PSN', '<<', response))
             return response
         else:
             time.sleep(0.01)
-            logger.debug(format_device_log('PSN', '>>', string))
-            logger.debug(format_device_log('PSN', '<<', '0'))
+            #logger.debug(format_device_log('PSN', '>>', string))
+            #logger.debug(format_device_log('PSN', '<<', '0'))
             return "0"
 
     def move(self, x: float, y: float) -> None:

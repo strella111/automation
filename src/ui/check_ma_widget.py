@@ -617,8 +617,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         ps_group = QtWidgets.QGroupBox('Допуски фазовращателей')
         ps_main_layout = QtWidgets.QVBoxLayout(ps_group)
         ps_main_layout.setContentsMargins(15, 15, 15, 15)
-        
-        # Контейнер с прокруткой для фазовращателей
+
         scroll_area = QtWidgets.QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setMaximumHeight(200)
@@ -676,13 +675,11 @@ class CheckMaWidget(QtWidgets.QWidget):
 
         self.meas_tab_layout.addWidget(ps_group)
 
-        # Добавляем группу критериев для линий задержки
         delay_group = QtWidgets.QGroupBox('Критерии проверки линий задержки')
         delay_layout = QtWidgets.QGridLayout(delay_group)
         delay_layout.setContentsMargins(15, 15, 15, 15)
         delay_layout.setSpacing(10)
 
-        # Допуск по амплитуде для ЛЗ
         delay_layout.addWidget(QtWidgets.QLabel("Допуск амплитуды ЛЗ:"), 0, 0)
         
         self.delay_amp_tolerance = QtWidgets.QDoubleSpinBox()
@@ -695,7 +692,6 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.delay_amp_tolerance.setStyleSheet("QDoubleSpinBox { background-color: white; }")
         delay_layout.addWidget(self.delay_amp_tolerance, 0, 1)
 
-        # Допуски задержек (от-до)
         delay_layout.addWidget(QtWidgets.QLabel(""), 1, 0)  # Пустая ячейка
         from_label = QtWidgets.QLabel("от:")
         from_label.setAlignment(QtCore.Qt.AlignCenter)
@@ -821,7 +817,6 @@ class CheckMaWidget(QtWidgets.QWidget):
 
         self.ppm_field_view = PpmFieldView(self)
 
-        # Создаем таблицу для линий задержки
         self.delay_table = QtWidgets.QTableWidget()
         self.delay_table.setColumnCount(4)
         self.delay_table.setHorizontalHeaderLabels([
@@ -842,7 +837,6 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.delay_table.setAlternatingRowColors(True)
         self.delay_table.setShowGrid(True)
 
-        # Инициализируем таблицу линий задержки
         delay_discretes = [1, 2, 4, 8]
         for row, discrete in enumerate(delay_discretes):
             item = QtWidgets.QTableWidgetItem(f"ЛЗ{discrete}")
@@ -882,7 +876,6 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.stop_btn.clicked.connect(self.stop_check)
         self.pause_btn.clicked.connect(self.pause_check)
 
-        # Подключение сигналов к слотам
         self.update_table_signal.connect(self.update_table_row)
         self.update_delay_signal.connect(self.update_delay_table)
         self.error_signal.connect(self.show_error_message)
@@ -919,6 +912,8 @@ class CheckMaWidget(QtWidgets.QWidget):
 
         self.ppm_data = {}
         self.bottom_rect_data = {}  # Данные для линий задержки
+        self.check_completed = False  # Флаг завершения основной проверки
+        self.last_excel_path = None  # Путь к последнему Excel файлу
         
         # Обновляем состояние кнопок системы координат
         self.update_coord_buttons_state()
@@ -1112,7 +1107,6 @@ class CheckMaWidget(QtWidgets.QWidget):
             self.ppm_field_view.update_ppm(ppm_num, overall_status)
 
             self.results_table.viewport().update()
-            # Убираем processEvents() - Qt сам обработает события GUI
         except Exception as e:
             self.show_error_message("Ошибка обновления таблицы", f"Ошибка при обновлении данных ППМ {ppm_num}: {str(e)}")
             logger.error(f'Ошибка при обновлении значений ФВ для ППМ {ppm_num}: {e}')
@@ -1168,6 +1162,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         """Слот для завершения проверки - выполняется в главном потоке GUI"""
         self.set_buttons_enabled(True)
         self.pause_btn.setText('Пауза')
+        self.check_completed = True  # Устанавливаем флаг завершения проверки
         logger.info('Проверка завершена, интерфейс восстановлен')
 
     @QtCore.pyqtSlot(bool)
@@ -1285,6 +1280,7 @@ class CheckMaWidget(QtWidgets.QWidget):
 
         self.ppm_data.clear()
         self.bottom_rect_data.clear()
+        self.check_completed = False  # Сбрасываем флаг завершения проверки
         for ppm_num, button in self.ppm_field_view.rects.items():
             button.set_status('')
         
@@ -1535,53 +1531,56 @@ class CheckMaWidget(QtWidgets.QWidget):
         logger.debug(f'Новые настройки: {self.device_settings}')
 
     def show_ppm_details_graphics(self, ppm_num, global_pos):
-        if ppm_num not in self.ppm_data:
-            menu = QtWidgets.QMenu()
-            action = menu.addAction(f"ППМ {ppm_num} - данные не готовы")
-            action.setEnabled(False)
-            menu.exec_(global_pos)
-            return
-        
-        data = self.ppm_data[ppm_num]
         menu = QtWidgets.QMenu()
-
-        status_text = "OK" if data['result'] else "FAIL"
-        status_color = "🟢" if data['result'] else "🔴"
-        header_action = menu.addAction(f"{status_color} ППМ {ppm_num} - {status_text}")
-        header_action.setEnabled(False)
-        menu.addSeparator()
-
-        if not np.isnan(data['amp']):
-            amp_action = menu.addAction(f"Амплитуда: {data['amp']:.2f} дБ")
+        
+        if ppm_num not in self.ppm_data:
+            header_action = menu.addAction(f"ППМ {ppm_num} - данные не готовы")
+            header_action.setEnabled(False)
         else:
-            amp_action = menu.addAction("Амплитуда: ---")
-        amp_action.setEnabled(False)
-
-        if not np.isnan(data['phase']):
-            phase_action = menu.addAction(f"Фаза: {data['phase']:.1f}°")
-        else:
-            phase_action = menu.addAction("Фаза: ---")
-        phase_action.setEnabled(False)
-
-        if data['fv_data'] and len(data['fv_data']) > 0:
+            data = self.ppm_data[ppm_num]
+            status_text = "OK" if data['result'] else "FAIL"
+            status_color = "🟢" if data['result'] else "🔴"
+            header_action = menu.addAction(f"{status_color} ППМ {ppm_num} - {status_text}")
+            header_action.setEnabled(False)
             menu.addSeparator()
-            fv_header = menu.addAction("Значения ФВ:")
-            fv_header.setEnabled(False)
-            
-            fv_names = ["Дельта ФВ", "5,625°", "11,25°", "22,5°", "45°", "90°", "180°"]
-            for i, value in enumerate(data['fv_data']):
-                if i < len(fv_names):
-                    if not np.isnan(value):
-                        fv_action = menu.addAction(f"  {fv_names[i]}: {value:.1f}°")
+
+            if not np.isnan(data['amp']):
+                amp_action = menu.addAction(f"Амплитуда: {data['amp']:.2f} дБ")
+            else:
+                amp_action = menu.addAction("Амплитуда: ---")
+            amp_action.setEnabled(False)
+
+            if not np.isnan(data['phase']):
+                phase_action = menu.addAction(f"Фаза: {data['phase']:.1f}°")
+            else:
+                phase_action = menu.addAction("Фаза: ---")
+            phase_action.setEnabled(False)
+
+            if data['fv_data'] and len(data['fv_data']) > 0:
+                menu.addSeparator()
+                fv_header = menu.addAction("Значения ФВ:")
+                fv_header.setEnabled(False)
+                
+                fv_names = ["Дельта ФВ", "5,625°", "11,25°", "22,5°", "45°", "90°", "180°"]
+                for i, value in enumerate(data['fv_data']):
+                    if i < len(fv_names):
+                        if not np.isnan(value):
+                            fv_action = menu.addAction(f"  {fv_names[i]}: {value:.1f}°")
+                        else:
+                            fv_action = menu.addAction(f"  {fv_names[i]}: ---")
+                        fv_action.setEnabled(False)
                     else:
-                        fv_action = menu.addAction(f"  {fv_names[i]}: ---")
-                    fv_action.setEnabled(False)
-                else:
-                    if not np.isnan(value):
-                        fv_action = menu.addAction(f"  ФВ {i+1}: {value:.1f}°")
-                    else:
-                        fv_action = menu.addAction(f"  ФВ {i+1}: ---")
-                    fv_action.setEnabled(False)
+                        if not np.isnan(value):
+                            fv_action = menu.addAction(f"  ФВ {i+1}: {value:.1f}°")
+                        else:
+                            fv_action = menu.addAction(f"  ФВ {i+1}: ---")
+                        fv_action.setEnabled(False)
+        
+        # Добавляем опцию перемера если проверка завершена и устройства подключены
+        if self.check_completed and self._can_remeasure():
+            menu.addSeparator()
+            remeasure_action = menu.addAction("🔄 Перемерить ППМ")
+            remeasure_action.triggered.connect(lambda: self.remeasure_ppm(ppm_num))
         
         menu.exec_(global_pos) 
 
@@ -1754,4 +1753,141 @@ class CheckMaWidget(QtWidgets.QWidget):
 
         except Exception as e:
             logger.error(f'Ошибка при применении настроек к интерфейсу: {e}')
+
+    def _can_remeasure(self) -> bool:
+        """Проверяет, возможен ли перемер (все устройства подключены и не идет измерение)"""
+        return (self.ma and self.ma.connection and 
+                self.pna and self.pna.connection and 
+                self.psn and self.psn.connection and
+                not self._check_thread or not self._check_thread.is_alive())
+
+    def remeasure_ppm(self, ppm_num: int):
+        """Запускает перемер конкретного ППМ"""
+        if not self._can_remeasure():
+            self.show_error_message("Ошибка", "Невозможно выполнить перемер. Проверьте подключение устройств.")
+            return
+        
+        if not self.check_completed:
+            self.show_error_message("Ошибка", "Перемер доступен только после завершения основной проверки.")
+            return
+
+        reply = QtWidgets.QMessageBox.question(
+            self, 
+            'Подтверждение перемера',
+            f'Перемерить ППМ {ppm_num}?',
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.Yes
+        )
+        
+        if reply == QtWidgets.QMessageBox.Yes:
+            logger.info(f"Запуск перемера ППМ {ppm_num}")
+            self.set_buttons_enabled(False)
+            self._check_thread = threading.Thread(target=self._run_single_ppm_check, args=(ppm_num,), daemon=True)
+            self._check_thread.start()
+
+    def _run_single_ppm_check(self, ppm_num: int):
+        """Выполняет проверку одного ППМ в отдельном потоке"""
+        try:
+            channel = Channel.Receiver if self.channel_combo.currentText() == 'Приемник' else Channel.Transmitter
+            direction = Direction.Horizontal if self.direction_combo.currentText() == 'Горизонтальная' else Direction.Vertical
+            
+            logger.info(f'Перемер ППМ {ppm_num}, канал: {channel.value}, поляризация: {direction.value}')
+
+            if self.psn and self.device_settings:
+                try:
+                    x_offset = self.coord_system.x_offset if self.coord_system else 0
+                    y_offset = self.coord_system.y_offset if self.coord_system else 0
+                    self.psn.set_offset(x_offset, y_offset)
+                except Exception as e:
+                    logger.error(f'Ошибка настройки PSN для перемера: {e}')
+
+            if self.pna and self.pna_settings:
+                try:
+                    self.pna.set_freq_start(self.pna_settings.get('freq_start'))
+                    self.pna.set_freq_stop(self.pna_settings.get('freq_stop'))
+                    self.pna.set_points(self.pna_settings.get('freq_points'))
+                    self.pna.set_power(self.pna_settings.get('power'))
+                    self.pna.set_output(True)
+                except Exception as e:
+                    logger.error(f"Ошибка при настройке PNA для перемера: {e}")
+
+            class SinglePpmCheckMA(CheckMA):
+                def __init__(self, ma, psn, pna, callback, criteria=None):
+                    super().__init__(ma, psn, pna, threading.Event(), threading.Event())
+                    self.callback = callback
+                    
+                    if criteria:
+                        self.rx_amp_max = criteria.get('rx_amp_max', self.rx_amp_max)
+                        self.tx_amp_max = criteria.get('tx_amp_max', self.tx_amp_max)
+                        self.rx_phase_diff_min = criteria.get('rx_phase_min', self.rx_phase_diff_min)
+                        self.rx_phase_diff_max = criteria.get('rx_phase_max', self.rx_phase_diff_max)
+                        self.tx_phase_diff_min = criteria.get('tx_phase_min', self.tx_phase_diff_min)
+                        self.tx_phase_diff_max = criteria.get('tx_phase_max', self.tx_phase_diff_max)
+                        self.phase_shifter_tolerances = criteria.get('phase_shifter_tolerances', None)
+
+                def single_ppm_check(self, ppm_num: int, channel: Channel, direction: Direction):
+                    """Проверяет один ППМ и обновляет Excel"""
+                    self.ma.turn_on_vips()
+                    result, measurements = self.check_ppm(ppm_num, channel, direction)
+                    amp, phase, fv_data = measurements
+                    self.ma.turn_off_vips()
+
+                    if self.callback:
+                        self.callback.emit(ppm_num, result, amp, phase, fv_data)
+                    
+                    # Обновляем Excel файл
+                    self._update_excel_for_ppm(ppm_num, result, measurements, channel, direction)
+                    
+                    return result, measurements
+
+                def _update_excel_for_ppm(self, ppm_num: int, result: bool, measurements: tuple, channel: Channel, direction: Direction):
+                    """Обновляет Excel файл для конкретного ППМ"""
+                    try:
+                        from utils.excel_module import get_or_create_excel
+                        worksheet, workbook, file_path = get_or_create_excel(
+                            dir_name='check_data_collector',
+                            file_name=f'{self.ma.bu_addr}.xlsx',
+                            mode='check',
+                            chanel=channel,
+                            direction=direction
+                        )
+                        
+                        amp, phase, fv_data = measurements
+                        excel_row = [ppm_num, result, amp, phase] + fv_data
+                        for k, value in enumerate(excel_row):
+                            worksheet.cell(row=ppm_num+2, column=k + 1).value = value
+                        
+                        workbook.save(file_path)
+                        logger.info(f"Excel файл обновлен для ППМ {ppm_num}")
+                        
+                    except Exception as e:
+                        logger.error(f"Ошибка обновления Excel для ППМ {ppm_num}: {e}")
+
+            check = SinglePpmCheckMA(
+                ma=self.ma,
+                psn=self.psn, 
+                pna=self.pna,
+                callback=self.update_table_signal,
+                criteria=self.check_criteria
+            )
+
+            check.single_ppm_check(ppm_num, channel, direction)
+            
+            try:
+                self.pna.set_output(False)
+            except Exception as e:
+                logger.error(f"Ошибка при выключении PNA после перемера: {e}")
+                
+            logger.info(f'Перемер ППМ {ppm_num} завершен')
+
+        except Exception as e:
+            self.error_signal.emit("Ошибка перемера", f"Произошла ошибка при перемере ППМ {ppm_num}: {str(e)}")
+            logger.error(f"Ошибка при перемере ППМ {ppm_num}: {e}")
+            try:
+                if self.pna:
+                    self.pna.set_output(False)
+            except Exception as pna_error:
+                logger.error(f"Ошибка при аварийном выключении PNA: {pna_error}")
+        finally:
+            self.buttons_enabled_signal.emit(True)
 
