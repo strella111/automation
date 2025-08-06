@@ -63,6 +63,16 @@ class CheckMA:
         self.norm_amp = None
         self.norm_phase = None
         self.norm_delay = None
+        
+        # Критерии проверки линий задержки
+        self.delay_amp_tolerance = 1.0  # Допуск по амплитуде для ЛЗ в дБ
+        self.delay_tolerances = {
+            1: {'min': 90.0, 'max': 110.0},   # ЛЗ1 от 90 до 110пс
+            2: {'min': 180.0, 'max': 220.0},  # ЛЗ2 от 180 до 220пс  
+            4: {'min': 360.0, 'max': 440.0}   # ЛЗ4 от 360 до 440пс
+        }
+
+        self.delay_callback = None
 
     def _check_connections(self) -> bool:
         """
@@ -93,6 +103,20 @@ class CheckMA:
         else:
             return -2.0 <= phase_diff <= 2.0
             
+    def _check_delay_line(self, delay_discrete: int, delay_delta: float, amp_delta: float) -> bool:
+        """Проверяет линию задержки по критериям"""
+        # Проверка по амплитуде
+        amp_ok = abs(amp_delta) <= self.delay_amp_tolerance
+        
+        # Проверка по задержке 
+        delay_ok = True
+        if delay_discrete in self.delay_tolerances:
+            min_delay = self.delay_tolerances[delay_discrete]['min']
+            max_delay = self.delay_tolerances[delay_discrete]['max']
+            delay_ok = min_delay <= delay_delta <= max_delay
+        
+        return amp_ok and delay_ok
+    
     def _check_amplitude(self, amp_current: float, channel: Channel) -> bool:
         """Проверяет амплитуду относительно нормировочного значения"""
         if self.norm_amp is None:
@@ -258,9 +282,17 @@ class CheckMA:
                     delay_abs = self.pna.get_mean_value()
                     amp_abs = self.pna.get_mean_value_from_sdata()
                     delay_delta, amp_delta = (delay_abs - self.norm_delay)*10**12, amp_abs - self.norm_amp
-                    delay_results.append((delay_delta, amp_delta))
+                    
+                    # Проверяем критерии для линии задержки
+                    delay_ok = self._check_delay_line(delay, delay_delta, amp_delta)
+                    
+                    delay_results.append((delay, delay_delta, amp_delta, delay_ok))
+                    logger.info(f"ЛЗ {delay}: Δt={delay_delta:.1f}пс, Δamp={amp_delta:.2f}дБ, {'OK' if delay_ok else 'FAIL'}")
 
-                print(delay_results)
+                # Передаем данные линий задержки в UI через callback
+                if self.delay_callback:
+                    self.delay_callback.emit(delay_results)
+
 
                 self.ma.set_delay(chanel=channel, direction=direction, value=0)
                 self.ma.switch_ppm(self.ppm_norm_number, chanel=channel, direction=direction, state=PpmState.OFF)
@@ -308,4 +340,4 @@ class CheckMA:
 
         self.ma.turn_off_vips()
         workbook.save(file_path)
-        return results 
+        return results

@@ -684,7 +684,6 @@ class CheckStendMaWidget(QtWidgets.QWidget):
         self.bottom_rect_data = {}  # Данные для линий задержки
 
 
-        # Устанавливаем начальные стили кнопок подключения (отключено)
         self.set_button_connection_state(self.pna_connect_btn, False)
         self.set_button_connection_state(self.psn_connect_btn, False)
         self.set_button_connection_state(self.ma_connect_btn, False)

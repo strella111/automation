@@ -366,6 +366,7 @@ class PpmFieldView(QtWidgets.QGraphicsView):
 
 class CheckMaWidget(QtWidgets.QWidget):
     update_table_signal = QtCore.pyqtSignal(int, bool, float, float, list)
+    update_delay_signal = QtCore.pyqtSignal(list)  # для обновления данных линий задержки
     error_signal = QtCore.pyqtSignal(str, str)  # title, message
     buttons_enabled_signal = QtCore.pyqtSignal(bool)  # enabled
     check_finished_signal = QtCore.pyqtSignal()  # когда проверка завершена
@@ -652,6 +653,7 @@ class CheckMaWidget(QtWidgets.QWidget):
             min_spinbox.setValue(-2.0)
             min_spinbox.setSuffix('°')
             min_spinbox.setMinimumWidth(70)
+            min_spinbox.setStyleSheet("QDoubleSpinBox { background-color: white; }")
             scroll_layout.addWidget(min_spinbox, row, 1)
 
             max_spinbox = QtWidgets.QDoubleSpinBox()
@@ -661,6 +663,7 @@ class CheckMaWidget(QtWidgets.QWidget):
             max_spinbox.setValue(2.0)
             max_spinbox.setSuffix('°')
             max_spinbox.setMinimumWidth(70)
+            max_spinbox.setStyleSheet("QDoubleSpinBox { background-color: white; }")
             scroll_layout.addWidget(max_spinbox, row, 2)
             
             self.phase_shifter_tolerances[angle] = {
@@ -672,6 +675,100 @@ class CheckMaWidget(QtWidgets.QWidget):
         ps_main_layout.addWidget(scroll_area)
 
         self.meas_tab_layout.addWidget(ps_group)
+
+        # Добавляем группу критериев для линий задержки
+        delay_group = QtWidgets.QGroupBox('Критерии проверки линий задержки')
+        delay_layout = QtWidgets.QGridLayout(delay_group)
+        delay_layout.setContentsMargins(15, 15, 15, 15)
+        delay_layout.setSpacing(10)
+
+        # Допуск по амплитуде для ЛЗ
+        delay_layout.addWidget(QtWidgets.QLabel("Допуск амплитуды ЛЗ:"), 0, 0)
+        
+        self.delay_amp_tolerance = QtWidgets.QDoubleSpinBox()
+        self.delay_amp_tolerance.setRange(0.1, 10.0)
+        self.delay_amp_tolerance.setSingleStep(0.1)
+        self.delay_amp_tolerance.setDecimals(1)
+        self.delay_amp_tolerance.setValue(1.0)
+        self.delay_amp_tolerance.setSuffix(' дБ')
+        self.delay_amp_tolerance.setMinimumWidth(80)
+        self.delay_amp_tolerance.setStyleSheet("QDoubleSpinBox { background-color: white; }")
+        delay_layout.addWidget(self.delay_amp_tolerance, 0, 1)
+
+        # Допуски задержек (от-до)
+        delay_layout.addWidget(QtWidgets.QLabel(""), 1, 0)  # Пустая ячейка
+        from_label = QtWidgets.QLabel("от:")
+        from_label.setAlignment(QtCore.Qt.AlignCenter)
+        delay_layout.addWidget(from_label, 1, 1)
+        
+        to_label = QtWidgets.QLabel("до:")
+        to_label.setAlignment(QtCore.Qt.AlignCenter)
+        delay_layout.addWidget(to_label, 1, 2)
+        
+        delay_layout.addWidget(QtWidgets.QLabel("ЛЗ1:"), 2, 0)
+        self.delay1_min = QtWidgets.QDoubleSpinBox()
+        self.delay1_min.setRange(1.0, 1000.0)
+        self.delay1_min.setSingleStep(1.0)
+        self.delay1_min.setDecimals(1)
+        self.delay1_min.setValue(90.0)
+        self.delay1_min.setSuffix(' пс')
+        self.delay1_min.setMinimumWidth(70)
+        self.delay1_min.setStyleSheet("QDoubleSpinBox { background-color: white; }")
+        delay_layout.addWidget(self.delay1_min, 2, 1)
+        
+        self.delay1_max = QtWidgets.QDoubleSpinBox()
+        self.delay1_max.setRange(1.0, 1000.0)
+        self.delay1_max.setSingleStep(1.0)
+        self.delay1_max.setDecimals(1)
+        self.delay1_max.setValue(110.0)
+        self.delay1_max.setSuffix(' пс')
+        self.delay1_max.setMinimumWidth(70)
+        self.delay1_max.setStyleSheet("QDoubleSpinBox { background-color: white; }")
+        delay_layout.addWidget(self.delay1_max, 2, 2)
+        
+        delay_layout.addWidget(QtWidgets.QLabel("ЛЗ2:"), 3, 0)
+        self.delay2_min = QtWidgets.QDoubleSpinBox()
+        self.delay2_min.setRange(1.0, 1000.0)
+        self.delay2_min.setSingleStep(1.0)
+        self.delay2_min.setDecimals(1)
+        self.delay2_min.setValue(180.0)
+        self.delay2_min.setSuffix(' пс')
+        self.delay2_min.setMinimumWidth(70)
+        self.delay2_min.setStyleSheet("QDoubleSpinBox { background-color: white; }")
+        delay_layout.addWidget(self.delay2_min, 3, 1)
+        
+        self.delay2_max = QtWidgets.QDoubleSpinBox()
+        self.delay2_max.setRange(1.0, 1000.0)
+        self.delay2_max.setSingleStep(1.0)
+        self.delay2_max.setDecimals(1)
+        self.delay2_max.setValue(220.0)
+        self.delay2_max.setSuffix(' пс')
+        self.delay2_max.setMinimumWidth(70)
+        self.delay2_max.setStyleSheet("QDoubleSpinBox { background-color: white; }")
+        delay_layout.addWidget(self.delay2_max, 3, 2)
+        
+        delay_layout.addWidget(QtWidgets.QLabel("ЛЗ4:"), 4, 0)
+        self.delay4_min = QtWidgets.QDoubleSpinBox()
+        self.delay4_min.setRange(1.0, 1000.0)
+        self.delay4_min.setSingleStep(1.0)
+        self.delay4_min.setDecimals(1)
+        self.delay4_min.setValue(360.0)
+        self.delay4_min.setSuffix(' пс')
+        self.delay4_min.setMinimumWidth(70)
+        self.delay4_min.setStyleSheet("QDoubleSpinBox { background-color: white; }")
+        delay_layout.addWidget(self.delay4_min, 4, 1)
+        
+        self.delay4_max = QtWidgets.QDoubleSpinBox()
+        self.delay4_max.setRange(1.0, 1000.0)
+        self.delay4_max.setSingleStep(1.0)
+        self.delay4_max.setDecimals(1)
+        self.delay4_max.setValue(440.0)
+        self.delay4_max.setSuffix(' пс')
+        self.delay4_max.setMinimumWidth(70)
+        self.delay4_max.setStyleSheet("QDoubleSpinBox { background-color: white; }")
+        delay_layout.addWidget(self.delay4_max, 4, 2)
+
+        self.meas_tab_layout.addWidget(delay_group)
 
         self.meas_tab_layout.addStretch()
         
@@ -724,8 +821,41 @@ class CheckMaWidget(QtWidgets.QWidget):
 
         self.ppm_field_view = PpmFieldView(self)
 
+        # Создаем таблицу для линий задержки
+        self.delay_table = QtWidgets.QTableWidget()
+        self.delay_table.setColumnCount(4)
+        self.delay_table.setHorizontalHeaderLabels([
+            'Дискрет ЛЗ', 'Задержка (пс)', 'Амплитуда (дБ)', 'Статус'])
+        self.delay_table.setRowCount(4)  # 4 линии задержки (1,2,4,8)
+
+        delay_header = self.delay_table.horizontalHeader()
+        delay_header.setSectionResizeMode(0, QtWidgets.QHeaderView.Fixed)
+        delay_header.resizeSection(0, 80)
+        
+        for i in range(1, 4):
+            delay_header.setSectionResizeMode(i, QtWidgets.QHeaderView.Stretch)
+        
+        self.delay_table.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Fixed)
+        self.delay_table.verticalHeader().setDefaultSectionSize(25)
+        self.delay_table.verticalHeader().setVisible(False)
+
+        self.delay_table.setAlternatingRowColors(True)
+        self.delay_table.setShowGrid(True)
+
+        # Инициализируем таблицу линий задержки
+        delay_discretes = [1, 2, 4, 8]
+        for row, discrete in enumerate(delay_discretes):
+            item = QtWidgets.QTableWidgetItem(f"ЛЗ{discrete}")
+            item.setTextAlignment(QtCore.Qt.AlignCenter)
+            self.delay_table.setItem(row, 0, item)
+            for col in range(1, 4):
+                item = QtWidgets.QTableWidgetItem("")
+                item.setTextAlignment(QtCore.Qt.AlignCenter)
+                self.delay_table.setItem(row, col, item)
+
         self.view_tabs = QtWidgets.QTabWidget()
-        self.view_tabs.addTab(self.results_table, "Таблица")
+        self.view_tabs.addTab(self.results_table, "Таблица ППМ")
+        self.view_tabs.addTab(self.delay_table, "Линии задержки")
         self.view_tabs.addTab(self.ppm_field_view, "2D поле")
         self.right_layout.addWidget(self.view_tabs, stretch=2)
 
@@ -754,6 +884,7 @@ class CheckMaWidget(QtWidgets.QWidget):
 
         # Подключение сигналов к слотам
         self.update_table_signal.connect(self.update_table_row)
+        self.update_delay_signal.connect(self.update_delay_table)
         self.error_signal.connect(self.show_error_message)
         self.buttons_enabled_signal.connect(self.set_buttons_enabled)
         self.check_finished_signal.connect(self.on_check_finished)
@@ -776,6 +907,12 @@ class CheckMaWidget(QtWidgets.QWidget):
                 45: {'min': -2.0, 'max': 2.0},
                 90: {'min': -2.0, 'max': 2.0},
                 180: {'min': -2.0, 'max': 2.0}
+            },
+            'delay_amp_tolerance': 1.0,
+            'delay_tolerances': {
+                1: {'min': 90.0, 'max': 110.0},
+                2: {'min': 180.0, 'max': 220.0},
+                4: {'min': 360.0, 'max': 440.0}
             }
         }
         
@@ -895,28 +1032,43 @@ class CheckMaWidget(QtWidgets.QWidget):
 
             if fv_data and len(fv_data) > 0:
                 try:
+                    # Дельта ФВ (всегда без цветовой индикации)
                     if not np.isnan(fv_data[0]):
-                        self.results_table.setItem(row, 5, QtWidgets.QTableWidgetItem(f"{fv_data[0]:.1f}"))
+                        self.results_table.setItem(row, 5, self.create_centered_table_item(f"{fv_data[0]:.1f}"))
                     else:
-                        self.results_table.setItem(row, 5, QtWidgets.QTableWidgetItem(""))
+                        self.results_table.setItem(row, 5, self.create_centered_table_item(""))
 
                     if not result:
+                        fv_angles = [5.625, 11.25, 22.5, 45, 90, 180]
                         for i in range(1, len(fv_data)):
-                            if not np.isnan(fv_data[i]):
-                                self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(f"{fv_data[i]:.1f}"))
+                            if not np.isnan(fv_data[i]) and i <= 6:
+                                fv_diff = fv_data[i]
+                                fv_angle = fv_angles[i-1] if i-1 < len(fv_angles) else None
+                                
+                                # Проверяем критерии для фазовращателя
+                                if fv_angle and fv_angle in self.check_criteria['phase_shifter_tolerances']:
+                                    min_tolerance = self.check_criteria['phase_shifter_tolerances'][fv_angle]['min']
+                                    max_tolerance = self.check_criteria['phase_shifter_tolerances'][fv_angle]['max']
+                                    fv_ok = min_tolerance <= fv_diff <= max_tolerance
+                                else:
+                                    fv_ok = -2.0 <= fv_diff <= 2.0
+                                
+                                # Создаем элемент с цветовой индикацией
+                                fv_item = self.create_status_table_item(f"{fv_diff:.1f}", fv_ok)
+                                self.results_table.setItem(row, i + 5, fv_item)
                             else:
-                                self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(""))
+                                self.results_table.setItem(row, i + 5, self.create_centered_table_item(""))
                     else:
                         for i in range(1, 6):
-                            self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(""))
+                            self.results_table.setItem(row, i + 5, self.create_centered_table_item(""))
                             
                 except Exception as e:
                     logger.error(f'Ошибка при обновлении значений ФВ для ППМ {ppm_num}: {e}')
                     for i in range(6):
-                        self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(""))
+                        self.results_table.setItem(row, i + 5, self.create_centered_table_item(""))
             else:
                 for i in range(6):
-                    self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(""))
+                    self.results_table.setItem(row, i + 5, self.create_centered_table_item(""))
 
             if np.isnan(amp) or np.isnan(phase):
                 overall_status = "fail"
@@ -966,6 +1118,50 @@ class CheckMaWidget(QtWidgets.QWidget):
             logger.error(f'Ошибка при обновлении значений ФВ для ППМ {ppm_num}: {e}')
             for i in range(6):
                 self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(""))
+
+    @QtCore.pyqtSlot(list)
+    def update_delay_table(self, delay_results: list):
+        """Обновляет таблицу линий задержки"""
+        try:
+            # delay_results содержит список кортежей (discrete, delay_delta, amp_delta, delay_ok)
+            delay_discretes = [1, 2, 4, 8]
+            
+            overall_delay_ok = True
+            
+            for i, (discrete, delay_delta, amp_delta, delay_ok) in enumerate(delay_results):
+                if i >= len(delay_discretes):
+                    break
+                    
+                row = delay_discretes.index(discrete) if discrete in delay_discretes else i
+                
+                # Обновляем значение задержки
+                self.delay_table.setItem(row, 1, self.create_centered_table_item(f"{delay_delta:.1f}"))
+                
+                # Обновляем значение амплитуды  
+                self.delay_table.setItem(row, 2, self.create_centered_table_item(f"{amp_delta:.2f}"))
+                
+                # Обновляем статус с цветовой индикацией
+                status_text = "OK" if delay_ok else "FAIL"
+                status_item = self.create_status_table_item(status_text, delay_ok)
+                self.delay_table.setItem(row, 3, status_item)
+                
+                if not delay_ok:
+                    overall_delay_ok = False
+            
+            # Обновляем статус в 2D поле
+            self.ppm_field_view.update_bottom_rect_status("ok" if overall_delay_ok else "fail")
+            
+            # Обновляем данные для контекстного меню
+            delay_data = {}
+            for discrete, delay_delta, amp_delta, delay_ok in delay_results:
+                delay_data[f"ЛЗ{discrete}"] = f"Δt={delay_delta:.1f}пс, Δamp={amp_delta:.2f}дБ, {'OK' if delay_ok else 'FAIL'}"
+            
+            self.update_bottom_rect_data(delay_data)
+            
+            self.delay_table.viewport().update()
+            
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении таблицы линий задержки: {e}")
 
     @QtCore.pyqtSlot()
     def on_check_finished(self):
@@ -1058,6 +1254,14 @@ class CheckMaWidget(QtWidgets.QWidget):
                 'min': controls['min'].value(),
                 'max': controls['max'].value()
             }
+        
+        # Сохраняем критерии для линий задержки
+        self.check_criteria['delay_amp_tolerance'] = self.delay_amp_tolerance.value()
+        self.check_criteria['delay_tolerances'] = {
+            1: {'min': self.delay1_min.value(), 'max': self.delay1_max.value()},
+            2: {'min': self.delay2_min.value(), 'max': self.delay2_max.value()}, 
+            4: {'min': self.delay4_min.value(), 'max': self.delay4_max.value()}
+        }
 
         coord_system_name = self.coord_system_combo.currentText()
         self.coord_system = self.coord_system_manager.get_system_by_name(coord_system_name)
@@ -1086,6 +1290,11 @@ class CheckMaWidget(QtWidgets.QWidget):
         
         # Сбрасываем состояние нижнего прямоугольника
         self.ppm_field_view.update_bottom_rect_status('')
+        
+        # Очищаем таблицу линий задержки
+        for row in range(4):
+            for col in range(1, 4):
+                self.delay_table.setItem(row, col, QtWidgets.QTableWidgetItem(""))
 
         self.set_buttons_enabled(False)
         logger.info("Запуск проверки МА...")
@@ -1171,9 +1380,10 @@ class CheckMaWidget(QtWidgets.QWidget):
                     raise
 
             class CheckMAWithCallback(CheckMA):
-                def __init__(self, ma, psn, pna, stop_event, pause_event, callback, criteria=None):
+                def __init__(self, ma, psn, pna, stop_event, pause_event, callback, delay_callback=None, criteria=None):
                     super().__init__(ma, psn, pna, stop_event, pause_event)
                     self.callback = callback
+                    self.delay_callback = delay_callback
                     
                     # Применяем новые критерии проверки если они переданы
                     if criteria:
@@ -1184,6 +1394,12 @@ class CheckMaWidget(QtWidgets.QWidget):
                         self.tx_phase_diff_min = criteria.get('tx_phase_min', self.tx_phase_diff_min)
                         self.tx_phase_diff_max = criteria.get('tx_phase_max', self.tx_phase_diff_max)
                         self.phase_shifter_tolerances = criteria.get('phase_shifter_tolerances', None)
+                        
+                        # Устанавливаем критерии для линий задержки
+                        if 'delay_amp_tolerance' in criteria:
+                            self.delay_amp_tolerance = criteria['delay_amp_tolerance']
+                        if 'delay_tolerances' in criteria:
+                            self.delay_tolerances.update(criteria['delay_tolerances'])
                 
                 def check_ppm(self, ppm_num: int, channel: Channel, direction: Direction):
                     """Переопределяем метод для отправки результатов через callback"""
@@ -1202,6 +1418,7 @@ class CheckMaWidget(QtWidgets.QWidget):
                 stop_event=self._stop_flag, 
                 pause_event=self._pause_flag,
                 callback=self.update_table_signal,
+                delay_callback=self.update_delay_signal,
                 criteria=self.check_criteria
             )
 
