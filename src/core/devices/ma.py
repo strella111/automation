@@ -3,7 +3,6 @@ import time
 from typing import Union
 from loguru import logger
 
-from core.common.enums import MdoState
 from core.common.enums import Channel, Direction, PpmState
 from core.common.exceptions import WrongInstrumentError, BuAddrNotFound, MaCommandNotDelivered
 from utils.logger import format_device_log
@@ -134,14 +133,13 @@ class MA:
             logger.debug(format_device_log('MA', '>>', command))
             response = self.read()
             if response:
-                logger.debug(format_device_log('MA', '>>', response))
-                if response[1] == b'\x00':
+                if response[6] == 0x00:
                     return True
-                elif response[1] == b'\x01':
+                elif response[6] == 0x01:
                     logger.error('Ошибка целостности принятой КУ ')
                     return False
                 else:
-                    logger.error(f'Код ошибки при выполнения последней КУ: {int(response[1])}')
+                    logger.error(f'Код ошибки при выполнения последней КУ: {int(response[6])}')
                     return False
             return False
         else:
@@ -185,7 +183,7 @@ class MA:
                     time.sleep(0.1)
                     response = self.read()
                     if response and len(response) >= 2:
-                        logger.info(f'Найден БУ с адресом: {int(response[1])}')
+                        logger.info(f'Найден БУ с адресом: {int(response[1] & 0x3f)}')
                         return int(response[1] & 0x3f)
                     else:
                         logger.debug(f'Нет ответа от БУ #{i}')
@@ -196,16 +194,16 @@ class MA:
             logger.warning('Поиск БУ завершен, ни один БУ не ответил')
         return 0
 
-    def _send_command(self, command: bytes):
+    def _send_command(self, command: bytes, is_check: bool = True):
         self.write(command)
-        logger.debug(format_device_log(device='MA', direction='>>', data=command))
-        if self._check_request():
-            logger.debug(f'Команда успешно принята БУ')
-            return
-        else:
-            if self.retry_counter >= 3:
-                raise MaCommandNotDelivered(f'После 3 попыток не удалось отправить команду {command.hex(" ")} на БУ')
-            self.retry_counter += 1
+        if is_check:
+            if self._check_request():
+                logger.debug(f'Команда успешно принята БУ')
+                return
+            else:
+                if self.retry_counter >= 3:
+                    raise MaCommandNotDelivered(f'После 3 попыток не удалось отправить команду {command.hex(" ")} на БУ')
+                self.retry_counter += 1
 
 
     def set_ppm_att(self, chanel: Channel, direction: Direction, ppm_num:int, value: int):
@@ -346,30 +344,31 @@ class MA:
 
     def set_phase_shifter(self, ppm_num: int, chanel: Channel, direction: Direction, value: int):
         logger.info(f'Включение рабочего значения ФВ№{value}({value*5.625}). Канал - {chanel}, поляризация - {direction}')
-        data = bytearray(34)
+        data = bytearray(35)
         chanel_byte = b''
         if chanel == Channel.Transmitter and direction == Direction.Horizontal:
-            chanel_byte = 0x80
-        elif chanel == Channel.Transmitter and direction == Direction.Vertical:
             chanel_byte = 0x81
-        elif chanel == Channel.Receiver and direction == Direction.Vertical:
+        elif chanel == Channel.Transmitter and direction == Direction.Vertical:
             chanel_byte = 0x82
+        elif chanel == Channel.Receiver and direction == Direction.Vertical:
+            chanel_byte = 0x88
         elif chanel == Channel.Receiver and direction == Direction.Horizontal:
-            chanel_byte = 0x83
+            chanel_byte = 0x84
         data[0] = chanel_byte
         data[ppm_num] = value
         data = bytes(data)
-        command_code = b'\x01'
+        command_code = b'\x02'
         command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
         self._send_command(command)
 
     def turn_on_vips(self):
         logger.info(f'Включение ВИПов')
-        data = b'\xf8\xf8'
+        data = b'\xff\xff'
         data = bytes(data)
         command_code = b'\x0b'
         command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
         self._send_command(command)
+        time.sleep(7)
 
     def turn_off_vips(self):
         logger.info(f'Выключение ВИПов')
@@ -377,20 +376,24 @@ class MA:
         data = bytes(data)
         command_code = b'\x0b'
         command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
-        self._send_command(command)
+        self._send_command(command, is_check=False)
 
 
-    def set_delay(self, chanel: Channel, value: int):
+    def set_delay(self, chanel: Channel, direction: Direction, value: int):
         logger.info(f'Включение ЛЗ№{value}. Канал - {chanel}')
-        command_code = b'\x01'
-        data = bytearray(34)
+        command_code = b'\x02'
+        data = bytearray(35)
         chanel_byte = b''
-        if chanel == Channel.Receiver:
-            chanel_byte = 0x82
-        elif chanel == Channel.Transmitter:
-            chanel_byte = 0x81
+        if chanel == Channel.Receiver and direction == Direction.Horizontal:
+            chanel_byte = 0x04
+        elif chanel == Channel.Receiver and direction == Direction.Vertical:
+            chanel_byte = 0x08
+        elif chanel == Channel.Transmitter and direction == Direction.Horizontal:
+            chanel_byte = 0x01
+        elif chanel == Channel.Transmitter and direction == Direction.Vertical:
+            chanel_byte = 0x02
         data[0] = chanel_byte
-        data[33] = value
+        data[33] = value + 2
         data = bytes(data)
 
         command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
@@ -398,7 +401,12 @@ class MA:
 
 
 if __name__ == '__main__':
-    ma = MA('Тестовый', mode=1)
+    ma = MA('COM8', mode=0)
     ma.connect()
+    ma.switch_ppm(12, chanel=Channel.Receiver, direction=Direction.Vertical, state=PpmState.ON)
+    for i in range(15):
+        ma.set_delay(chanel=Channel.Receiver, direction=Direction.Vertical, value=i)
+
+
 
 

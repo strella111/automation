@@ -1211,16 +1211,14 @@ class CheckMaWidget(QtWidgets.QWidget):
                 logger.info('Проверка завершена успешно.')
 
         except Exception as e:
-            # Используем сигнал для показа ошибки из потока
             self.error_signal.emit("Ошибка проверки", f"Произошла ошибка при выполнении проверки: {str(e)}")
             logger.error(f"Ошибка при выполнении проверки: {e}")
             try:
                 if self.pna:
-                    self.pna.power_off()
+                    self.pna.set_output(False)
             except Exception as pna_error:
                 logger.error(f"Ошибка при аварийном выключении PNA: {pna_error}")
         finally:
-            # Используем сигнал для восстановления интерфейса из потока
             self.check_finished_signal.emit()
 
     def connect_ma(self):

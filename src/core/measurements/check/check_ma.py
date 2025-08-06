@@ -1,3 +1,4 @@
+import time
 from typing import Tuple, List, Optional
 from loguru import logger
 from ...devices.ma import MA
@@ -61,6 +62,7 @@ class CheckMA:
 
         self.norm_amp = None
         self.norm_phase = None
+        self.norm_delay = None
 
     def _check_connections(self) -> bool:
         """
@@ -158,6 +160,7 @@ class CheckMA:
 
             result = amp_ok and phase_final_ok
 
+            self.ma.switch_ppm(ppm_num, channel, direction, PpmState.OFF)
             return result, (amp_diff, phase_diff, phase_vals)
             
         except Exception as e:
@@ -235,30 +238,39 @@ class CheckMA:
                 raise PlanarScannerError(f"Ошибка перемещения к нормализующему ППМ: {e}")
             
             try:
+                self.pna.set_output(True)
+                self.ma.turn_on_vips()
+                self.pna.set_ascii_data()
                 logger.info("Нормировка PNA...")
                 self.ma.switch_ppm(self.ppm_norm_number, chanel=channel, direction=direction, state=PpmState.ON)
-                self.ma.set_delay(chanel=channel, value=0)
+                self.ma.set_delay(chanel=channel, direction=direction,value=0)
+                time.sleep(0.5)
+                self.pna.normal_current_trace()
                 self.norm_amp, self.norm_phase = self.pna.get_center_freq_data()
-                #нормируем задержку self.norm_delay
-                logger.info(f"Нормировочные значения: амплитуда={self.norm_amp:.2f} дБ, фаза={self.norm_phase:.1f}°")
+                self.pna.set_delay_type()
+                self.norm_delay = self.pna.get_mean_value()
 
-                for delay in self.delay_lines:
-                    self.ma.set_delay(chanel=channel, value=delay)
-                    # delay_abs, amp_abs = измеряем среднее значение задержки и амплитуды
-                    # phase_abs = измеряем фазу (наверное на центральной частоте)
-                    # delay_phase = self.norm_phase - phase_abs
-                    # delay_delta, amp_delta = delay_abs - self.norm_delay, amp_abs - self.norm_amp
-                    # delay_results.append((delay_delta, amp_delta, phase_delta))
+                logger.info(f"Нормировочные значения: амплитуда={self.norm_amp:.2f} дБ, фаза={self.norm_phase:.1f}°, Задержка={self.norm_delay}")
 
-                self.ma.set_delay(chanel=channel, value=0)
+                for delay in self.delay_lines[1:]:
+                    time.sleep(0.5)
+                    self.ma.set_delay(chanel=channel, direction=direction, value=delay)
+                    delay_abs = self.pna.get_mean_value()
+                    amp_abs = self.pna.get_mean_value_from_sdata()
+                    delay_delta, amp_delta = (delay_abs - self.norm_delay)*10**12, amp_abs - self.norm_amp
+                    delay_results.append((delay_delta, amp_delta))
+
+                print(delay_results)
+
+                self.ma.set_delay(chanel=channel, direction=direction, value=0)
                 self.ma.switch_ppm(self.ppm_norm_number, chanel=channel, direction=direction, state=PpmState.OFF)
+                self.pna.set_mlog_type()
 
             except Exception as e:
                 logger.warning(f"Ошибка при нормировке PNA: {e}")
                 self.norm_amp = None
                 self.norm_phase = None
-            
-            self.ma.turn_on_vips()
+
             
             for i in range(4):
                 for j in range(8):
@@ -294,5 +306,6 @@ class CheckMA:
                 logger.error(f"Ошибка при аварийном выключении PNA: {e}")
             raise
 
+        self.ma.turn_off_vips()
         workbook.save(file_path)
         return results 

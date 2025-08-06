@@ -1,12 +1,7 @@
 import math
 import random
-import time
-import pyvisa
 import socket
-from typing import Tuple, Optional, Union
 from loguru import logger
-from ..common.enums import Channel, Direction
-from ..common.exceptions import WrongInstrumentError
 from utils.logger import format_device_log
 
 class PNA:
@@ -191,6 +186,24 @@ class PNA:
             phases = [random.uniform(-180, 180) for _ in range(self.count_freqs_point)]
             return amps, phases
 
+    def get_mean_value_from_sdata(self):
+        if self.mode == 0:
+            self._send_data(f'CALC:DATA? SDATA')
+            response = self._read_data()
+            response_list = response.split(',')
+            amps = []
+
+            for i in range(0, len(response_list), 2):
+                real = float(response_list[i])
+                imag = float(response_list[i + 1])
+                amp_db = 20 * math.log10(abs(complex(real, imag)))
+                amps.append(amp_db)
+            return sum(amps) / len(amps)
+
+        else:
+            return random.uniform(8, 15)
+
+
     def get_center_freq_data(self):
         amps, phases = self.get_data()
         amount_freq = len(amps)
@@ -235,7 +248,6 @@ class PNA:
         self._send_data(f'MMEM:LOAD "{filepath}"')
         logger.debug(f'Подгружен файл настроек pna {filepath}')
 
-
     def get_mean_value(self) -> float:
         """Получение среднего значения"""
         self._send_data('CALC:FUNC:TYPE MEAN')
@@ -251,12 +263,12 @@ class PNA:
 
     def set_delay_type(self) -> None:
         """Установка типа задержки"""
-        self._send_data('CALC:FROM GDEL')
+        self._send_data('CALC:FORM GDEL')
         logger.debug('Установлен формат group delay на pna')
 
     def set_mlog_type(self) -> None:
         """Установка типа логарифмической шкалы"""
-        self._send_data('CALC:FROM MLOG')
+        self._send_data('CALC:FORM MLOG')
         logger.debug('Установлен формат LogM на pna')
 
     def get_files_in_dir(self, folder: str = None) -> list:
@@ -267,3 +279,17 @@ class PNA:
         result_list = response[2:len(response)-1].split(',')
         logger.debug(f'Запрошены файлы pna в folder={folder}')
         return result_list
+
+    def normal_current_trace(self):
+        command = 'CALC:MATH:MEM'
+        self._send_data(command)
+        command = 'CALC:MATH:FUNC DIV'
+        self._send_data(command)
+
+if __name__ == '__main__':
+    pna = PNA(ip='10.10.61.32', port=5025, mode=0)
+    pna.connect()
+    pna.set_delay_type()
+    response = pna.get_selected_meas()
+    print(response)
+
