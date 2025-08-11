@@ -209,6 +209,8 @@ class PNA:
         amount_freq = len(amps)
         amp, phase = amps[amount_freq//2], phases[amount_freq//2]
         logger.debug(format_device_log('PNA', '<<', f'Получена фаза и амплитуда на центральной частоте: {amp}дБ, {phase}'))
+        if phase < 0:
+            phase += 360
         return amp, phase
 
     def set_output(self, state: bool):

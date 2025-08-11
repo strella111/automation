@@ -915,11 +915,9 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.check_completed = False  # Флаг завершения основной проверки
         self.last_excel_path = None  # Путь к последнему Excel файлу
         self.last_normalization_values = None  # Последние нормировочные значения (amp, phase, delay)
-        
-        # Обновляем состояние кнопок системы координат
+
         self.update_coord_buttons_state()
-        
-        # Устанавливаем начальные стили кнопок подключения (отключено)
+
         self.set_button_connection_state(self.pna_connect_btn, False)
         self.set_button_connection_state(self.psn_connect_btn, False)
         self.set_button_connection_state(self.ma_connect_btn, False)
@@ -1243,15 +1241,13 @@ class CheckMaWidget(QtWidgets.QWidget):
             'tx_phase_max': self.tx_phase_max.value(),
             'phase_shifter_tolerances': {}
         }
-        
-        # Сохраняем допуски для каждого фазовращателя
+
         for angle, controls in self.phase_shifter_tolerances.items():
             self.check_criteria['phase_shifter_tolerances'][angle] = {
                 'min': controls['min'].value(),
                 'max': controls['max'].value()
             }
-        
-        # Сохраняем критерии для линий задержки
+
         self.check_criteria['delay_amp_tolerance'] = self.delay_amp_tolerance.value()
         self.check_criteria['delay_tolerances'] = {
             1: {'min': self.delay1_min.value(), 'max': self.delay1_max.value()},
@@ -1281,15 +1277,13 @@ class CheckMaWidget(QtWidgets.QWidget):
 
         self.ppm_data.clear()
         self.bottom_rect_data.clear()
-        self.check_completed = False  # Сбрасываем флаг завершения проверки
-        self.last_normalization_values = None  # Сбрасываем нормировочные значения
+        self.check_completed = False
+        self.last_normalization_values = None
         for ppm_num, button in self.ppm_field_view.rects.items():
             button.set_status('')
-        
-        # Сбрасываем состояние нижнего прямоугольника
+
         self.ppm_field_view.update_bottom_rect_status('')
-        
-        # Очищаем таблицу линий задержки
+
         for row in range(4):
             for col in range(1, 4):
                 self.delay_table.setItem(row, col, QtWidgets.QTableWidgetItem(""))
@@ -1299,8 +1293,6 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.apply_params()
         self._check_thread = threading.Thread(target=self._run_check, daemon=True)
         self._check_thread.start()
-
-
 
     def pause_check(self):
         """Ставит проверку на паузу"""

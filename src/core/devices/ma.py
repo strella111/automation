@@ -130,7 +130,6 @@ class MA:
             command_code = b'\xFB'
             command = self._generate_command(bu_num=self.bu_addr, command_code=command_code)
             self.write(command)
-            logger.debug(format_device_log('MA', '>>', command))
             response = self.read()
             if response:
                 if response[6] == 0x00:
@@ -196,14 +195,33 @@ class MA:
 
     def _send_command(self, command: bytes, is_check: bool = True):
         self.write(command)
-        if is_check:
-            if self._check_request():
-                logger.debug(f'Команда успешно принята БУ')
-                return
+        response = self.read()
+        if response:
+            if response[6] == 0x00:
+                logger.info('Команда успешно принята БУ')
+                self.retry_counter = 0
             else:
-                if self.retry_counter >= 3:
-                    raise MaCommandNotDelivered(f'После 3 попыток не удалось отправить команду {command.hex(" ")} на БУ')
+                logger.error(f'Код ошибки при выполнения последней КУ: {int(response[6])}')
+                if self.retry_counter > 3:
+                    logger.error(f'После 3 попыток не удалось отправить команду {command.hex(" ")} на БУ')
+                    return
+                    #raise MaCommandNotDelivered(f'После 3 попыток не удалось отправить команду {command.hex(" ")} на БУ')
+                time.sleep(0.5)
                 self.retry_counter += 1
+                self._send_command(command, is_check=True)
+
+
+
+            # if self._check_request():
+            #     logger.debug(f'Команда успешно принята БУ')
+            #     self.retry_counter = 0
+            #     return
+            # else:
+            #     if self.retry_counter > 3:
+            #         raise MaCommandNotDelivered(f'После 3 попыток не удалось отправить команду {command.hex(" ")} на БУ')
+            #     time.sleep(0.5)
+            #     self.retry_counter += 1
+            #     self._send_command(command)
 
 
     def set_ppm_att(self, chanel: Channel, direction: Direction, ppm_num:int, value: int):
@@ -367,7 +385,7 @@ class MA:
         data = bytes(data)
         command_code = b'\x0b'
         command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
-        self._send_command(command)
+        self._send_command(command, is_check=False)
         time.sleep(7)
 
     def turn_off_vips(self):
@@ -385,15 +403,15 @@ class MA:
         data = bytearray(35)
         chanel_byte = b''
         if chanel == Channel.Receiver and direction == Direction.Horizontal:
-            chanel_byte = 0x04
+            chanel_byte = 0x84
         elif chanel == Channel.Receiver and direction == Direction.Vertical:
-            chanel_byte = 0x08
+            chanel_byte = 0x88
         elif chanel == Channel.Transmitter and direction == Direction.Horizontal:
-            chanel_byte = 0x01
+            chanel_byte = 0x81
         elif chanel == Channel.Transmitter and direction == Direction.Vertical:
-            chanel_byte = 0x02
+            chanel_byte = 0x82
         data[0] = chanel_byte
-        data[33] = value + 2
+        data[33] = value
         data = bytes(data)
 
         command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
@@ -403,9 +421,10 @@ class MA:
 if __name__ == '__main__':
     ma = MA('COM8', mode=0)
     ma.connect()
-    ma.switch_ppm(12, chanel=Channel.Receiver, direction=Direction.Vertical, state=PpmState.ON)
-    for i in range(15):
-        ma.set_delay(chanel=Channel.Receiver, direction=Direction.Vertical, value=i)
+    ma.turn_on_vips()
+    ma.switch_ppm(12, chanel=Channel.Transmitter, direction=Direction.Horizontal, state=PpmState.ON)
+    for i in range(16):
+        ma.set_delay(chanel=Channel.Transmitter, direction=Direction.Horizontal, value=i)
 
 
 

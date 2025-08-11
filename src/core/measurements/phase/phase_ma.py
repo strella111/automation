@@ -1,16 +1,19 @@
 from typing import Tuple
 from loguru import logger
-from ...devices.ma import MA
-from ...devices.pna import PNA
-from ...devices.psn import PSN
-from ...common.enums import Channel, Direction, PhaseDir
-from ...common.exceptions import WrongInstrumentError, PlanarScannerError
+from core.devices.ma import MA
+from core.devices.pna  import PNA
+from core.devices.psn  import PSN
+from core.common.enums import Channel, Direction, PhaseDir, PpmState
+from core.common.exceptions import WrongInstrumentError, PlanarScannerError
+from utils.calibration_csv import CalibrationCSV
 from PyQt5.QtCore import QThread
+
+import time
 
 class PhaseMaMeas:
     """Класс для измерения и настройки фаз в антенном модуле"""
     
-    def __init__(self, ma: MA, psn: PSN, pna: PNA, channel: Channel, direction: Direction, point_callback=None, stop_flag=None):
+    def __init__(self, ma: MA, psn: PSN, pna: PNA, point_callback=None, stop_flag=None):
         """
         Инициализация класса
         
@@ -18,14 +21,13 @@ class PhaseMaMeas:
             ma: Модуль антенный
             psn: Позиционер
             pna: Анализатор цепей
-            channel: Канал (приемник/передатчик)
-            direction: Направление (горизонтальное/вертикальное)
             point_callback: Функция обратного вызова для обновления результатов
             stop_flag: Флаг для остановки измерений
             
         Raises:
             ValueError: Если какой-либо из параметров None
         """
+        self.norm_phase = None
         if not all([ma, psn, pna]):
             raise ValueError("Все устройства должны быть указаны")
             
@@ -36,11 +38,16 @@ class PhaseMaMeas:
         self.ppm_norm_cords = [-14, 1.1]
         self.x_cords = [-42, -14, 14, 42]
         self.y_cords = [7.7, 5.5, 3.3, 1.1, -1.1, -3.3, -5.5, -7.7]
-        self.channel = channel
-        self.direction = direction
         self.point_callback = point_callback
         self.stop_flag = stop_flag
         self.pause_flag = None
+        self.norm_amp = None
+
+        self.phase_results = []
+
+        self.calibration_csv = None
+        if hasattr(ma, 'bu_addr') and ma.bu_addr:
+            self.calibration_csv = CalibrationCSV(ma.bu_addr)
 
     def set_pause_flag(self, flag):
         """Установить флаг паузы"""
@@ -58,54 +65,9 @@ class PhaseMaMeas:
             return False
         return True
 
-    def _setup_pna(self) -> None:
-        """
-        Настройка анализатора цепей
-        
-        Raises:
-            WrongInstrumentError: При ошибке настройки PNA
-            ValueError: При неверном канале
-        """
-        try:
-            self.pna.preset()
-            if self.channel == Channel.Receiver:
-                self.pna.load_settings_file()
-                self.pna.set_power(1, 0)
-            elif self.channel == Channel.Transmitter:
-                self.pna.load_settings_file()
-                self.pna.set_power(2, 12)
-            else:
-                raise ValueError('Не выбран канал')
-            self.pna.power_on()
-        except Exception as e:
-            logger.error(f"Ошибка при настройке PNA: {e}")
-            raise WrongInstrumentError(f"Ошибка настройки PNA: {e}")
 
-    def _measure_phase(self, ppm_num: int) -> Tuple[float, float]:
-        """
-        Измерение фазы для конкретного ППМ
-        
-        Args:
-            ppm_num: Номер ППМ (1-32)
-            
-        Returns:
-            Tuple[float, float]: Амплитуда и фаза
-            
-        Raises:
-            ValueError: При неверном номере ППМ
-            WrongInstrumentError: При ошибке измерения
-        """
-        try:
-            self.ma.turn_on_ppm(ppm_num=ppm_num, channel=self.channel, direction=self.direction)
-            amp_zero, phase_zero = self.pna.measampphase()
-            if phase_zero < 0:
-                phase_zero += 360
-            return amp_zero, phase_zero
-        except Exception as e:
-            logger.error(f"Ошибка при измерении фазы для ППМ {ppm_num}: {e}")
-            raise WrongInstrumentError(f"Ошибка измерения фазы для ППМ {ppm_num}: {e}")
 
-    def _find_best_phase(self, ppm_num: int, initial_phase: float, i: int, j: int, amp: float) -> int:
+    def _find_best_phase(self, ppm_num: int,chanel: Channel, direction: Direction, initial_phase: float, i: int, j: int, amp: float) -> int:
         """
         Поиск оптимального значения фазы
         Args:
@@ -121,14 +83,19 @@ class PhaseMaMeas:
             WrongInstrumentError: При ошибке поиска фазы
         """
         try:
+
             value = int(initial_phase // 5.625)
             self.ma.set_phase_shifter(ppm_num=ppm_num,
-                                    channel=self.channel,
-                                    direction=self.direction,
+                                    chanel=chanel,
+                                    direction=direction,
                                     value=value)
-            _, phase_first = self.pna.measampphase()
+            _, phase_first = self.pna.get_center_freq_data()
+            phase_first -= self.norm_phase
+            if phase_first < 0:
+                phase_first += 360
             if self.point_callback:
                 self.point_callback(i, j, self.x_cords[i], self.y_cords[j], amp, phase_first)
+
             dir = PhaseDir.DOWN if phase_first < 0 else PhaseDir.UP
             phase_vals = [0, value]
             phase_list = [initial_phase, phase_first]
@@ -140,10 +107,13 @@ class PhaseMaMeas:
                     new_value = 0 if new_value == 63 else new_value + 1
                 phase_vals.append(new_value)
                 self.ma.set_phase_shifter(ppm_num=ppm_num,
-                                        direction=self.direction,
-                                        channel=self.channel,
+                                        direction=direction,
+                                        chanel=chanel,
                                         value=new_value)
-                _, phase_iter = self.pna.measampphase()
+                _, phase_iter = self.pna.get_center_freq_data()
+                if phase_iter < 0:
+                    phase_first += 360
+                phase_iter -= self.norm_phase
                 phase_list.append(phase_iter)
                 if self.point_callback:
                     self.point_callback(i, j, self.x_cords[i], self.y_cords[j], amp, phase_iter)
@@ -162,7 +132,7 @@ class PhaseMaMeas:
             logger.error(f"Ошибка при поиске оптимальной фазы для ППМ {ppm_num}: {e}")
             raise WrongInstrumentError(f"Ошибка поиска оптимальной фазы для ППМ {ppm_num}: {e}")
 
-    def start(self) -> None:
+    def start(self, chanel: Channel, direction: Direction) -> None:
         """
         Запуск процесса измерения и настройки фаз
         
@@ -172,24 +142,43 @@ class PhaseMaMeas:
             PlanarScannerError: При ошибке перемещения
         """
         try:
+            self.phase_results = []
+            
             if not self._check_connections():
                 raise ConnectionError("Не все устройства подключены")
             try:
                 self.psn.move(self.ppm_norm_cords[0], self.ppm_norm_cords[1])
             except Exception as e:
                 raise PlanarScannerError(f"Ошибка перемещения к нормализующему ППМ: {e}")
-            
-            self._setup_pna()
-            
+
+            self.pna.set_output(True)
             self.ma.turn_on_vips()
-            
-            self.ma.set_delay(self.channel, 0)
+            self.pna.set_ascii_data()
+            logger.info("Нормировка PNA...")
+            self.ma.switch_ppm(self.ppm_norm_number, chanel=chanel, direction=direction, state=PpmState.ON)
+            self.ma.set_phase_shifter(self.ppm_norm_number, chanel=chanel, direction=direction, value=0)
+            self.ma.set_delay(chanel, direction=direction, value=0)
+            time.sleep(5)
+            time.sleep(0.5)
+            _ , self.norm_phase = self.pna.get_center_freq_data()
+            self.ma.switch_ppm(self.ppm_norm_number, chanel=chanel, direction=direction, state=PpmState.OFF)
 
             for i in range(4):
                 for j in range(8):
-                    # Проверяем флаг остановки
                     if self.stop_flag and self.stop_flag.is_set():
                         logger.info("Измерение остановлено пользователем")
+                        if self.calibration_csv and len(self.phase_results) > 0:
+                            while len(self.phase_results) < 32:
+                                self.phase_results.append(0)
+                            try:
+                                self.calibration_csv.save_phase_results(
+                                    channel=chanel,
+                                    direction=direction,
+                                    phase_results=self.phase_results
+                                )
+                                logger.info(f"Частичные результаты фазировки сохранены в файл: {self.calibration_csv.get_file_path()}")
+                            except Exception as e:
+                                logger.error(f"Ошибка при сохранении частичных результатов в CSV: {e}")
                         return
 
                     while self.pause_flag and self.pause_flag.is_set():
@@ -204,34 +193,54 @@ class PhaseMaMeas:
                         self.psn.move(self.x_cords[i], self.y_cords[j])
                     except Exception as e:
                         raise PlanarScannerError(f"Ошибка перемещения к ППМ {ppm_num}: {e}")
-                    
-                    amp, phase_zero = self._measure_phase(ppm_num)
+
+                    self.ma.switch_ppm(ppm_num=ppm_num, chanel=chanel, direction=direction, state=PpmState.ON)
+                    amp_zero, phase_zero = self.pna.get_center_freq_data()
+                    phase_zero -= self.norm_phase
+                    if phase_zero < 0:
+                        phase_zero += 360
                     if self.point_callback:
-                        self.point_callback(i, j, self.x_cords[i], self.y_cords[j], amp, phase_zero)
+                        self.point_callback(i, j, self.x_cords[i], self.y_cords[j], amp_zero, phase_zero)
                     
-                    best_value = self._find_best_phase(ppm_num, phase_zero, i, j, amp)
+                    best_value = self._find_best_phase(ppm_num,chanel, direction, phase_zero, i, j, amp_zero)
+
+                    self.phase_results.append(best_value)
                     
                     self.ma.set_phase_shifter(ppm_num=ppm_num,
-                                            channel=self.channel,
-                                            direction=self.direction,
+                                            chanel=chanel,
+                                            direction=direction,
                                             value=best_value)
                     
-                    self.ma.turn_off_ppm(ppm_num=ppm_num, 
-                                       channel=self.channel, 
-                                       direction=self.direction)
+                    self.ma.switch_ppm(ppm_num=ppm_num,
+                                       chanel=chanel,
+                                       direction=direction,
+                                       state=PpmState.OFF)
 
             try:
-                self.pna.power_off()
+                self.pna.set_output(False)
             except Exception as e:
                 logger.error(f"Ошибка при выключении PNA: {e}")
                 raise WrongInstrumentError(f"Ошибка выключения PNA: {e}")
+
+            if self.calibration_csv and len(self.phase_results) == 32:
+                try:
+                    self.calibration_csv.save_phase_results(
+                        channel=chanel,
+                        direction=direction,
+                        phase_results=self.phase_results
+                    )
+                    logger.info(f"Результаты фазировки сохранены в файл: {self.calibration_csv.get_file_path()}")
+                except Exception as e:
+                    logger.error(f"Ошибка при сохранении результатов в CSV: {e}")
+            elif len(self.phase_results) != 32:
+                logger.warning(f"Ожидалось 32 результата, получено {len(self.phase_results)}. CSV не сохранен.")
                 
             logger.info("Измерение и настройка фаз завершены успешно")
 
         except Exception as e:
             logger.error(f"Ошибка при выполнении измерений: {e}")
             try:
-                self.pna.power_off()
+                self.pna.set_output(False)
             except Exception as e:
                 logger.error(f"Ошибка при аварийном выключении PNA: {e}")
             raise 
