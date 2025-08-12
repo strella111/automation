@@ -2,6 +2,7 @@ from PyQt5 import QtWidgets, QtCore, QtGui
 from .phase_ma_widget import PhaseMaWidget
 from .check_ma_widget import CheckMaWidget
 from .check_stend_ma_widget import CheckStendMaWidget
+from .manual_control_widget import ManualControlWindow
 import serial.tools.list_ports
 from loguru import logger
 
@@ -183,12 +184,18 @@ class MainWindow(QtWidgets.QMainWindow):
         mode_group.setExclusive(True)
         
         self.menu_params.addAction('Настройки устройств', self.open_settings_dialog)
+        # --- Утилиты ---
+        self.action_manual_control = self.menu_utils.addAction('Ручное управление')
+        self.action_manual_control.triggered.connect(self.open_manual_control)
 
         # Восстанавливаем состояние интерфейса
         self.restore_ui_state()
         
         # Загружаем настройки устройств
         self.load_settings()
+
+        # Ссылка на окно ручного управления, чтобы не собирался GC
+        self._manual_control_window = None
 
     def restore_ui_state(self):
         """Восстанавливает состояние интерфейса"""
@@ -263,6 +270,37 @@ class MainWindow(QtWidgets.QMainWindow):
             self.phase_ma_widget.set_device_settings(settings)
             self.check_ma_widget.set_device_settings(settings)
             self.check_stend_ma_widget.set_device_settings(settings)
+
+    def _collect_current_settings(self):
+        """Собирает текущие настройки из QSettings в dict, как в load_settings."""
+        settings = {}
+        settings['pna_ip'] = self.settings.value('pna_ip', '')
+        settings['pna_port'] = self.settings.value('pna_port', '')
+        settings['pna_mode'] = int(self.settings.value('pna_mode', 0))
+        settings['pna_files_path'] = self.settings.value('pna_files_path', 'C:\\Users\\Public\\Documents\\Network Analyzer\\')
+        settings['psn_ip'] = self.settings.value('psn_ip', '')
+        settings['psn_port'] = self.settings.value('psn_port', '')
+        settings['psn_mode'] = int(self.settings.value('psn_mode', 0))
+        settings['psn_speed_x'] = int(self.settings.value('psn_speed_x', 10))
+        settings['psn_speed_y'] = int(self.settings.value('psn_speed_y', 10))
+        settings['psn_acc_x'] = int(self.settings.value('psn_acc_x', 5))
+        settings['psn_acc_y'] = int(self.settings.value('psn_acc_y', 5))
+        settings['ma_com_port'] = self.settings.value('ma_com_port', '')
+        settings['ma_mode'] = int(self.settings.value('ma_mode', 0))
+        return settings
+
+    def open_manual_control(self):
+        """Открывает окно ручного управления (утилиты)."""
+        try:
+            if self._manual_control_window is None or not self._manual_control_window.isVisible():
+                self._manual_control_window = ManualControlWindow(self)
+                # Передаём текущие настройки
+                self._manual_control_window.set_device_settings(self._collect_current_settings())
+            self._manual_control_window.show()
+            self._manual_control_window.raise_()
+            self._manual_control_window.activateWindow()
+        except Exception as e:
+            logger.error(f'Не удалось открыть окно ручного управления: {e}')
 
     def load_settings(self):
         # При запуске приложения сразу применяем параметры к обоим виджетам

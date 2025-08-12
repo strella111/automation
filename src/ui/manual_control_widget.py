@@ -1,8 +1,10 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
 from loguru import logger
 from core.devices.psn import PSN
+from core.devices.ma import MA
 from core.common.coordinate_system import CoordinateSystemManager
 from core.common.exceptions import WrongInstrumentError, PlanarScannerError
+from core.common.enums import Channel, Direction, PpmState
 import time
 
 
@@ -12,10 +14,11 @@ class ManualControlWindow(QtWidgets.QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Ручное управление")
-        self.resize(800, 600)
+        self.resize(1100, 720)
         
         self.device_settings = None
         self.psn = None
+        self.ma = None
         self.coord_system = None
         self.coord_manager = CoordinateSystemManager()
         
@@ -45,6 +48,19 @@ class ManualControlWindow(QtWidgets.QMainWindow):
         self.coord_system_combo = QtWidgets.QComboBox()
         self.update_coordinate_systems()
         settings_layout.addRow("Система координат:", self.coord_system_combo)
+
+        # Выбор канала и поляризации для команд МА
+        ch_dir_layout = QtWidgets.QHBoxLayout()
+        self.channel_combo = QtWidgets.QComboBox()
+        self.channel_combo.addItems(["Приемник", "Передатчик"])  # Receiver / Transmitter
+        self.direction_combo = QtWidgets.QComboBox()
+        self.direction_combo.addItems(["Горизонтальная", "Вертикальная"])  # Horizontal / Vertical
+        ch_dir_layout.addWidget(QtWidgets.QLabel("Канал:"))
+        ch_dir_layout.addWidget(self.channel_combo)
+        ch_dir_layout.addSpacing(12)
+        ch_dir_layout.addWidget(QtWidgets.QLabel("Поляризация:"))
+        ch_dir_layout.addWidget(self.direction_combo)
+        settings_layout.addRow("Команды МА:", ch_dir_layout)
         
         main_layout.addWidget(settings_group)
         
@@ -89,11 +105,38 @@ class ManualControlWindow(QtWidgets.QMainWindow):
         
         ppm_layout.addLayout(selection_layout)
         
-        # Визуальный выбор ППМ
+        # Визуальный выбор ППМ — компактная карточка по центру
+        ppm_card = QtWidgets.QFrame()
+        ppm_card.setObjectName("ppmCard")
+        ppm_card.setStyleSheet(
+            "#ppmCard{background:#f7f9fc;border:1px solid #dfe3e8;border-radius:10px;}"
+        )
+        ppm_card_layout = QtWidgets.QVBoxLayout(ppm_card)
+        ppm_card_layout.setContentsMargins(12, 12, 12, 12)
+        ppm_card_layout.setSpacing(8)
+
         self.ppm_field_view = PpmFieldView()
         self.ppm_field_view.ppm_selected.connect(self.on_ppm_selected_visual)
-        self.ppm_field_view.setMinimumHeight(350)
-        ppm_layout.addWidget(self.ppm_field_view)
+        self.ppm_field_view.setStyleSheet(
+            "QGraphicsView{background:#ffffff;border:1px solid #e3e7ee;border-radius:8px;}"
+        )
+        # Размеры под содержимое сцены без полос прокрутки
+        self.ppm_field_view.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.ppm_field_view.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        ppm_card_layout.addWidget(self.ppm_field_view)
+
+        # Тень под карточкой для глубины
+        shadow = QtWidgets.QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(14)
+        shadow.setOffset(0, 4)
+        shadow.setColor(QtGui.QColor(0, 0, 0, 40))
+        ppm_card.setGraphicsEffect(shadow)
+
+        center_row = QtWidgets.QHBoxLayout()
+        center_row.addStretch()
+        center_row.addWidget(ppm_card)
+        center_row.addStretch()
+        ppm_layout.addLayout(center_row)
         
         main_layout.addWidget(ppm_group)
         
@@ -107,11 +150,16 @@ class ManualControlWindow(QtWidgets.QMainWindow):
         self.psn_status_label = QtWidgets.QLabel("Не подключен")
         self.psn_status_label.setStyleSheet("color: red;")
         status_layout.addWidget(self.psn_status_label)
+        status_layout.addSpacing(24)
+        status_layout.addWidget(QtWidgets.QLabel("Статус МА:"))
+        self.ma_status_label = QtWidgets.QLabel("Не подключен")
+        self.ma_status_label.setStyleSheet("color: red;")
+        status_layout.addWidget(self.ma_status_label)
         status_layout.addStretch()
         
         control_layout.addLayout(status_layout)
         
-        # Кнопки управления
+        # Кнопки подключения
         button_layout = QtWidgets.QHBoxLayout()
         
         self.connect_btn = QtWidgets.QPushButton("Подключиться к PSN")
@@ -127,9 +175,66 @@ class ManualControlWindow(QtWidgets.QMainWindow):
         self.disconnect_btn.clicked.connect(self.disconnect_devices)
         self.disconnect_btn.setEnabled(False)
         button_layout.addWidget(self.disconnect_btn)
+
+        # Подключение МА
+        self.connect_ma_btn = QtWidgets.QPushButton("Подключиться к МА")
+        self.connect_ma_btn.clicked.connect(self.connect_ma)
+        button_layout.addWidget(self.connect_ma_btn)
+
+        self.disconnect_ma_btn = QtWidgets.QPushButton("Отключиться от МА")
+        self.disconnect_ma_btn.clicked.connect(self.disconnect_ma)
+        self.disconnect_ma_btn.setEnabled(False)
+        button_layout.addWidget(self.disconnect_ma_btn)
         
         control_layout.addLayout(button_layout)
         
+        # Команды МА
+        ma_cmds_layout = QtWidgets.QGridLayout()
+        row = 0
+
+        # Включить / Отключить ППМ
+        self.ppm_on_btn = QtWidgets.QPushButton("Включить ППМ")
+        self.ppm_on_btn.clicked.connect(self.turn_on_ppm)
+        self.ppm_on_btn.setEnabled(False)
+        ma_cmds_layout.addWidget(self.ppm_on_btn, row, 0)
+
+        self.ppm_off_btn = QtWidgets.QPushButton("Отключить ППМ")
+        self.ppm_off_btn.clicked.connect(self.turn_off_ppm)
+        self.ppm_off_btn.setEnabled(False)
+        ma_cmds_layout.addWidget(self.ppm_off_btn, row, 1)
+        row += 1
+
+        # ФВ дискрет
+        self.fv_spin = QtWidgets.QSpinBox()
+        self.fv_spin.setRange(0, 31)
+        self.fv_spin.setValue(0)
+        self.set_fv_btn = QtWidgets.QPushButton("Установить ФВ")
+        self.set_fv_btn.clicked.connect(self.set_phase_shifter)
+        self.set_fv_btn.setEnabled(False)
+        ma_cmds_layout.addWidget(QtWidgets.QLabel("ФВ дискрет:"), row, 0)
+        hl1 = QtWidgets.QHBoxLayout()
+        w1 = QtWidgets.QWidget(); w1.setLayout(hl1)
+        hl1.addWidget(self.fv_spin)
+        hl1.addWidget(self.set_fv_btn)
+        ma_cmds_layout.addWidget(w1, row, 1)
+        row += 1
+
+        # ЛЗ дискрет
+        self.lz_spin = QtWidgets.QSpinBox()
+        self.lz_spin.setRange(0, 31)
+        self.lz_spin.setValue(0)
+        self.set_lz_btn = QtWidgets.QPushButton("Установить ЛЗ")
+        self.set_lz_btn.clicked.connect(self.set_delay)
+        self.set_lz_btn.setEnabled(False)
+        ma_cmds_layout.addWidget(QtWidgets.QLabel("ЛЗ дискрет:"), row, 0)
+        hl2 = QtWidgets.QHBoxLayout()
+        w2 = QtWidgets.QWidget(); w2.setLayout(hl2)
+        hl2.addWidget(self.lz_spin)
+        hl2.addWidget(self.set_lz_btn)
+        ma_cmds_layout.addWidget(w2, row, 1)
+
+        control_layout.addLayout(ma_cmds_layout)
+
         main_layout.addWidget(control_group)
         
         # Инициализируем координаты для ППМ 12
@@ -219,6 +324,7 @@ class ManualControlWindow(QtWidgets.QMainWindow):
             index = self.coord_system_combo.findText(coord_system_name)
             if index >= 0:
                 self.coord_system_combo.setCurrentIndex(index)
+        self._update_controls_enabled()
                 
     def connect_devices(self):
         """Подключение к PSN"""
@@ -275,6 +381,8 @@ class ManualControlWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.critical(self, "Ошибка подключения", str(e))
             logger.error(f"Ошибка подключения PSN в ручном управлении: {e}")
             self.disconnect_devices()
+        finally:
+            self._update_controls_enabled()
             
     def move_to_ppm(self):
         """Перемещение к выбранному ППМ"""
@@ -301,6 +409,7 @@ class ManualControlWindow(QtWidgets.QMainWindow):
         finally:
             self.move_btn.setEnabled(True)
             self.move_btn.setText("Переместиться к ППМ")
+            self._update_controls_enabled()
             
     def disconnect_devices(self):
         """Отключение от PSN"""
@@ -318,6 +427,108 @@ class ManualControlWindow(QtWidgets.QMainWindow):
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Ошибка отключения", str(e))
             logger.error(f"Ошибка отключения PSN в ручном управлении: {e}")
+        finally:
+            self._update_controls_enabled()
+
+    # --- Работа с МА ---
+    def connect_ma(self):
+        if not self.device_settings:
+            QtWidgets.QMessageBox.warning(self, "Ошибка", "Настройки устройств не заданы")
+            return
+        try:
+            com_port = self.device_settings.get('ma_com_port', '')
+            mode = int(self.device_settings.get('ma_mode', 0))
+            if mode == 0 and (not com_port or com_port == 'Тестовый'):
+                QtWidgets.QMessageBox.warning(self, "Ошибка", "COM-порт для МА не выбран")
+                return
+            self.ma = MA(com_port=com_port, mode=mode)
+            self.ma.connect()
+            self.ma_status_label.setText("Подключен")
+            self.ma_status_label.setStyleSheet("color: green;")
+            self.connect_ma_btn.setEnabled(False)
+            self.disconnect_ma_btn.setEnabled(True)
+        except Exception as e:
+            self.ma = None
+            QtWidgets.QMessageBox.critical(self, "Ошибка подключения МА", str(e))
+            logger.error(f"Ошибка подключения МА: {e}")
+        finally:
+            self._update_controls_enabled()
+
+    def disconnect_ma(self):
+        try:
+            if self.ma:
+                self.ma.disconnect()
+                self.ma = None
+            self.ma_status_label.setText("Не подключен")
+            self.ma_status_label.setStyleSheet("color: red;")
+            self.connect_ma_btn.setEnabled(True)
+            self.disconnect_ma_btn.setEnabled(False)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Ошибка отключения МА", str(e))
+            logger.error(f"Ошибка отключения МА: {e}")
+        finally:
+            self._update_controls_enabled()
+
+    def _get_selected_channel(self) -> Channel:
+        return Channel.Receiver if self.channel_combo.currentText() == 'Приемник' else Channel.Transmitter
+
+    def _get_selected_direction(self) -> Direction:
+        return Direction.Horizontal if self.direction_combo.currentText() == 'Горизонтальная' else Direction.Vertical
+
+    def turn_on_ppm(self):
+        if not self.ma:
+            QtWidgets.QMessageBox.warning(self, "Ошибка", "МА не подключен")
+            return
+        ppm_num = self.ppm_number_spin.value()
+        try:
+            self.ma.switch_ppm(ppm_num, chanel=self._get_selected_channel(), direction=self._get_selected_direction(), state=PpmState.ON)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Ошибка включения ППМ", str(e))
+            logger.error(f"Ошибка включения ППМ: {e}")
+
+    def turn_off_ppm(self):
+        if not self.ma:
+            QtWidgets.QMessageBox.warning(self, "Ошибка", "МА не подключен")
+            return
+        ppm_num = self.ppm_number_spin.value()
+        try:
+            self.ma.switch_ppm(ppm_num, chanel=self._get_selected_channel(), direction=self._get_selected_direction(), state=PpmState.OFF)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Ошибка отключения ППМ", str(e))
+            logger.error(f"Ошибка отключения ППМ: {e}")
+
+    def set_phase_shifter(self):
+        if not self.ma:
+            QtWidgets.QMessageBox.warning(self, "Ошибка", "МА не подключен")
+            return
+        ppm_num = self.ppm_number_spin.value()
+        value = int(self.fv_spin.value())
+        try:
+            self.ma.set_phase_shifter(ppm_num=ppm_num, chanel=self._get_selected_channel(), direction=self._get_selected_direction(), value=value)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Ошибка установки ФВ", str(e))
+            logger.error(f"Ошибка установки ФВ: {e}")
+
+    def set_delay(self):
+        if not self.ma:
+            QtWidgets.QMessageBox.warning(self, "Ошибка", "МА не подключен")
+            return
+        value = int(self.lz_spin.value())
+        try:
+            self.ma.set_delay(chanel=self._get_selected_channel(), direction=self._get_selected_direction(), value=value)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Ошибка установки ЛЗ", str(e))
+            logger.error(f"Ошибка установки ЛЗ: {e}")
+
+    def _update_controls_enabled(self):
+        """Управляет доступностью кнопок в зависимости от подключений."""
+        psn_connected = self.psn is not None
+        ma_connected = self.ma is not None
+        self.move_btn.setEnabled(psn_connected)
+        self.disconnect_btn.setEnabled(psn_connected)
+        # Команды МА доступны только при подключенном МА
+        for btn in [self.ppm_on_btn, self.ppm_off_btn, self.set_fv_btn, self.set_lz_btn]:
+            btn.setEnabled(ma_connected)
 
 
 class PpmFieldView(QtWidgets.QGraphicsView):
@@ -341,12 +552,12 @@ class PpmFieldView(QtWidgets.QGraphicsView):
         self.scene.clear()
         self.rects.clear()
         
-        # Размеры
-        rect_width = 80
-        rect_height = 35
-        spacing_x = 90
-        spacing_y = 45
-        margin = 10
+        # Размеры и стили сетки
+        rect_width = 120
+        rect_height = 48
+        spacing_x = 132
+        spacing_y = 60
+        margin = 20
         
         # Создаем сетку 4x8 (32 ППМ)
         for col in range(4):
@@ -358,8 +569,8 @@ class PpmFieldView(QtWidgets.QGraphicsView):
                 
                 # Создаем прямоугольник
                 rect = QtWidgets.QGraphicsRectItem(x, y, rect_width, rect_height)
-                rect.setBrush(QtGui.QBrush(QtGui.QColor(220, 220, 220)))
-                rect.setPen(QtGui.QPen(QtGui.QColor(60, 60, 60), 2))
+                rect.setBrush(QtGui.QBrush(QtGui.QColor(245, 248, 252)))
+                rect.setPen(QtGui.QPen(QtGui.QColor(180, 190, 200), 1))
                 
                 # Создаем текст с номером ППМ
                 text = QtWidgets.QGraphicsTextItem(f"ППМ {ppm_num}")
@@ -367,6 +578,7 @@ class PpmFieldView(QtWidgets.QGraphicsView):
                 font.setPointSize(10)
                 font.setBold(True)
                 text.setFont(font)
+                text.setDefaultTextColor(QtGui.QColor(40, 50, 60))
                 
                 # Центрируем текст
                 text_rect = text.boundingRect()
@@ -383,18 +595,20 @@ class PpmFieldView(QtWidgets.QGraphicsView):
         scene_width = 2 * margin + 4 * spacing_x
         scene_height = 2 * margin + 8 * spacing_y
         self.scene.setSceneRect(0, 0, scene_width, scene_height)
+        # Подогнать размер вида под сцену, чтобы всё влезало
+        self.setMinimumSize(int(scene_width + 24), int(scene_height + 24))
         
     def highlight_ppm(self, ppm_num):
         """Выделяет выбранный ППМ"""
         # Сбрасываем предыдущее выделение
         if self.highlighted_ppm and self.highlighted_ppm in self.rects:
             rect, _ = self.rects[self.highlighted_ppm]
-            rect.setBrush(QtGui.QBrush(QtGui.QColor(220, 220, 220)))
+            rect.setBrush(QtGui.QBrush(QtGui.QColor(245, 248, 252)))
             
         # Выделяем новый ППМ
         if ppm_num in self.rects:
             rect, _ = self.rects[ppm_num]
-            rect.setBrush(QtGui.QBrush(QtGui.QColor(100, 150, 255)))
+            rect.setBrush(QtGui.QBrush(QtGui.QColor(99, 132, 255)))
             self.highlighted_ppm = ppm_num
             
     def mousePressEvent(self, event):
