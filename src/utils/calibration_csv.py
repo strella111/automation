@@ -46,7 +46,6 @@ class CalibrationCSV:
                 row = [0, 0, 0, 0]
                 data.append(row)
 
-            # Записываем в файл без заголовков
             with open(self.csv_file, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f, delimiter=';')
                 writer.writerows(data)
@@ -107,12 +106,10 @@ class CalibrationCSV:
                         else:
                             int_row.append(0)
                     existing_data.append(int_row)
-            
-            # Дополняем данными до 32 строк если нужно
+
             while len(existing_data) < 32:
                 existing_data.append([0, 0, 0, 0])
-            
-            # Обновляем нужный столбец
+
             for ppm_index, phase_value in enumerate(phase_results):
                 if ppm_index < len(existing_data):
                     existing_data[ppm_index][column_index] = phase_value
@@ -156,8 +153,7 @@ class CalibrationCSV:
                             phase_results.append(0)
                     else:
                         phase_results.append(0)
-                
-                # Дополняем до 32 значений если нужно
+
                 while len(phase_results) < 32:
                     phase_results.append(0)
                 

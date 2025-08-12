@@ -9,7 +9,7 @@ from core.devices.ma import MA
 from core.devices.pna import PNA
 from core.devices.psn import PSN
 from core.measurements.check.check_ma import CheckMA
-from core.common.enums import Channel, Direction, PpmState
+from core.common.enums import Channel, Direction
 from core.common.coordinate_system import CoordinateSystemManager
 
 from ui.pna_file_dialog import PnaFileDialog
@@ -25,8 +25,7 @@ class AddCoordinateSystemDialog(QtWidgets.QDialog):
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(15)
         layout.setContentsMargins(20, 20, 20, 20)
-        
-        # Поля ввода
+
         form_layout = QtWidgets.QFormLayout()
         form_layout.setSpacing(10)
         
@@ -126,14 +125,12 @@ class PpmRect(QtWidgets.QGraphicsRectItem):
     def hoverEnterEvent(self, event):
         """Подсветка при наведении мыши"""
         hover_color = "#e9ecef"
-        
-        # Сохраняем текущий цвет если это статусный цвет
+
         if self.status == "ok":
             hover_color = "#28a745"  # зеленый
         elif self.status == "fail":
             hover_color = "#dc3545"  # красный
-            
-        # Делаем цвет немного ярче для эффекта hover
+
         color = QtGui.QColor(hover_color)
         color = color.lighter(110)
         self.setBrush(QtGui.QBrush(color))
@@ -178,14 +175,12 @@ class BottomRect(QtWidgets.QGraphicsRectItem):
     def hoverEnterEvent(self, event):
         """Подсветка при наведении мыши"""
         hover_color = "#e9ecef"
-        
-        # Сохраняем текущий цвет если это статусный цвет
+
         if self.status == "ok":
             hover_color = "#28a745"  # зеленый
         elif self.status == "fail":
             hover_color = "#dc3545"  # красный
-            
-        # Делаем цвет немного ярче для эффекта hover
+
         color = QtGui.QColor(hover_color)
         color = color.lighter(110)
         self.setBrush(QtGui.QBrush(color))
@@ -209,14 +204,13 @@ class PpmFieldView(QtWidgets.QGraphicsView):
         self.texts = {}
         self.bottom_rect = None
         self.bottom_text = None
-        self.bottom_rect_height = 60  # Высота нижнего прямоугольника
+        self.bottom_rect_height = 70
         self.setRenderHint(QtGui.QPainter.Antialiasing)
         self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.parent_widget = parent
         self.create_rects()
-        
-        # Включаем контекстное меню
+
         self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self.show_context_menu)
 
@@ -227,8 +221,7 @@ class PpmFieldView(QtWidgets.QGraphicsView):
 
         text_color = "#212529"
         font_size = 10
-        
-        # Создаем основные ППМ прямоугольники
+
         for col in range(4):
             for row in range(8):
                 ppm_num = col * 8 + row + 1
@@ -241,7 +234,6 @@ class PpmFieldView(QtWidgets.QGraphicsView):
                 text.setDefaultTextColor(QtGui.QColor(text_color))
                 self.texts[ppm_num] = text
 
-        # Создаем нижний прямоугольник с интерактивностью
         self.bottom_rect = BottomRect(self.parent_widget, 0, 0, 1, 1)
         self.scene().addItem(self.bottom_rect)
         
@@ -266,8 +258,7 @@ class PpmFieldView(QtWidgets.QGraphicsView):
         margin = 2
         cell_w = w - margin
         cell_h = h - margin
-        
-        # Размещаем основные ППМ прямоугольники
+
         for col in range(4):
             for row in range(8):
                 ppm_num = col * 8 + row + 1
@@ -284,10 +275,9 @@ class PpmFieldView(QtWidgets.QGraphicsView):
                 text_y = y + (cell_h - text_rect.height()) / 2
                 
                 text.setPos(text_x, text_y)
-        
-        # Размещаем нижний прямоугольник
+
         if self.bottom_rect:
-            bottom_y = 8 * h + 2  # 2 пикселя отступ сверху
+            bottom_y = 8 * h + 2
             bottom_w = 4 * w - margin
             
             self.bottom_rect.setRect(margin / 2, bottom_y, bottom_w, self.bottom_rect_height - margin)
@@ -317,28 +307,23 @@ class PpmFieldView(QtWidgets.QGraphicsView):
     
     def get_ppm_at_position(self, pos):
         """Определяет номер ППМ или нижний прямоугольник по позиции клика"""
-        # Учитываем высоту нижнего прямоугольника
         total_height = self.viewport().height()
         ppm_area_height = total_height - self.bottom_rect_height - 4  # 4 пикселя отступ
         
         w = self.viewport().width() / 4
         h = ppm_area_height / 8
         margin = 2
-        
-        # Сначала проверяем нижний прямоугольник
+
         bottom_y = 8 * h + 2  # 2 пикселя отступ сверху
         if pos.y() >= bottom_y and pos.y() <= (bottom_y + self.bottom_rect_height - margin):
             bottom_w = 4 * w - margin
             if pos.x() >= margin/2 and pos.x() <= (margin/2 + bottom_w):
                 return "bottom_rect"  # Специальное значение для нижнего прямоугольника
-        
-        # Затем проверяем область ППМ
+
         col = int(pos.x() / w)
         row = int(pos.y() / h)
-        
-        # Проверяем границы и учитываем отступы
+
         if 0 <= col < 4 and 0 <= row < 8:
-            # Проверяем, что клик попал именно в ячейку, а не в отступ
             x_in_cell = pos.x() - col * w
             y_in_cell = pos.y() - row * h
             
@@ -352,16 +337,13 @@ class PpmFieldView(QtWidgets.QGraphicsView):
         element = self.get_ppm_at_position(pos)
         if element is not None and self.parent_widget is not None:
             if element == "bottom_rect":
-                # Выделяем нижний прямоугольник и показываем контекстное меню
                 if self.bottom_rect:
                     self.bottom_rect.setSelected(True)
                 self.parent_widget.show_bottom_rect_details(self.mapToGlobal(pos))
             else:
-                # Обрабатываем как ППМ
                 ppm_num = element
                 if ppm_num in self.rects:
                     self.rects[ppm_num].setSelected(True)
-                # Показываем информацию
                 self.parent_widget.show_ppm_details_graphics(ppm_num, self.mapToGlobal(pos))
 
 class CheckMaWidget(QtWidgets.QWidget):
@@ -503,8 +485,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         coord_group = QtWidgets.QGroupBox('Система координат')
         coord_layout = QtWidgets.QFormLayout(coord_group)
         coord_layout.setContentsMargins(15, 15, 15, 15)
-        
-        # Создаем горизонтальный layout для комбобокса и кнопок
+
         coord_selection_layout = QtWidgets.QHBoxLayout()
         coord_selection_layout.setSpacing(5)
         coord_selection_layout.setContentsMargins(0, 0, 0, 0)
@@ -514,15 +495,13 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.coord_system_combo.setMinimumWidth(200)
         self.coord_system_combo.currentTextChanged.connect(self.update_coord_buttons_state)
         coord_selection_layout.addWidget(self.coord_system_combo, 1)
-        
-        # Кнопка добавления системы координат
+
         self.add_coord_system_btn = QtWidgets.QPushButton('+')
         self.add_coord_system_btn.setFixedSize(24, 22)
         self.add_coord_system_btn.setToolTip('Добавить новую систему координат')
         self.add_coord_system_btn.clicked.connect(self.add_coordinate_system)
         coord_selection_layout.addWidget(self.add_coord_system_btn, 0, QtCore.Qt.AlignVCenter)
-        
-        # Кнопка удаления системы координат
+
         self.remove_coord_system_btn = QtWidgets.QPushButton('−')
         self.remove_coord_system_btn.setFixedSize(24, 22)
         self.remove_coord_system_btn.setToolTip('Удалить выбранную систему координат')
@@ -1026,7 +1005,6 @@ class CheckMaWidget(QtWidgets.QWidget):
 
             if fv_data and len(fv_data) > 0:
                 try:
-                    # Дельта ФВ (всегда без цветовой индикации)
                     if not np.isnan(fv_data[0]):
                         self.results_table.setItem(row, 5, self.create_centered_table_item(f"{fv_data[0]:.1f}"))
                     else:
@@ -1038,16 +1016,14 @@ class CheckMaWidget(QtWidgets.QWidget):
                             if not np.isnan(fv_data[i]) and i <= 6:
                                 fv_diff = fv_data[i]
                                 fv_angle = fv_angles[i-1] if i-1 < len(fv_angles) else None
-                                
-                                # Проверяем критерии для фазовращателя
+
                                 if fv_angle and fv_angle in self.check_criteria['phase_shifter_tolerances']:
                                     min_tolerance = self.check_criteria['phase_shifter_tolerances'][fv_angle]['min']
                                     max_tolerance = self.check_criteria['phase_shifter_tolerances'][fv_angle]['max']
                                     fv_ok = min_tolerance <= fv_diff <= max_tolerance
                                 else:
                                     fv_ok = -2.0 <= fv_diff <= 2.0
-                                
-                                # Создаем элемент с цветовой индикацией
+
                                 fv_item = self.create_status_table_item(f"{fv_diff:.1f}", fv_ok)
                                 self.results_table.setItem(row, i + 5, fv_item)
                             else:
@@ -1126,25 +1102,20 @@ class CheckMaWidget(QtWidgets.QWidget):
                     break
                     
                 row = delay_discretes.index(discrete) if discrete in delay_discretes else i
-                
-                # Обновляем значение задержки
+
                 self.delay_table.setItem(row, 1, self.create_centered_table_item(f"{delay_delta:.1f}"))
-                
-                # Обновляем значение амплитуды  
+
                 self.delay_table.setItem(row, 2, self.create_centered_table_item(f"{amp_delta:.2f}"))
-                
-                # Обновляем статус с цветовой индикацией
+
                 status_text = "OK" if delay_ok else "FAIL"
                 status_item = self.create_status_table_item(status_text, delay_ok)
                 self.delay_table.setItem(row, 3, status_item)
                 
                 if not delay_ok:
                     overall_delay_ok = False
-            
-            # Обновляем статус в 2D поле
+
             self.ppm_field_view.update_bottom_rect_status("ok" if overall_delay_ok else "fail")
-            
-            # Обновляем данные для контекстного меню
+
             delay_data = {}
             for discrete, delay_delta, amp_delta, delay_ok in delay_results:
                 delay_data[f"ЛЗ{discrete}"] = f"Δt={delay_delta:.1f}пс, Δamp={amp_delta:.2f}дБ, {'OK' if delay_ok else 'FAIL'}"
@@ -1161,7 +1132,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         """Слот для завершения проверки - выполняется в главном потоке GUI"""
         self.set_buttons_enabled(True)
         self.pause_btn.setText('Пауза')
-        self.check_completed = True  # Устанавливаем флаг завершения проверки
+        self.check_completed = True
         logger.info('Проверка завершена, интерфейс восстановлен')
 
     @QtCore.pyqtSlot(bool)
@@ -1178,10 +1149,8 @@ class CheckMaWidget(QtWidgets.QWidget):
     def set_button_connection_state(self, button: QtWidgets.QPushButton, connected: bool):
         """Устанавливает состояние подключения кнопки"""
         if connected:
-            # Зеленый фон для подключенного состояния
             button.setStyleSheet("QPushButton { background-color: #28a745; color: white; }")
         else:
-            # Красный фон для отключенного состояния
             button.setStyleSheet("QPushButton { background-color: #dc3545; color: white; }")
     
     def create_status_table_item(self, text: str, is_success: bool) -> QtWidgets.QTableWidgetItem:
@@ -1375,8 +1344,7 @@ class CheckMaWidget(QtWidgets.QWidget):
                     self.callback = callback
                     self.delay_callback = delay_callback
                     self.parent_widget = parent_widget
-                    
-                    # Применяем новые критерии проверки если они переданы
+
                     if criteria:
                         self.rx_amp_max = criteria.get('rx_amp_max', self.rx_amp_max)
                         self.tx_amp_max = criteria.get('tx_amp_max', self.tx_amp_max)
@@ -1385,8 +1353,7 @@ class CheckMaWidget(QtWidgets.QWidget):
                         self.tx_phase_diff_min = criteria.get('tx_phase_min', self.tx_phase_diff_min)
                         self.tx_phase_diff_max = criteria.get('tx_phase_max', self.tx_phase_diff_max)
                         self.phase_shifter_tolerances = criteria.get('phase_shifter_tolerances', None)
-                        
-                        # Устанавливаем критерии для линий задержки
+
                         if 'delay_amp_tolerance' in criteria:
                             self.delay_amp_tolerance = criteria['delay_amp_tolerance']
                         if 'delay_tolerances' in criteria:
@@ -1395,8 +1362,7 @@ class CheckMaWidget(QtWidgets.QWidget):
                 def start(self, channel: Channel, direction: Direction):
                     """Переопределяем метод start для сохранения нормировочных значений"""
                     results = super().start(channel, direction)
-                    
-                    # Сохраняем нормировочные значения в родительском виджете
+
                     if self.parent_widget and hasattr(self, 'norm_amp') and hasattr(self, 'norm_phase') and hasattr(self, 'norm_delay'):
                         self.parent_widget.last_normalization_values = (self.norm_amp, self.norm_phase, self.norm_delay)
                         logger.info(f"Сохранены нормировочные значения: amp={self.norm_amp}, phase={self.norm_phase}, delay={self.norm_delay}")
@@ -1458,7 +1424,6 @@ class CheckMaWidget(QtWidgets.QWidget):
         com_port = self.device_settings.get('ma_com_port', '')
         mode = self.device_settings.get('ma_mode', 0)
 
-        # В реальном режиме проверяем, что COM-порт задан
         if mode == 0 and (not com_port or com_port == 'Тестовый'):
             self.show_error_message("Ошибка настроек", "COM-порт не выбран. Откройте настройки и выберите COM-порт.")
             return
@@ -1582,8 +1547,7 @@ class CheckMaWidget(QtWidgets.QWidget):
                         else:
                             fv_action = menu.addAction(f"  ФВ {i+1}: ---")
                         fv_action.setEnabled(False)
-        
-        # Добавляем опцию перемера если проверка завершена и устройства подключены
+
         if self.check_completed and self._can_remeasure():
             menu.addSeparator()
             remeasure_action = menu.addAction("🔄 Перемерить ППМ")
@@ -1600,12 +1564,10 @@ class CheckMaWidget(QtWidgets.QWidget):
         menu.addSeparator()
         
         if self.bottom_rect_data:
-            # Если есть данные - отобразим их
             for key, value in self.bottom_rect_data.items():
                 data_action = menu.addAction(f"{key}: {value}")
                 data_action.setEnabled(False)
         else:
-            # Если данных нет - показываем заглушку
             info_action = menu.addAction("Данные будут добавлены позже...")
             info_action.setEnabled(False)
         
@@ -1623,20 +1585,16 @@ class CheckMaWidget(QtWidgets.QWidget):
         
         if dialog.exec_() == QtWidgets.QDialog.Accepted:
             name, x_offset, y_offset = dialog.get_values()
-            
-            # Добавляем систему координат через менеджер
+
             if self.coord_system_manager.add_system(name, x_offset, y_offset):
-                # Обновляем список в комбобоксе
                 current_text = self.coord_system_combo.currentText()
                 self.coord_system_combo.clear()
                 self.coord_system_combo.addItems(self.coord_system_manager.get_system_names())
-                
-                # Выбираем только что добавленную систему
+
                 index = self.coord_system_combo.findText(name)
                 if index >= 0:
                     self.coord_system_combo.setCurrentIndex(index)
-                
-                # Обновляем состояние кнопок
+
                 self.update_coord_buttons_state()
                 
                 self.show_info_message("Успех", f"Система координат '{name}' успешно добавлена")
@@ -1650,13 +1608,11 @@ class CheckMaWidget(QtWidgets.QWidget):
         if not current_name:
             self.show_error_message("Ошибка", "Нет выбранной системы координат для удаления")
             return
-        
-        # Проверяем количество систем координат
+
         if len(self.coord_system_manager.get_system_names()) <= 1:
             self.show_error_message("Ошибка", "Нельзя удалить последнюю систему координат")
             return
-        
-        # Запрашиваем подтверждение
+
         reply = QMessageBox.question(
             self, 
             'Подтверждение удаления',
@@ -1666,17 +1622,13 @@ class CheckMaWidget(QtWidgets.QWidget):
         )
         
         if reply == QMessageBox.Yes:
-            # Удаляем систему через менеджер
             if self.coord_system_manager.remove_system(current_name):
-                # Обновляем список в комбобоксе
                 self.coord_system_combo.clear()
                 self.coord_system_combo.addItems(self.coord_system_manager.get_system_names())
-                
-                # Выбираем первую доступную систему
+
                 if self.coord_system_combo.count() > 0:
                     self.coord_system_combo.setCurrentIndex(0)
-                
-                # Обновляем состояние кнопок
+
                 self.update_coord_buttons_state()
                 
                 self.show_info_message("Успех", f"Система координат '{current_name}' успешно удалена")
@@ -1685,7 +1637,6 @@ class CheckMaWidget(QtWidgets.QWidget):
 
     def update_coord_buttons_state(self):
         """Обновляет состояние кнопок управления системами координат"""
-        # Кнопка удаления активна только если есть больше одной системы координат
         can_remove = len(self.coord_system_manager.get_system_names()) > 1
         self.remove_coord_system_btn.setEnabled(can_remove)
 
@@ -1826,8 +1777,7 @@ class CheckMaWidget(QtWidgets.QWidget):
                 def __init__(self, ma, psn, pna, callback, criteria=None, normalization_values=None):
                     super().__init__(ma, psn, pna, threading.Event(), threading.Event())
                     self.callback = callback
-                    
-                    # Используем сохраненные нормировочные значения
+
                     if normalization_values:
                         self.norm_amp, self.norm_phase, self.norm_delay = normalization_values
                         logger.info(f"Используем нормировочные значения: amp={self.norm_amp}, phase={self.norm_phase}, delay={self.norm_delay}")
@@ -1850,8 +1800,7 @@ class CheckMaWidget(QtWidgets.QWidget):
 
                     if self.callback:
                         self.callback.emit(ppm_num, result, amp, phase, fv_data)
-                    
-                    # Обновляем Excel файл
+
                     self._update_excel_for_ppm(ppm_num, result, measurements, channel, direction)
                     
                     return result, measurements
@@ -1865,7 +1814,8 @@ class CheckMaWidget(QtWidgets.QWidget):
                             file_name=f'{self.ma.bu_addr}.xlsx',
                             mode='check',
                             chanel=channel,
-                            direction=direction
+                            direction=direction,
+                            spacing = False
                         )
                         
                         amp, phase, fv_data = measurements

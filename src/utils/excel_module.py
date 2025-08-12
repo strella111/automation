@@ -5,7 +5,7 @@ import os
 from core.common.enums import Channel, Direction
 
 
-def get_or_create_excel(dir_name, file_name, mode, chanel, direction):
+def get_or_create_excel(dir_name, file_name, mode, chanel, direction, spacing=True):
     """
     Проверяет существование Excel файла.
     Если файл существует - открывает и возвращает его.
@@ -44,7 +44,8 @@ def get_or_create_excel(dir_name, file_name, mode, chanel, direction):
             else:
                 worksheet = workbook.create_sheet(sheet_name)
 
-            worksheet.insert_rows(idx=1, amount=42)
+            if spacing:
+                worksheet.insert_rows(idx=1, amount=42)
             worksheet.cell(1, 1).value = 'DateTime'
             worksheet.cell(1, 2).value = datetime.datetime.now().strftime('%d.%m.%Y %H:%M')
             row = ["Номер ППМ",

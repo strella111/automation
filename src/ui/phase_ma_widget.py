@@ -282,19 +282,34 @@ class PhaseMaWidget(QtWidgets.QWidget):
 
         self.plot_tabs = QtWidgets.QTabWidget()
 
+        # Амплитуда: график + интерактивная легенда справа
         self.amp_plot = pg.PlotWidget(title="Амплитуда (2D)")
         self.amp_plot.setBackground('w')
         self.amp_plot.showGrid(x=True, y=True, alpha=0.3)
         self.amp_img_item = pg.ImageItem()
         self.amp_plot.addItem(self.amp_img_item)
 
+        # Фаза: график + интерактивная легенда справа
         self.phase_plot = pg.PlotWidget(title="Фаза (2D)")
         self.phase_plot.setBackground('w')
         self.phase_plot.showGrid(x=True, y=True, alpha=0.3)
         self.phase_img_item = pg.ImageItem()
         self.phase_plot.addItem(self.phase_img_item)
-        
-        # Ховер-подсказки
+
+        self._amp_cmap = ColorMap(pos=[0.0, 1.0], color=[(255, 0, 0), (0, 255, 0)])
+        self._phase_cmap = ColorMap(
+            pos=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+            color=[(0, 0, 255), (0, 255, 255), (0, 255, 0), (255, 255, 0), (255, 165, 0), (255, 0, 0)]
+        )
+        self._amp_levels = (-10.0, 5.0)
+        self._phase_levels = (-180.0, 180.0)
+
+        self.amp_cbar = pg.ColorBarItem(values=self._amp_levels, colorMap=self._amp_cmap, orientation='v', width=14)
+        self.amp_cbar.setImageItem(self.amp_img_item, insert_in=self.amp_plot.getPlotItem())
+
+        self.phase_cbar = pg.ColorBarItem(values=self._phase_levels, colorMap=self._phase_cmap, orientation='v', width=14)
+        self.phase_cbar.setImageItem(self.phase_img_item, insert_in=self.phase_plot.getPlotItem())
+
         self.amp_hover_label = pg.TextItem(color=(0, 0, 0), anchor=(0.5, 0.5))
         self.phase_hover_label = pg.TextItem(color=(0, 0, 0), anchor=(0.5, 0.5))
         self.amp_plot.addItem(self.amp_hover_label)
@@ -404,11 +419,20 @@ class PhaseMaWidget(QtWidgets.QWidget):
         self._stop_flag.clear()
         self.amp_field = np.full((4,8), np.nan)
         self.phase_field = np.full((4,8), np.nan)
+
         self.amp_plot.clear()
         self.phase_plot.clear()
-        # Вернем обратно элементы после очистки
         self.amp_plot.addItem(self.amp_img_item)
         self.phase_plot.addItem(self.phase_img_item)
+        try:
+            self.amp_cbar.setImageItem(self.amp_img_item, insert_in=self.amp_plot.getPlotItem())
+        except Exception:
+            pass
+        try:
+            self.phase_cbar.setImageItem(self.phase_img_item, insert_in=self.phase_plot.getPlotItem())
+        except Exception:
+            pass
+
         self.amp_plot.addItem(self.amp_hover_label)
         self.phase_plot.addItem(self.phase_hover_label)
         self.apply_params()
@@ -481,7 +505,7 @@ class PhaseMaWidget(QtWidgets.QWidget):
             def point_callback(i, j, x, y, amp, phase):
                 self.amp_field[i, j] = amp
                 self.phase_field[i, j] = phase
-                # Используем сигнал вместо invokeMethod
+
                 self.update_gui_signal.emit(i, j, amp, phase)
             
             phase_meas = PhaseMaMeas(
@@ -520,23 +544,22 @@ class PhaseMaWidget(QtWidgets.QWidget):
             if not rect.contains(x, y):
                 label.hide()
                 return
-            # Индексы ячейки (считаем j от верха изображения)
+
             i = int((x - rect.left()) / self._dx)
             j_from_top = int((y - rect.top()) / self._dy)
             i = max(0, min(self._nx - 1, i))
             j_from_top = max(0, min(self._ny - 1, j_from_top))
 
-            # Центр ячейки
+
             cx = rect.left() + (i + 0.5) * self._dx
             cy = rect.top() + (j_from_top + 0.5) * self._dy
 
-            # Координаты (учитываем возможный flip по Y)
+
             x_val = self._x_positions[i]
             y_sorted_desc = np.sort(self._y_positions)[::-1]
             y_val = y_sorted_desc[j_from_top]
 
-            # Значение
-            # Индекс данных по Y учитывает, что при убывающем Y мы отрисовали flip(axis=1)
+
             j_data = (self._ny - 1 - j_from_top) if self._y_is_desc else j_from_top
             if 0 <= i < data_field.shape[0] and 0 <= j_data < data_field.shape[1]:
                 value = float(data_field[i, j_data])
@@ -567,10 +590,10 @@ class PhaseMaWidget(QtWidgets.QWidget):
     def set_button_connection_state(self, button: QtWidgets.QPushButton, connected: bool):
         """Устанавливает состояние подключения кнопки"""
         if connected:
-            # Зеленый фон для подключенного состояния
+
             button.setStyleSheet("QPushButton { background-color: #28a745; color: white; }")
         else:
-            # Красный фон для отключенного состояния
+
             button.setStyleSheet("QPushButton { background-color: #dc3545; color: white; }")
 
     def connect_ma(self):
@@ -665,7 +688,6 @@ class PhaseMaWidget(QtWidgets.QWidget):
     def set_device_settings(self, settings: dict):
         """Сохраняет параметры устройств (PSN/PNA) из настроек для последующего применения."""
         self.device_settings = settings or {}
-        # Применяем параметры к PSN, если он подключён
         if self.psn:
             try:
                 self.psn.preset()
@@ -692,20 +714,16 @@ class PhaseMaWidget(QtWidgets.QWidget):
         
         if dialog.exec_() == QtWidgets.QDialog.Accepted:
             name, x_offset, y_offset = dialog.get_values()
-            
-            # Добавляем систему координат через менеджер
+
             if self.coord_system_manager.add_system(name, x_offset, y_offset):
-                # Обновляем список в комбобоксе
                 current_text = self.coord_system_combo.currentText()
                 self.coord_system_combo.clear()
                 self.coord_system_combo.addItems(self.coord_system_manager.get_system_names())
-                
-                # Выбираем только что добавленную систему
+
                 index = self.coord_system_combo.findText(name)
                 if index >= 0:
                     self.coord_system_combo.setCurrentIndex(index)
-                
-                # Обновляем состояние кнопок
+
                 self.update_coord_buttons_state()
                 
                 self.show_info_message("Успех", f"Система координат '{name}' успешно добавлена")
@@ -719,13 +737,11 @@ class PhaseMaWidget(QtWidgets.QWidget):
         if not current_name:
             self.show_error_message("Ошибка", "Нет выбранной системы координат для удаления")
             return
-        
-        # Проверяем количество систем координат
+
         if len(self.coord_system_manager.get_system_names()) <= 1:
             self.show_error_message("Ошибка", "Нельзя удалить последнюю систему координат")
             return
-        
-        # Запрашиваем подтверждение
+
         reply = QMessageBox.question(
             self, 
             'Подтверждение удаления',
@@ -735,17 +751,13 @@ class PhaseMaWidget(QtWidgets.QWidget):
         )
         
         if reply == QMessageBox.Yes:
-            # Удаляем систему через менеджер
             if self.coord_system_manager.remove_system(current_name):
-                # Обновляем список в комбобоксе
                 self.coord_system_combo.clear()
                 self.coord_system_combo.addItems(self.coord_system_manager.get_system_names())
-                
-                # Выбираем первую доступную систему
+
                 if self.coord_system_combo.count() > 0:
                     self.coord_system_combo.setCurrentIndex(0)
-                
-                # Обновляем состояние кнопок
+
                 self.update_coord_buttons_state()
                 
                 self.show_info_message("Успех", f"Система координат '{current_name}' успешно удалена")
@@ -754,7 +766,6 @@ class PhaseMaWidget(QtWidgets.QWidget):
 
     def update_coord_buttons_state(self):
         """Обновляет состояние кнопок управления системами координат"""
-        # Кнопка удаления активна только если есть больше одной системы координат
         can_remove = len(self.coord_system_manager.get_system_names()) > 1
         self.remove_coord_system_btn.setEnabled(can_remove)
 
@@ -829,11 +840,6 @@ class PhaseMaWidget(QtWidgets.QWidget):
             logger.error(f'Ошибка при применении настроек к интерфейсу: {e}') 
     @QtCore.pyqtSlot()
     def update_heatmaps(self):
-        # Очистка и подготовка
-        self.amp_plot.clear()
-        self.phase_plot.clear()
-
-        # Координаты и шаги
         x_positions = np.asarray(self.x_cords, dtype=float)
         y_positions = np.asarray(self.y_cords, dtype=float)
         if x_positions.size < 2 or y_positions.size < 2:
@@ -842,65 +848,56 @@ class PhaseMaWidget(QtWidgets.QWidget):
         dx = float(np.mean(np.diff(x_positions)))
         dy = float(np.mean(np.abs(np.diff(y_positions))))
 
-        # Подготовка данных без транспонирования; отражаем только по оси Y при убывающем порядке
         y_is_desc = bool(y_positions[0] > y_positions[-1])
         amp_data = np.flip(self.amp_field, axis=1) if y_is_desc else self.amp_field
         phase_data = np.flip(self.phase_field, axis=1) if y_is_desc else self.phase_field
 
-        # Амплитуда
-        amp_min, amp_max = -10.0, 5.0
-        self._amp_cmap = ColorMap(pos=[0.0, 1.0], color=[(255, 0, 0), (0, 255, 0)])
-        amp_img = pg.ImageItem(amp_data, axisOrder='col-major')
-        amp_img.setColorMap(self._amp_cmap)
-        amp_img.setLevels((amp_min, amp_max))
+        self.amp_img_item.setImage(amp_data, axisOrder='col-major', autoLevels=False)
+        self.amp_img_item.setColorMap(self._amp_cmap)
+        if hasattr(self, 'amp_cbar'):
+            try:
+                self.amp_cbar.setLevels(self._amp_levels)
+                self.amp_cbar.setColorMap(self._amp_cmap)
+            except Exception:
+                pass
 
-        # Фаза с нужным градиентом (-180..180)
-        phase_img = pg.ImageItem(phase_data, axisOrder='col-major')
-        self._phase_cmap = ColorMap(
-            pos=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
-            color=[(0, 0, 255), (0, 255, 255), (0, 255, 0), (255, 255, 0), (255, 165, 0), (255, 0, 0)]
-        )
-        phase_img.setColorMap(self._phase_cmap)
-        phase_img.setLevels((-180.0, 180.0))
+        self.phase_img_item.setImage(phase_data, axisOrder='col-major', autoLevels=False)
+        self.phase_img_item.setColorMap(self._phase_cmap)
+        if hasattr(self, 'phase_cbar'):
+            try:
+                self.phase_cbar.setLevels(self._phase_levels)
+                self.phase_cbar.setColorMap(self._phase_cmap)
+            except Exception:
+                pass
 
-        # Прямоугольник так, чтобы центры пикселей попадали в координаты
         x0 = float(x_positions.min() - dx / 2.0)
         y0 = float(y_positions.min() - dy / 2.0)
         width = dx * nx
         height = dy * ny
         rect = QtCore.QRectF(x0, y0, width, height)
-        amp_img.setRect(rect)
-        phase_img.setRect(rect)
+        self.amp_img_item.setRect(rect)
+        self.phase_img_item.setRect(rect)
 
-        # Кешируем геометрию для ховера
         self._rect = rect
         self._x_positions = x_positions
         self._y_positions = y_positions
         self._dx, self._dy = dx, dy
         self._nx, self._ny = nx, ny
-        # При отрисовке мы могли перевернуть по Y — запомним порядок для маппинга индексов в координаты
+
         self._y_is_desc = bool(y_positions[0] > y_positions[-1])
 
-        # Добавляем на графики
-        self.amp_plot.addItem(amp_img)
-        self.phase_plot.addItem(phase_img)
-        # После clear() лейблы удаляются — вернем их
-        if hasattr(self, 'amp_hover_label'):
+        if hasattr(self, 'amp_hover_label') and self.amp_hover_label not in self.amp_plot.listDataItems():
             self.amp_plot.addItem(self.amp_hover_label)
-        if hasattr(self, 'phase_hover_label'):
+        if hasattr(self, 'phase_hover_label') and self.phase_hover_label not in self.phase_plot.listDataItems():
             self.phase_plot.addItem(self.phase_hover_label)
 
-        # Диапазоны и соотношение сторон
         self.amp_plot.setRange(xRange=(x_positions.min() - dx, x_positions.max() + dx),
                                yRange=(y_positions.min() - dy, y_positions.max() + dy), padding=0)
         self.phase_plot.setRange(xRange=(x_positions.min() - dx, x_positions.max() + dx),
                                  yRange=(y_positions.min() - dy, y_positions.max() + dy), padding=0)
-        # Разблокируем соотношение сторон, чтобы по оси Y клетки были визуально выше
+
         self.amp_plot.setAspectLocked(False)
         self.phase_plot.setAspectLocked(False)
-        
-        # Отрисовка завершена
 
-        # Конец обновления теплокарт
 
     
