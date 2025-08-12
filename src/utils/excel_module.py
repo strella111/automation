@@ -44,7 +44,7 @@ def get_or_create_excel(dir_name, file_name, mode, chanel, direction):
             else:
                 worksheet = workbook.create_sheet(sheet_name)
 
-            worksheet.insert_rows(idx=1, amount=45)
+            worksheet.insert_rows(idx=1, amount=42)
             worksheet.cell(1, 1).value = 'DateTime'
             worksheet.cell(1, 2).value = datetime.datetime.now().strftime('%d.%m.%Y %H:%M')
             row = ["Номер ППМ",
