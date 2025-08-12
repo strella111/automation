@@ -294,6 +294,24 @@ class PhaseMaWidget(QtWidgets.QWidget):
         self.phase_img_item = pg.ImageItem()
         self.phase_plot.addItem(self.phase_img_item)
         
+        # Ховер-подсказки
+        self.amp_hover_label = pg.TextItem(color=(0, 0, 0), anchor=(0.5, 0.5))
+        self.phase_hover_label = pg.TextItem(color=(0, 0, 0), anchor=(0.5, 0.5))
+        self.amp_plot.addItem(self.amp_hover_label)
+        self.phase_plot.addItem(self.phase_hover_label)
+        self.amp_hover_label.hide()
+        self.phase_hover_label.hide()
+        try:
+            self.amp_plot.scene().sigMouseMoved.disconnect(self._on_mouse_moved_amp)
+        except Exception:
+            pass
+        try:
+            self.phase_plot.scene().sigMouseMoved.disconnect(self._on_mouse_moved_phase)
+        except Exception:
+            pass
+        self.amp_plot.scene().sigMouseMoved.connect(self._on_mouse_moved_amp)
+        self.phase_plot.scene().sigMouseMoved.connect(self._on_mouse_moved_phase)
+        
         self.plot_tabs.addTab(self.amp_plot, "Амплитуда")
         self.plot_tabs.addTab(self.phase_plot, "Фаза")
         self.right_layout.addWidget(self.plot_tabs, stretch=5)
@@ -388,6 +406,11 @@ class PhaseMaWidget(QtWidgets.QWidget):
         self.phase_field = np.full((4,8), np.nan)
         self.amp_plot.clear()
         self.phase_plot.clear()
+        # Вернем обратно элементы после очистки
+        self.amp_plot.addItem(self.amp_img_item)
+        self.phase_plot.addItem(self.phase_img_item)
+        self.amp_plot.addItem(self.amp_hover_label)
+        self.phase_plot.addItem(self.phase_hover_label)
         self.apply_params()
         self._meas_thread = threading.Thread(target=self._run_phase_ma_real, daemon=True)
         self._meas_thread.start()
@@ -476,38 +499,63 @@ class PhaseMaWidget(QtWidgets.QWidget):
         finally:
             self.set_buttons_enabled(True)
 
+    def _on_mouse_moved_amp(self, pos):
+        self._handle_mouse_move(pos, self.amp_plot, self.amp_hover_label, self.amp_field)
+
+    def _on_mouse_moved_phase(self, pos):
+        self._handle_mouse_move(pos, self.phase_plot, self.phase_hover_label, self.phase_field)
+
+    def _handle_mouse_move(self, pos, plot_widget: pg.PlotWidget, label: pg.TextItem, data_field: np.ndarray):
+        try:
+            if not hasattr(self, '_rect'):
+                label.hide()
+                return
+            vb = plot_widget.getViewBox()
+            if vb is None:
+                label.hide()
+                return
+            point = vb.mapSceneToView(pos)
+            x, y = float(point.x()), float(point.y())
+            rect: QtCore.QRectF = self._rect
+            if not rect.contains(x, y):
+                label.hide()
+                return
+            # Индексы ячейки (считаем j от верха изображения)
+            i = int((x - rect.left()) / self._dx)
+            j_from_top = int((y - rect.top()) / self._dy)
+            i = max(0, min(self._nx - 1, i))
+            j_from_top = max(0, min(self._ny - 1, j_from_top))
+
+            # Центр ячейки
+            cx = rect.left() + (i + 0.5) * self._dx
+            cy = rect.top() + (j_from_top + 0.5) * self._dy
+
+            # Координаты (учитываем возможный flip по Y)
+            x_val = self._x_positions[i]
+            y_sorted_desc = np.sort(self._y_positions)[::-1]
+            y_val = y_sorted_desc[j_from_top]
+
+            # Значение
+            # Индекс данных по Y учитывает, что при убывающем Y мы отрисовали flip(axis=1)
+            j_data = (self._ny - 1 - j_from_top) if self._y_is_desc else j_from_top
+            if 0 <= i < data_field.shape[0] and 0 <= j_data < data_field.shape[1]:
+                value = float(data_field[i, j_data])
+            else:
+                value = float('nan')
+
+            label.setText(f"x={x_val:.2f}, y={y_val:.2f}\nval={value if np.isfinite(value) else 'NaN'}")
+            label.setPos(cx, cy)
+            label.show()
+        except Exception:
+            label.hide()
+
     @QtCore.pyqtSlot(int, int, float, float)
     def on_measurement_update(self, i, j, amp, phase):
         """Слот для обновления графика при получении новых данных"""
         self.amp_field[i, j] = amp
         self.phase_field[i, j] = phase
         self.update_heatmaps()
-        
-    @QtCore.pyqtSlot()
-    def update_heatmaps(self):
-        self.amp_plot.clear()
-        self.phase_plot.clear()
-
-        amp_cmap = ColorMap(pos=[-10, 0, 10], color=[(0, 0, 255), (0, 255, 0), (255, 0, 0)])
-        amp_img = pg.ImageItem(self.amp_field.T)
-        amp_img.setColorMap(amp_cmap)
-        
-        # RGB-палитра для фазы: -180 (красный) -> 0 (синий) -> 180 (зеленый)
-        # Нормализуем значения фазы от -180 до 180 в диапазон от 0 до 1
-        normalized_phase = np.copy(self.phase_field)
-        normalized_phase = (normalized_phase + 180) / 360
-
-        phase_cmap = ColorMap(pos=[0, 0.5, 1], color=[(255, 0, 0), (0, 0, 255), (0, 255, 0)])
-        phase_img = pg.ImageItem(normalized_phase.T)
-        phase_img.setColorMap(phase_cmap)
-        
-        self.amp_plot.addItem(amp_img)
-        self.phase_plot.addItem(phase_img)
-        self.amp_plot.setLimits(xMin=-50, xMax=50, yMin=-10, yMax=10)
-        self.phase_plot.setLimits(xMin=-50, xMax=50, yMin=-10, yMax=10)
-        self.amp_plot.setAspectLocked()
-        self.phase_plot.setAspectLocked()
-
+    
     def stop_phase_meas(self):
         logger.info('Остановка фазировки...')
         self._stop_flag.set()
@@ -779,3 +827,80 @@ class PhaseMaWidget(QtWidgets.QWidget):
 
         except Exception as e:
             logger.error(f'Ошибка при применении настроек к интерфейсу: {e}') 
+    @QtCore.pyqtSlot()
+    def update_heatmaps(self):
+        # Очистка и подготовка
+        self.amp_plot.clear()
+        self.phase_plot.clear()
+
+        # Координаты и шаги
+        x_positions = np.asarray(self.x_cords, dtype=float)
+        y_positions = np.asarray(self.y_cords, dtype=float)
+        if x_positions.size < 2 or y_positions.size < 2:
+            return
+        nx, ny = x_positions.size, y_positions.size
+        dx = float(np.mean(np.diff(x_positions)))
+        dy = float(np.mean(np.abs(np.diff(y_positions))))
+
+        # Подготовка данных без транспонирования; отражаем только по оси Y при убывающем порядке
+        y_is_desc = bool(y_positions[0] > y_positions[-1])
+        amp_data = np.flip(self.amp_field, axis=1) if y_is_desc else self.amp_field
+        phase_data = np.flip(self.phase_field, axis=1) if y_is_desc else self.phase_field
+
+        # Амплитуда
+        amp_min, amp_max = -10.0, 5.0
+        self._amp_cmap = ColorMap(pos=[0.0, 1.0], color=[(255, 0, 0), (0, 255, 0)])
+        amp_img = pg.ImageItem(amp_data, axisOrder='col-major')
+        amp_img.setColorMap(self._amp_cmap)
+        amp_img.setLevels((amp_min, amp_max))
+
+        # Фаза с нужным градиентом (-180..180)
+        phase_img = pg.ImageItem(phase_data, axisOrder='col-major')
+        self._phase_cmap = ColorMap(
+            pos=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+            color=[(0, 0, 255), (0, 255, 255), (0, 255, 0), (255, 255, 0), (255, 165, 0), (255, 0, 0)]
+        )
+        phase_img.setColorMap(self._phase_cmap)
+        phase_img.setLevels((-180.0, 180.0))
+
+        # Прямоугольник так, чтобы центры пикселей попадали в координаты
+        x0 = float(x_positions.min() - dx / 2.0)
+        y0 = float(y_positions.min() - dy / 2.0)
+        width = dx * nx
+        height = dy * ny
+        rect = QtCore.QRectF(x0, y0, width, height)
+        amp_img.setRect(rect)
+        phase_img.setRect(rect)
+
+        # Кешируем геометрию для ховера
+        self._rect = rect
+        self._x_positions = x_positions
+        self._y_positions = y_positions
+        self._dx, self._dy = dx, dy
+        self._nx, self._ny = nx, ny
+        # При отрисовке мы могли перевернуть по Y — запомним порядок для маппинга индексов в координаты
+        self._y_is_desc = bool(y_positions[0] > y_positions[-1])
+
+        # Добавляем на графики
+        self.amp_plot.addItem(amp_img)
+        self.phase_plot.addItem(phase_img)
+        # После clear() лейблы удаляются — вернем их
+        if hasattr(self, 'amp_hover_label'):
+            self.amp_plot.addItem(self.amp_hover_label)
+        if hasattr(self, 'phase_hover_label'):
+            self.phase_plot.addItem(self.phase_hover_label)
+
+        # Диапазоны и соотношение сторон
+        self.amp_plot.setRange(xRange=(x_positions.min() - dx, x_positions.max() + dx),
+                               yRange=(y_positions.min() - dy, y_positions.max() + dy), padding=0)
+        self.phase_plot.setRange(xRange=(x_positions.min() - dx, x_positions.max() + dx),
+                                 yRange=(y_positions.min() - dy, y_positions.max() + dy), padding=0)
+        # Разблокируем соотношение сторон, чтобы по оси Y клетки были визуально выше
+        self.amp_plot.setAspectLocked(False)
+        self.phase_plot.setAspectLocked(False)
+        
+        # Отрисовка завершена
+
+        # Конец обновления теплокарт
+
+    

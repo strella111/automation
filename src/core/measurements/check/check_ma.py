@@ -275,6 +275,12 @@ class CheckMA:
                 self.norm_delay = self.pna.get_mean_value()
 
                 logger.info(f"Нормировочные значения: амплитуда={self.norm_amp:.2f} дБ, фаза={self.norm_phase:.1f}°, Задержка={self.norm_delay}")
+                
+                excel_row = [f'ЛЗ№', 'Задержка, пс', 'Относительная амплитуда', 'Статус']
+                for i, value in enumerate(excel_row):
+                    worksheet.cell(row=36, column=i+1).value = value
+
+
 
                 for delay in self.delay_lines[1:]:
                     time.sleep(0.5)
@@ -288,6 +294,10 @@ class CheckMA:
                     
                     delay_results.append((delay, delay_delta, amp_delta, delay_ok))
                     logger.info(f"ЛЗ {delay}: Δt={delay_delta:.1f}пс, Δamp={amp_delta:.2f}дБ, {'OK' if delay_ok else 'FAIL'}")
+
+                    excel_row = [f'ЛЗ{delay}', delay_delta, amp_delta, delay_ok]
+                    for i, value in enumerate(excel_row):
+                        worksheet.cell(row=36+self.delay_lines.index(delay), column=i+1).value = value
 
                 # Передаем данные линий задержки в UI через callback
                 if self.delay_callback:
