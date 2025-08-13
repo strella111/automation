@@ -50,8 +50,8 @@ def get_or_create_excel(dir_name, file_name, mode, chanel, direction, spacing=Tr
             worksheet.cell(1, 2).value = datetime.datetime.now().strftime('%d.%m.%Y %H:%M')
             row = ["Номер ППМ",
                    "Статус",
-                   "Амплитуда",
-                   "Фаза",
+                   "Амплитуда_abs",
+                   "Амплитуда_delta",
                    "Дельта ФВ",
                    "Факт. значение 5.625",
                    "Факт. значение 11.25",

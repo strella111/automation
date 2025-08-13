@@ -1,7 +1,7 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
 from .phase_ma_widget import PhaseMaWidget
 from .check_ma_widget import CheckMaWidget
-from .check_stend_ma_widget import CheckStendMaWidget
+from .check_stend_ma_widget import StendCheckMaWidget
 from .manual_control_widget import ManualControlWindow
 import serial.tools.list_ports
 from loguru import logger
@@ -159,7 +159,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # --- Виджеты режимов ---
         self.phase_ma_widget = PhaseMaWidget()
         self.check_ma_widget = CheckMaWidget()
-        self.check_stend_ma_widget = CheckStendMaWidget()
+        self.check_stend_ma_widget = StendCheckMaWidget()
         self.central_widget.addWidget(self.phase_ma_widget)
         self.central_widget.addWidget(self.check_ma_widget)
         self.central_widget.addWidget(self.check_stend_ma_widget)
@@ -168,19 +168,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.phase_action = self.menu_mode.addAction('Фазировка МА в БЭК')
         self.phase_action.setCheckable(True)
         self.phase_action.triggered.connect(self.show_phase_ma)
-        
-        self.check_action = self.menu_mode.addAction('Проверка МА в БЭК')
-        self.check_action.setCheckable(True)
-        self.check_action.triggered.connect(self.show_check_ma)
 
-        self.check_action = self.menu_mode.addAction('Проверка МА на стенде')
-        self.check_action.setCheckable(True)
-        self.check_action.triggered.connect(self.show_check_stend_ma)
-        
+        self.check_bek_action = self.menu_mode.addAction('Проверка МА в БЭК')
+        self.check_bek_action.setCheckable(True)
+        self.check_bek_action.triggered.connect(self.show_check_ma)
+
+        self.check_stend_action = self.menu_mode.addAction('Проверка МА на стенде')
+        self.check_stend_action.setCheckable(True)
+        self.check_stend_action.triggered.connect(self.show_check_stend_ma)
+
         # Группа для взаимоисключающих действий
         mode_group = QtWidgets.QActionGroup(self)
         mode_group.addAction(self.phase_action)
-        mode_group.addAction(self.check_action)
+        mode_group.addAction(self.check_bek_action)
+        mode_group.addAction(self.check_stend_action)
         mode_group.setExclusive(True)
         
         self.menu_params.addAction('Настройки устройств', self.open_settings_dialog)
@@ -204,9 +205,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.restoreState(self.settings.value('window_state', b''))
         
         # Восстанавливаем выбранную вкладку
-        last_mode = self.settings.value('last_mode', 'check')  # По умолчанию - проверка
+        last_mode = self.settings.value('last_mode', 'check')  # По умолчанию - проверка в БЭК
         if last_mode == 'phase':
             self.show_phase_ma()
+        elif last_mode == 'check_stend':
+            self.show_check_stend_ma()
         else:
             self.show_check_ma()
 
@@ -218,6 +221,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # Сохраняем текущую вкладку
         if self.central_widget.currentWidget() == self.phase_ma_widget:
             self.settings.setValue('last_mode', 'phase')
+        elif self.central_widget.currentWidget() == self.check_stend_ma_widget:
+            self.settings.setValue('last_mode', 'check_stend')
         else:
             self.settings.setValue('last_mode', 'check')
             
@@ -230,11 +235,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def show_check_ma(self):
         self.central_widget.setCurrentWidget(self.check_ma_widget)
-        self.check_action.setChecked(True)
+        self.check_bek_action.setChecked(True)
 
     def show_check_stend_ma(self):
         self.central_widget.setCurrentWidget(self.check_stend_ma_widget)
-        self.check_action.setChecked(True)
+        self.check_stend_action.setChecked(True)
 
     def open_settings_dialog(self):
         dlg = SettingsDialog(self)

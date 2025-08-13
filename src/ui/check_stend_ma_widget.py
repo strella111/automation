@@ -7,11 +7,11 @@ import threading
 import numpy as np
 from core.devices.ma import MA
 from core.devices.pna import PNA
-from core.devices.psn import PSN
-from core.measurements.check.check_ma import CheckMA
-from core.common.enums import Channel, Direction, PpmState
+from core.measurements.check_stend.check_stend import CheckMAStend
+from core.common.enums import Channel, Direction
 
 from ui.pna_file_dialog import PnaFileDialog
+
 
 
 class QTextEditLogHandler(QtCore.QObject):
@@ -49,29 +49,36 @@ class PpmRect(QtWidgets.QGraphicsRectItem):
         self.setPen(QtGui.QPen(QtGui.QColor(border_color), 1.5))
         self.text = None
         self.status = None
+        self._hover_prev_color = QtGui.QColor(245, 248, 252)
 
     def set_status(self, status):
-        if status == "ok":
+        # Нормализация входного статуса: поддержка bool и строк (разные регистры)
+        if isinstance(status, bool):
+            norm = 'ok' if status else 'fail'
+        elif isinstance(status, str):
+            norm = status.strip().lower()
+        else:
+            norm = 'fail' if not status else 'ok'
+
+        if norm == "ok":
             color = "#28a745"  # зеленый
-        elif status == "fail":
+        elif norm == "fail":
             color = "#dc3545"  # красный
         else:
             color = "#f8f9fa"  # серый по умолчанию
 
         self.setBrush(QtGui.QBrush(QtGui.QColor(color)))
-        self.status = status
+        self.status = norm
 
     def hoverEnterEvent(self, event):
         """Подсветка при наведении мыши"""
         hover_color = "#e9ecef"
 
-        # Сохраняем текущий цвет если это статусный цвет
         if self.status == "ok":
             hover_color = "#28a745"  # зеленый
         elif self.status == "fail":
             hover_color = "#dc3545"  # красный
 
-        # Делаем цвет немного ярче для эффекта hover
         color = QtGui.QColor(hover_color)
         color = color.lighter(110)
         self.setBrush(QtGui.QBrush(color))
@@ -110,28 +117,23 @@ class BottomRect(QtWidgets.QGraphicsRectItem):
         else:
             color = "#f8f9fa"  # серый по умолчанию
 
-        self.setBrush(QtGui.QBrush(QtGui.QColor(color)))
+        qcolor = QtGui.QColor(color)
+        self.setBrush(QtGui.QBrush(qcolor))
         self.status = status
+        self._hover_prev_color = qcolor
 
     def hoverEnterEvent(self, event):
         """Подсветка при наведении мыши"""
-        hover_color = "#e9ecef"
-
-        # Сохраняем текущий цвет если это статусный цвет
-        if self.status == "ok":
-            hover_color = "#28a745"  # зеленый
-        elif self.status == "fail":
-            hover_color = "#dc3545"  # красный
-
-        # Делаем цвет немного ярче для эффекта hover
-        color = QtGui.QColor(hover_color)
-        color = color.lighter(110)
-        self.setBrush(QtGui.QBrush(color))
+        self._hover_prev_color = self.brush().color()
+        lighter = QtGui.QColor(self._hover_prev_color)
+        lighter = lighter.lighter(110)
+        self.setBrush(QtGui.QBrush(lighter))
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):
         """Восстанавливаем цвет при уходе мыши"""
-        self.set_status(self.status)
+        if self._hover_prev_color is not None:
+            self.setBrush(QtGui.QBrush(self._hover_prev_color))
         super().hoverLeaveEvent(event)
 
     def mousePressEvent(self, event):
@@ -148,14 +150,13 @@ class PpmFieldView(QtWidgets.QGraphicsView):
         self.texts = {}
         self.bottom_rect = None
         self.bottom_text = None
-        self.bottom_rect_height = 60  # Высота нижнего прямоугольника
+        self.bottom_rect_height = 70
         self.setRenderHint(QtGui.QPainter.Antialiasing)
         self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.parent_widget = parent
         self.create_rects()
 
-        # Включаем контекстное меню
         self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self.show_context_menu)
 
@@ -167,20 +168,19 @@ class PpmFieldView(QtWidgets.QGraphicsView):
         text_color = "#212529"
         font_size = 10
 
-        # Создаем основные ППМ прямоугольники
         for col in range(4):
             for row in range(8):
                 ppm_num = col * 8 + row + 1
                 rect = PpmRect(ppm_num, self.parent_widget, 0, 0, 1, 1)
                 self.scene().addItem(rect)
                 self.rects[ppm_num] = rect
+                rect.set_status("")
 
                 font = QtGui.QFont("Segoe UI", font_size, QtGui.QFont.Weight.DemiBold)
                 text = self.scene().addText(f"ППМ {ppm_num}", font)
                 text.setDefaultTextColor(QtGui.QColor(text_color))
                 self.texts[ppm_num] = text
 
-        # Создаем нижний прямоугольник с интерактивностью
         self.bottom_rect = BottomRect(self.parent_widget, 0, 0, 1, 1)
         self.scene().addItem(self.bottom_rect)
 
@@ -206,7 +206,6 @@ class PpmFieldView(QtWidgets.QGraphicsView):
         cell_w = w - margin
         cell_h = h - margin
 
-        # Размещаем основные ППМ прямоугольники
         for col in range(4):
             for row in range(8):
                 ppm_num = col * 8 + row + 1
@@ -224,9 +223,8 @@ class PpmFieldView(QtWidgets.QGraphicsView):
 
                 text.setPos(text_x, text_y)
 
-        # Размещаем нижний прямоугольник
         if self.bottom_rect:
-            bottom_y = 8 * h + 2  # 2 пикселя отступ сверху
+            bottom_y = 8 * h + 2
             bottom_w = 4 * w - margin
 
             self.bottom_rect.setRect(margin / 2, bottom_y, bottom_w, self.bottom_rect_height - margin)
@@ -256,7 +254,6 @@ class PpmFieldView(QtWidgets.QGraphicsView):
 
     def get_ppm_at_position(self, pos):
         """Определяет номер ППМ или нижний прямоугольник по позиции клика"""
-        # Учитываем высоту нижнего прямоугольника
         total_height = self.viewport().height()
         ppm_area_height = total_height - self.bottom_rect_height - 4  # 4 пикселя отступ
 
@@ -264,20 +261,16 @@ class PpmFieldView(QtWidgets.QGraphicsView):
         h = ppm_area_height / 8
         margin = 2
 
-        # Сначала проверяем нижний прямоугольник
         bottom_y = 8 * h + 2  # 2 пикселя отступ сверху
         if pos.y() >= bottom_y and pos.y() <= (bottom_y + self.bottom_rect_height - margin):
             bottom_w = 4 * w - margin
             if pos.x() >= margin / 2 and pos.x() <= (margin / 2 + bottom_w):
                 return "bottom_rect"  # Специальное значение для нижнего прямоугольника
 
-        # Затем проверяем область ППМ
         col = int(pos.x() / w)
         row = int(pos.y() / h)
 
-        # Проверяем границы и учитываем отступы
         if 0 <= col < 4 and 0 <= row < 8:
-            # Проверяем, что клик попал именно в ячейку, а не в отступ
             x_in_cell = pos.x() - col * w
             y_in_cell = pos.y() - row * h
 
@@ -291,21 +284,19 @@ class PpmFieldView(QtWidgets.QGraphicsView):
         element = self.get_ppm_at_position(pos)
         if element is not None and self.parent_widget is not None:
             if element == "bottom_rect":
-                # Выделяем нижний прямоугольник и показываем контекстное меню
                 if self.bottom_rect:
                     self.bottom_rect.setSelected(True)
                 self.parent_widget.show_bottom_rect_details(self.mapToGlobal(pos))
             else:
-                # Обрабатываем как ППМ
                 ppm_num = element
                 if ppm_num in self.rects:
                     self.rects[ppm_num].setSelected(True)
-                # Показываем информацию
                 self.parent_widget.show_ppm_details_graphics(ppm_num, self.mapToGlobal(pos))
 
 
-class CheckStendMaWidget(QtWidgets.QWidget):
-    update_table_signal = QtCore.pyqtSignal(int, bool, float, float, list)
+class StendCheckMaWidget(QtWidgets.QWidget):
+    update_table_signal = QtCore.pyqtSignal(int, bool, float, float, float, float, list)
+    update_delay_signal = QtCore.pyqtSignal(list)  # для обновления данных линий задержки
     error_signal = QtCore.pyqtSignal(str, str)  # title, message
     buttons_enabled_signal = QtCore.pyqtSignal(bool)  # enabled
     check_finished_signal = QtCore.pyqtSignal()  # когда проверка завершена
@@ -338,14 +329,6 @@ class CheckStendMaWidget(QtWidgets.QWidget):
         pna_layout.addWidget(self.pna_connect_btn)
         self.connect_layout.addWidget(pna_widget)
 
-        psn_widget = QtWidgets.QWidget()
-        psn_layout = QtWidgets.QHBoxLayout(psn_widget)
-        psn_layout.setContentsMargins(0, 0, 0, 0)
-        self.psn_connect_btn = QtWidgets.QPushButton('Генератор')
-        self.psn_connect_btn.setMinimumHeight(40)
-        self.set_button_connection_state(self.psn_connect_btn, False)
-        psn_layout.addWidget(self.psn_connect_btn)
-        self.connect_layout.addWidget(psn_widget)
 
         ma_widget = QtWidgets.QWidget()
         ma_layout = QtWidgets.QHBoxLayout(ma_widget)
@@ -370,6 +353,12 @@ class CheckStendMaWidget(QtWidgets.QWidget):
         self.direction_combo = QtWidgets.QComboBox()
         self.direction_combo.addItems(['Горизонтальная', 'Вертикальная'])
         self.ma_tab_layout.addRow('Поляризация:', self.direction_combo)
+
+        self.ma_command_delay = QtWidgets.QDoubleSpinBox()
+        self.ma_command_delay.setRange(0.01, 10)
+        self.ma_command_delay.setSingleStep(0.01)
+        self.ma_command_delay.setValue(0.1)
+        self.ma_tab_layout.addRow('Задержка между командами', self.ma_command_delay)
 
         self.param_tabs.addTab(self.ma_tab, 'MA')
 
@@ -520,7 +509,6 @@ class CheckStendMaWidget(QtWidgets.QWidget):
         ps_main_layout = QtWidgets.QVBoxLayout(ps_group)
         ps_main_layout.setContentsMargins(15, 15, 15, 15)
 
-        # Контейнер с прокруткой для фазовращателей
         scroll_area = QtWidgets.QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setMaximumHeight(200)
@@ -555,6 +543,7 @@ class CheckStendMaWidget(QtWidgets.QWidget):
             min_spinbox.setValue(-2.0)
             min_spinbox.setSuffix('°')
             min_spinbox.setMinimumWidth(70)
+            min_spinbox.setStyleSheet("QDoubleSpinBox { background-color: white; }")
             scroll_layout.addWidget(min_spinbox, row, 1)
 
             max_spinbox = QtWidgets.QDoubleSpinBox()
@@ -564,6 +553,7 @@ class CheckStendMaWidget(QtWidgets.QWidget):
             max_spinbox.setValue(2.0)
             max_spinbox.setSuffix('°')
             max_spinbox.setMinimumWidth(70)
+            max_spinbox.setStyleSheet("QDoubleSpinBox { background-color: white; }")
             scroll_layout.addWidget(max_spinbox, row, 2)
 
             self.phase_shifter_tolerances[angle] = {
@@ -575,6 +565,119 @@ class CheckStendMaWidget(QtWidgets.QWidget):
         ps_main_layout.addWidget(scroll_area)
 
         self.meas_tab_layout.addWidget(ps_group)
+
+        delay_group = QtWidgets.QGroupBox('Критерии проверки линий задержки')
+        delay_layout = QtWidgets.QGridLayout(delay_group)
+        delay_layout.setContentsMargins(15, 15, 15, 15)
+        delay_layout.setSpacing(10)
+
+        delay_layout.addWidget(QtWidgets.QLabel("Допуск амплитуды ЛЗ:"), 0, 0)
+
+        self.delay_amp_tolerance = QtWidgets.QDoubleSpinBox()
+        self.delay_amp_tolerance.setRange(0.1, 10.0)
+        self.delay_amp_tolerance.setSingleStep(0.1)
+        self.delay_amp_tolerance.setDecimals(1)
+        self.delay_amp_tolerance.setValue(1.0)
+        self.delay_amp_tolerance.setSuffix(' дБ')
+        self.delay_amp_tolerance.setMinimumWidth(80)
+        self.delay_amp_tolerance.setStyleSheet("QDoubleSpinBox { background-color: white; }")
+        delay_layout.addWidget(self.delay_amp_tolerance, 0, 1)
+
+        delay_layout.addWidget(QtWidgets.QLabel(""), 1, 0)  # Пустая ячейка
+        from_label = QtWidgets.QLabel("от:")
+        from_label.setAlignment(QtCore.Qt.AlignCenter)
+        delay_layout.addWidget(from_label, 1, 1)
+
+        to_label = QtWidgets.QLabel("до:")
+        to_label.setAlignment(QtCore.Qt.AlignCenter)
+        delay_layout.addWidget(to_label, 1, 2)
+
+        delay_layout.addWidget(QtWidgets.QLabel("ЛЗ1:"), 2, 0)
+        self.delay1_min = QtWidgets.QDoubleSpinBox()
+        self.delay1_min.setRange(1.0, 1000.0)
+        self.delay1_min.setSingleStep(1.0)
+        self.delay1_min.setDecimals(1)
+        self.delay1_min.setValue(90.0)
+        self.delay1_min.setSuffix(' пс')
+        self.delay1_min.setMinimumWidth(70)
+        self.delay1_min.setStyleSheet("QDoubleSpinBox { background-color: white; }")
+        delay_layout.addWidget(self.delay1_min, 2, 1)
+
+        self.delay1_max = QtWidgets.QDoubleSpinBox()
+        self.delay1_max.setRange(1.0, 1000.0)
+        self.delay1_max.setSingleStep(1.0)
+        self.delay1_max.setDecimals(1)
+        self.delay1_max.setValue(110.0)
+        self.delay1_max.setSuffix(' пс')
+        self.delay1_max.setMinimumWidth(70)
+        self.delay1_max.setStyleSheet("QDoubleSpinBox { background-color: white; }")
+        delay_layout.addWidget(self.delay1_max, 2, 2)
+
+        delay_layout.addWidget(QtWidgets.QLabel("ЛЗ2:"), 3, 0)
+        self.delay2_min = QtWidgets.QDoubleSpinBox()
+        self.delay2_min.setRange(1.0, 1000.0)
+        self.delay2_min.setSingleStep(1.0)
+        self.delay2_min.setDecimals(1)
+        self.delay2_min.setValue(180.0)
+        self.delay2_min.setSuffix(' пс')
+        self.delay2_min.setMinimumWidth(70)
+        self.delay2_min.setStyleSheet("QDoubleSpinBox { background-color: white; }")
+        delay_layout.addWidget(self.delay2_min, 3, 1)
+
+        self.delay2_max = QtWidgets.QDoubleSpinBox()
+        self.delay2_max.setRange(1.0, 1000.0)
+        self.delay2_max.setSingleStep(1.0)
+        self.delay2_max.setDecimals(1)
+        self.delay2_max.setValue(220.0)
+        self.delay2_max.setSuffix(' пс')
+        self.delay2_max.setMinimumWidth(70)
+        self.delay2_max.setStyleSheet("QDoubleSpinBox { background-color: white; }")
+        delay_layout.addWidget(self.delay2_max, 3, 2)
+
+        delay_layout.addWidget(QtWidgets.QLabel("ЛЗ4:"), 4, 0)
+        self.delay4_min = QtWidgets.QDoubleSpinBox()
+        self.delay4_min.setRange(1.0, 1000.0)
+        self.delay4_min.setSingleStep(1.0)
+        self.delay4_min.setDecimals(1)
+        self.delay4_min.setValue(360.0)
+        self.delay4_min.setSuffix(' пс')
+        self.delay4_min.setMinimumWidth(70)
+        self.delay4_min.setStyleSheet("QDoubleSpinBox { background-color: white; }")
+        delay_layout.addWidget(self.delay4_min, 4, 1)
+
+        self.delay4_max = QtWidgets.QDoubleSpinBox()
+        self.delay4_max.setRange(1.0, 1000.0)
+        self.delay4_max.setSingleStep(1.0)
+        self.delay4_max.setDecimals(1)
+        self.delay4_max.setValue(440.0)
+        self.delay4_max.setSuffix(' пс')
+        self.delay4_max.setMinimumWidth(70)
+        self.delay4_max.setStyleSheet("QDoubleSpinBox { background-color: white; }")
+        delay_layout.addWidget(self.delay4_max, 4, 2)
+
+
+        delay_layout.addWidget(QtWidgets.QLabel("ЛЗ8:"), 5, 0)
+        self.delay8_min = QtWidgets.QDoubleSpinBox()
+        self.delay8_min.setRange(1.0, 1000.0)
+        self.delay8_min.setSingleStep(1.0)
+        self.delay8_min.setDecimals(1)
+        self.delay8_min.setValue(650)
+        self.delay8_min.setSuffix(' пс')
+        self.delay8_min.setMinimumWidth(70)
+        self.delay8_min.setStyleSheet("QDoubleSpinBox { background-color: white; }")
+        delay_layout.addWidget(self.delay8_min, 5, 1)
+
+        self.delay8_max = QtWidgets.QDoubleSpinBox()
+        self.delay8_max.setRange(1.0, 1000.0)
+        self.delay8_max.setSingleStep(1.0)
+        self.delay8_max.setDecimals(1)
+        self.delay8_max.setValue(800)
+        self.delay8_max.setSuffix(' пс')
+        self.delay8_max.setMinimumWidth(70)
+        self.delay8_max.setStyleSheet("QDoubleSpinBox { background-color: white; }")
+        delay_layout.addWidget(self.delay8_max, 5, 2)
+
+        self.meas_tab_layout.addWidget(delay_group)
 
         self.meas_tab_layout.addStretch()
 
@@ -626,8 +729,39 @@ class CheckStendMaWidget(QtWidgets.QWidget):
 
         self.ppm_field_view = PpmFieldView(self)
 
+        self.delay_table = QtWidgets.QTableWidget()
+        self.delay_table.setColumnCount(4)
+        self.delay_table.setHorizontalHeaderLabels([
+            'Дискрет ЛЗ', 'Задержка (пс)', 'Амплитуда (дБ)', 'Статус'])
+        self.delay_table.setRowCount(4)  # 4 линии задержки (1,2,4,8)
+
+        delay_header = self.delay_table.horizontalHeader()
+        delay_header.setSectionResizeMode(0, QtWidgets.QHeaderView.Fixed)
+        delay_header.resizeSection(0, 80)
+
+        for i in range(1, 4):
+            delay_header.setSectionResizeMode(i, QtWidgets.QHeaderView.Stretch)
+
+        self.delay_table.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Fixed)
+        self.delay_table.verticalHeader().setDefaultSectionSize(25)
+        self.delay_table.verticalHeader().setVisible(False)
+
+        self.delay_table.setAlternatingRowColors(True)
+        self.delay_table.setShowGrid(True)
+
+        delay_discretes = [1, 2, 4, 8]
+        for row, discrete in enumerate(delay_discretes):
+            item = QtWidgets.QTableWidgetItem(f"ЛЗ{discrete}")
+            item.setTextAlignment(QtCore.Qt.AlignCenter)
+            self.delay_table.setItem(row, 0, item)
+            for col in range(1, 4):
+                item = QtWidgets.QTableWidgetItem("")
+                item.setTextAlignment(QtCore.Qt.AlignCenter)
+                self.delay_table.setItem(row, col, item)
+
         self.view_tabs = QtWidgets.QTabWidget()
-        self.view_tabs.addTab(self.results_table, "Таблица")
+        self.view_tabs.addTab(self.results_table, "Таблица ППМ")
+        self.view_tabs.addTab(self.delay_table, "Линии задержки")
         self.view_tabs.addTab(self.ppm_field_view, "2D поле")
         self.right_layout.addWidget(self.view_tabs, stretch=2)
 
@@ -641,7 +775,6 @@ class CheckStendMaWidget(QtWidgets.QWidget):
 
         self.ma = None
         self.pna = None
-        self.psn = None
         self._check_thread = None
         self._stop_flag = threading.Event()
         self._pause_flag = threading.Event()
@@ -653,8 +786,8 @@ class CheckStendMaWidget(QtWidgets.QWidget):
         self.stop_btn.clicked.connect(self.stop_check)
         self.pause_btn.clicked.connect(self.pause_check)
 
-        # Подключение сигналов к слотам
         self.update_table_signal.connect(self.update_table_row)
+        self.update_delay_signal.connect(self.update_delay_table)
         self.error_signal.connect(self.show_error_message)
         self.buttons_enabled_signal.connect(self.set_buttons_enabled)
         self.check_finished_signal.connect(self.on_check_finished)
@@ -677,15 +810,23 @@ class CheckStendMaWidget(QtWidgets.QWidget):
                 45: {'min': -2.0, 'max': 2.0},
                 90: {'min': -2.0, 'max': 2.0},
                 180: {'min': -2.0, 'max': 2.0}
+            },
+            'delay_amp_tolerance': 1.0,
+            'delay_tolerances': {
+                1: {'min': 90.0, 'max': 110.0},
+                2: {'min': 180.0, 'max': 220.0},
+                4: {'min': 360.0, 'max': 440.0}
             }
         }
 
         self.ppm_data = {}
         self.bottom_rect_data = {}  # Данные для линий задержки
+        self.check_completed = False  # Флаг завершения основной проверки
+        self.last_excel_path = None  # Путь к последнему Excel файлу
+        self.last_normalization_values = None  # Последние нормировочные значения (amp, phase, delay)
 
 
         self.set_button_connection_state(self.pna_connect_btn, False)
-        self.set_button_connection_state(self.psn_connect_btn, False)
         self.set_button_connection_state(self.ma_connect_btn, False)
 
     def show_ppm_details(self, button: QtWidgets.QPushButton, ppm_num: int):
@@ -696,8 +837,10 @@ class CheckStendMaWidget(QtWidgets.QWidget):
 
             details = f"ППМ {ppm_num}\n"
             details += f"Результат: {'OK' if data['result'] else 'FAIL'}\n"
-            details += f"Амплитуда: {data['amp']:.2f} дБ\n"
-            details += f"Фаза: {data['phase']:.1f}°\n"
+            details += f"Амплитуда: {data['amp_zero']:.2f} дБ\n"
+            details += f"Амплитуда_дельта: {data['amp_diff']:.2f} дБ\n"
+            details += f"Фаза: {data['phase_zero']:.1f}°\n"
+            details += f"Фаза_дельта: {data['phase_diff']:.1f}°\n"
 
             if data['fv_data'] and len(data['fv_data']) > 0:
                 details += "\nЗначения ФВ:\n"
@@ -715,14 +858,16 @@ class CheckStendMaWidget(QtWidgets.QWidget):
             action.setEnabled(False)
             menu.exec_(button.mapToGlobal(QtCore.QPoint(0, 0)))
 
-    @QtCore.pyqtSlot(int, bool, float, float, list)
-    def update_table_row(self, ppm_num: int, result: bool, amp: float, phase: float, fv_data: list):
+    @QtCore.pyqtSlot(int, bool, float, float, float, float, list)
+    def update_table_row(self, ppm_num: int, result: bool, amp_zero: float, amp_diff: float, phase_zero: float, phase_diff: float, fv_data: list):
         """Обновляет строку таблицы и 2D вид с результатами измерения"""
         try:
             self.ppm_data[ppm_num] = {
                 'result': result,
-                'amp': amp,
-                'phase': phase,
+                'amp_zero': amp_zero,
+                'amp_diff': amp_diff,
+                'phase_zero': phase_zero,
+                'phase_diff': phase_diff,
                 'fv_data': fv_data
             }
 
@@ -730,38 +875,38 @@ class CheckStendMaWidget(QtWidgets.QWidget):
 
             self.results_table.setItem(row, 0, self.create_centered_table_item(str(ppm_num)))
 
-            if np.isnan(amp):
+            if np.isnan(amp_diff):
                 self.results_table.setItem(row, 1, self.create_centered_table_item(""))
             else:
-                self.results_table.setItem(row, 1, self.create_centered_table_item(f"{amp:.2f}"))
+                self.results_table.setItem(row, 1, self.create_centered_table_item(f"{amp_diff:.2f}"))
 
-            if np.isnan(phase):
+            if np.isnan(phase_diff):
                 self.results_table.setItem(row, 2, self.create_centered_table_item(""))
             else:
-                self.results_table.setItem(row, 2, self.create_centered_table_item(f"{phase:.1f}"))
+                self.results_table.setItem(row, 2, self.create_centered_table_item(f"{phase_zero:.1f}"))
 
-            if np.isnan(amp):
+            if np.isnan(amp_diff):
                 amp_status_item = self.create_neutral_status_item("-")
             else:
                 amp_max = self.rx_amp_tolerance.value() if self.channel_combo.currentText() == 'Приемник' else self.tx_amp_tolerance.value()
-                amp_ok = -amp_max <= amp <= amp_max
+                amp_ok = -amp_max <= amp_diff <= amp_max
 
                 amp_status = "OK" if amp_ok else "FAIL"
                 amp_status_item = self.create_status_table_item(amp_status, amp_ok)
 
             self.results_table.setItem(row, 3, amp_status_item)
 
-            if np.isnan(phase):
+            if np.isnan(phase_diff):
                 phase_status_item = self.create_neutral_status_item("-")
             else:
                 if self.channel_combo.currentText() == 'Приемник':
                     phase_min = self.rx_phase_min.value()
                     phase_max = self.rx_phase_max.value()
-                    phase_all_ok = phase_min <= phase <= phase_max
+                    phase_all_ok = phase_min <= phase_diff <= phase_max
                 else:
                     phase_min = self.tx_phase_min.value()
                     phase_max = self.tx_phase_max.value()
-                    phase_all_ok = phase_min < phase < phase_max
+                    phase_all_ok = phase_min < phase_diff < phase_max
 
                 if phase_all_ok:
                     phase_final_ok = True
@@ -793,42 +938,54 @@ class CheckStendMaWidget(QtWidgets.QWidget):
             if fv_data and len(fv_data) > 0:
                 try:
                     if not np.isnan(fv_data[0]):
-                        self.results_table.setItem(row, 5, QtWidgets.QTableWidgetItem(f"{fv_data[0]:.1f}"))
+                        self.results_table.setItem(row, 5, self.create_centered_table_item(f"{fv_data[0]:.1f}"))
                     else:
-                        self.results_table.setItem(row, 5, QtWidgets.QTableWidgetItem(""))
+                        self.results_table.setItem(row, 5, self.create_centered_table_item(""))
 
                     if not result:
+                        fv_angles = [5.625, 11.25, 22.5, 45, 90, 180]
                         for i in range(1, len(fv_data)):
-                            if not np.isnan(fv_data[i]):
-                                self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(f"{fv_data[i]:.1f}"))
+                            if not np.isnan(fv_data[i]) and i <= 6:
+                                fv_diff = fv_data[i]
+                                fv_angle = fv_angles[i - 1] if i - 1 < len(fv_angles) else None
+
+                                if fv_angle and fv_angle in self.check_criteria['phase_shifter_tolerances']:
+                                    min_tolerance = self.check_criteria['phase_shifter_tolerances'][fv_angle]['min']
+                                    max_tolerance = self.check_criteria['phase_shifter_tolerances'][fv_angle]['max']
+                                    fv_ok = min_tolerance <= fv_diff <= max_tolerance
+                                else:
+                                    fv_ok = -2.0 <= fv_diff <= 2.0
+
+                                fv_item = self.create_status_table_item(f"{fv_diff:.1f}", fv_ok)
+                                self.results_table.setItem(row, i + 5, fv_item)
                             else:
-                                self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(""))
+                                self.results_table.setItem(row, i + 5, self.create_centered_table_item(""))
                     else:
                         for i in range(1, 6):
-                            self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(""))
+                            self.results_table.setItem(row, i + 5, self.create_centered_table_item(""))
 
                 except Exception as e:
                     logger.error(f'Ошибка при обновлении значений ФВ для ППМ {ppm_num}: {e}')
                     for i in range(6):
-                        self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(""))
+                        self.results_table.setItem(row, i + 5, self.create_centered_table_item(""))
             else:
                 for i in range(6):
-                    self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(""))
+                    self.results_table.setItem(row, i + 5, self.create_centered_table_item(""))
 
-            if np.isnan(amp) or np.isnan(phase):
+            if np.isnan(amp_diff) or np.isnan(phase_diff):
                 overall_status = "fail"
             else:
                 amp_max = self.rx_amp_tolerance.value() if self.channel_combo.currentText() == 'Приемник' else self.tx_amp_tolerance.value()
-                amp_ok = -amp_max <= amp <= amp_max
+                amp_ok = -amp_max <= amp_diff <= amp_max
 
                 if self.channel_combo.currentText() == 'Приемник':
                     phase_min = self.rx_phase_min.value()
                     phase_max = self.rx_phase_max.value()
-                    phase_all_ok = phase_min <= phase <= phase_max
+                    phase_all_ok = phase_min <= phase_diff <= phase_max
                 else:
                     phase_min = self.tx_phase_min.value()
                     phase_max = self.tx_phase_max.value()
-                    phase_all_ok = phase_min < phase < phase_max
+                    phase_all_ok = phase_min < phase_diff < phase_max
 
                 if phase_all_ok:
                     phase_final_ok = True
@@ -857,7 +1014,6 @@ class CheckStendMaWidget(QtWidgets.QWidget):
             self.ppm_field_view.update_ppm(ppm_num, overall_status)
 
             self.results_table.viewport().update()
-            # Убираем processEvents() - Qt сам обработает события GUI
         except Exception as e:
             self.show_error_message("Ошибка обновления таблицы",
                                     f"Ошибка при обновлении данных ППМ {ppm_num}: {str(e)}")
@@ -865,11 +1021,54 @@ class CheckStendMaWidget(QtWidgets.QWidget):
             for i in range(6):
                 self.results_table.setItem(row, i + 5, QtWidgets.QTableWidgetItem(""))
 
+    @QtCore.pyqtSlot(list)
+    def update_delay_table(self, delay_results: list):
+        """Обновляет таблицу линий задержки"""
+        try:
+            # delay_results содержит список кортежей (discrete, delay_delta, amp_delta, delay_ok)
+            delay_discretes = [1, 2, 4, 8]
+
+            # Итоговый статус: все ЛЗ должны быть OK
+            overall_delay_ok = all(item[3] for item in delay_results) if delay_results else True
+
+            for i, (discrete, delay_delta, amp_delta, delay_ok) in enumerate(delay_results):
+                if i >= len(delay_discretes):
+                    break
+
+                row = delay_discretes.index(discrete) if discrete in delay_discretes else i
+
+                self.delay_table.setItem(row, 1, self.create_centered_table_item(f"{delay_delta:.1f}"))
+
+                self.delay_table.setItem(row, 2, self.create_centered_table_item(f"{amp_delta:.2f}"))
+
+                status_text = "OK" if delay_ok else "FAIL"
+                status_item = self.create_status_table_item(status_text, delay_ok)
+                self.delay_table.setItem(row, 3, status_item)
+
+            self.ppm_field_view.update_bottom_rect_status("ok" if overall_delay_ok else "fail")
+            try:
+                self.ppm_field_view.viewport().update()
+            except Exception:
+                pass
+
+            delay_data = {}
+            for discrete, delay_delta, amp_delta, delay_ok in delay_results:
+                delay_data[
+                    f"ЛЗ{discrete}"] = f"Δt={delay_delta:.1f}пс, Δamp={amp_delta:.2f}дБ, {'OK' if delay_ok else 'FAIL'}"
+
+            self.update_bottom_rect_data(delay_data)
+
+            self.delay_table.viewport().update()
+
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении таблицы линий задержки: {e}")
+
     @QtCore.pyqtSlot()
     def on_check_finished(self):
         """Слот для завершения проверки - выполняется в главном потоке GUI"""
         self.set_buttons_enabled(True)
         self.pause_btn.setText('Пауза')
+        self.check_completed = True
         logger.info('Проверка завершена, интерфейс восстановлен')
 
     @QtCore.pyqtSlot(bool)
@@ -877,7 +1076,6 @@ class CheckStendMaWidget(QtWidgets.QWidget):
         """Управляет доступностью кнопок"""
         self.ma_connect_btn.setEnabled(enabled)
         self.pna_connect_btn.setEnabled(enabled)
-        self.psn_connect_btn.setEnabled(enabled)
         self.apply_btn.setEnabled(enabled)
         self.start_btn.setEnabled(enabled)
         self.stop_btn.setEnabled(not enabled)
@@ -886,10 +1084,8 @@ class CheckStendMaWidget(QtWidgets.QWidget):
     def set_button_connection_state(self, button: QtWidgets.QPushButton, connected: bool):
         """Устанавливает состояние подключения кнопки"""
         if connected:
-            # Зеленый фон для подключенного состояния
             button.setStyleSheet("QPushButton { background-color: #28a745; color: white; }")
         else:
-            # Красный фон для отключенного состояния
             button.setStyleSheet("QPushButton { background-color: #dc3545; color: white; }")
 
     def create_status_table_item(self, text: str, is_success: bool) -> QtWidgets.QTableWidgetItem:
@@ -949,18 +1145,25 @@ class CheckStendMaWidget(QtWidgets.QWidget):
             'phase_shifter_tolerances': {}
         }
 
-        # Сохраняем допуски для каждого фазовращателя
         for angle, controls in self.phase_shifter_tolerances.items():
             self.check_criteria['phase_shifter_tolerances'][angle] = {
                 'min': controls['min'].value(),
                 'max': controls['max'].value()
             }
 
+        self.check_criteria['delay_amp_tolerance'] = self.delay_amp_tolerance.value()
+        self.check_criteria['delay_tolerances'] = {
+            1: {'min': self.delay1_min.value(), 'max': self.delay1_max.value()},
+            2: {'min': self.delay2_min.value(), 'max': self.delay2_max.value()},
+            4: {'min': self.delay4_min.value(), 'max': self.delay4_max.value()},
+            8: {'min': self.delay8_min.value(), 'max': self.delay8_max.value()}
+        }
+
         logger.info('Параметры успешно применены')
 
     def start_check(self):
         """Запускает процесс проверки"""
-        if not (self.ma and self.pna and self.psn):
+        if not (self.ma and self.pna):
             self.show_error_message("Ошибка", "Сначала подключите все устройства!")
             return
 
@@ -976,11 +1179,16 @@ class CheckStendMaWidget(QtWidgets.QWidget):
 
         self.ppm_data.clear()
         self.bottom_rect_data.clear()
+        self.check_completed = False
+        self.last_normalization_values = None
         for ppm_num, button in self.ppm_field_view.rects.items():
             button.set_status('')
 
-        # Сбрасываем состояние нижнего прямоугольника
         self.ppm_field_view.update_bottom_rect_status('')
+
+        for row in range(4):
+            for col in range(1, 4):
+                self.delay_table.setItem(row, col, QtWidgets.QTableWidgetItem(""))
 
         self.set_buttons_enabled(False)
         logger.info("Запуск проверки МА...")
@@ -1007,8 +1215,8 @@ class CheckStendMaWidget(QtWidgets.QWidget):
             self._check_thread.join(timeout=2)
             if self._check_thread.is_alive():
                 logger.warning("Поток проверки не завершился вовремя.")
-        self._pause_flag.clear()  # Ensure pause is cleared for next run
-        self.pause_btn.setText('Пауза')  # Reset pause button text
+        self._pause_flag.clear()
+        self.pause_btn.setText('Пауза')
         self.set_buttons_enabled(True)
         logger.info('Проверка остановлена.')
 
@@ -1018,29 +1226,6 @@ class CheckStendMaWidget(QtWidgets.QWidget):
             channel = Channel.Receiver if self.channel_combo.currentText() == 'Приемник' else Channel.Transmitter
             direction = Direction.Horizontal if self.direction_combo.currentText() == 'Горизонтальная' else Direction.Vertical
             logger.info(f'Используем канал: {channel.value}, поляризация: {direction.value}')
-
-            if self.psn and self.device_settings:
-                try:
-                    self.psn.preset()
-                    self.psn.preset_axis(0)
-                    self.psn.preset_axis(1)
-
-                    x_offset = self.coord_system.x_offset if self.coord_system else 0
-                    y_offset = self.coord_system.y_offset if self.coord_system else 0
-
-                    self.psn.set_offset(x_offset, y_offset)
-                    speed_x = int(self.device_settings.get('psn_speed_x', 0))
-                    speed_y = int(self.device_settings.get('psn_speed_y', 0))
-                    acc_x = int(self.device_settings.get('psn_acc_x', 0))
-                    acc_y = int(self.device_settings.get('psn_acc_y', 0))
-                    self.psn.set_speed(0, speed_x)
-                    self.psn.set_speed(1, speed_y)
-                    self.psn.set_acc(0, acc_x)
-                    self.psn.set_acc(1, acc_y)
-                    logger.info(
-                        f'Параметры PSN успешно применены перед измерением (смещения: x={x_offset}, y={y_offset})')
-                except Exception as e:
-                    logger.error(f'Ошибка применения параметров PSN перед измерением: {e}')
 
             if self.pna and self.pna_settings:
                 try:
@@ -1064,12 +1249,14 @@ class CheckStendMaWidget(QtWidgets.QWidget):
                     logger.error(f"Ошибка при настройке PNA: {e}")
                     raise
 
-            class CheckMAWithCallback(CheckMA):
-                def __init__(self, ma, psn, pna, stop_event, pause_event, callback, criteria=None):
-                    super().__init__(ma, psn, pna, stop_event, pause_event)
+            class CheckMAWithCallback(CheckMAStend):
+                def __init__(self, ma, pna, stop_event, pause_event, callback, delay_callback=None, criteria=None,
+                             parent_widget=None):
+                    super().__init__(ma, pna, stop_event, pause_event)
                     self.callback = callback
+                    self.delay_callback = delay_callback
+                    self.parent_widget = parent_widget
 
-                    # Применяем новые критерии проверки если они переданы
                     if criteria:
                         self.rx_amp_max = criteria.get('rx_amp_max', self.rx_amp_max)
                         self.tx_amp_max = criteria.get('tx_amp_max', self.tx_amp_max)
@@ -1079,24 +1266,42 @@ class CheckStendMaWidget(QtWidgets.QWidget):
                         self.tx_phase_diff_max = criteria.get('tx_phase_max', self.tx_phase_diff_max)
                         self.phase_shifter_tolerances = criteria.get('phase_shifter_tolerances', None)
 
+                        if 'delay_amp_tolerance' in criteria:
+                            self.delay_amp_tolerance = criteria['delay_amp_tolerance']
+                        if 'delay_tolerances' in criteria:
+                            self.delay_tolerances.update(criteria['delay_tolerances'])
+
+                def start(self, channel: Channel, direction: Direction):
+                    """Переопределяем метод start для сохранения нормировочных значений"""
+                    results = super().start(channel, direction)
+
+                    if self.parent_widget and hasattr(self, 'norm_amp') and hasattr(self, 'norm_phase') and hasattr(
+                            self, 'norm_delay'):
+                        self.parent_widget.last_normalization_values = (self.norm_amp, self.norm_phase, self.norm_delay)
+                        logger.info(
+                            f"Сохранены нормировочные значения: amp={self.norm_amp}, phase={self.norm_phase}, delay={self.norm_delay}")
+
+                    return results
+
                 def check_ppm(self, ppm_num: int, channel: Channel, direction: Direction):
                     """Переопределяем метод для отправки результатов через callback"""
                     result, measurements = super().check_ppm(ppm_num, channel, direction)
-                    amp, phase, fv_data = measurements
+                    amp_zero, amp_diff, phase_zero, phase_diff, fv_data = measurements
 
                     if self.callback:
-                        self.callback.emit(ppm_num, result, amp, phase, fv_data)
+                        self.callback.emit(ppm_num, result, amp_zero, amp_diff, phase_zero, phase_diff, fv_data)
 
                     return result, measurements
 
             check = CheckMAWithCallback(
                 ma=self.ma,
-                psn=self.psn,
                 pna=self.pna,
                 stop_event=self._stop_flag,
                 pause_event=self._pause_flag,
                 callback=self.update_table_signal,
-                criteria=self.check_criteria
+                delay_callback=self.update_delay_signal,
+                criteria=self.check_criteria,
+                parent_widget=self
             )
 
             check.start(channel=channel, direction=direction)
@@ -1105,16 +1310,14 @@ class CheckStendMaWidget(QtWidgets.QWidget):
                 logger.info('Проверка завершена успешно.')
 
         except Exception as e:
-            # Используем сигнал для показа ошибки из потока
             self.error_signal.emit("Ошибка проверки", f"Произошла ошибка при выполнении проверки: {str(e)}")
             logger.error(f"Ошибка при выполнении проверки: {e}")
             try:
                 if self.pna:
-                    self.pna.power_off()
+                    self.pna.set_output(False)
             except Exception as pna_error:
                 logger.error(f"Ошибка при аварийном выключении PNA: {pna_error}")
         finally:
-            # Используем сигнал для восстановления интерфейса из потока
             self.check_finished_signal.emit()
 
     def connect_ma(self):
@@ -1123,7 +1326,7 @@ class CheckStendMaWidget(QtWidgets.QWidget):
             try:
                 self.ma.disconnect()
                 self.ma = None
-                self.ma_connect_btn.setText('МА')  # Восстанавливаем исходный текст
+                self.ma_connect_btn.setText('МА')
                 self.set_button_connection_state(self.ma_connect_btn, False)
                 logger.info('МА успешно отключен')
                 return
@@ -1133,8 +1336,8 @@ class CheckStendMaWidget(QtWidgets.QWidget):
 
         com_port = self.device_settings.get('ma_com_port', '')
         mode = self.device_settings.get('ma_mode', 0)
+        delay = float(self.ma_command_delay.value())
 
-        # В реальном режиме проверяем, что COM-порт задан
         if mode == 0 and (not com_port or com_port == 'Тестовый'):
             self.show_error_message("Ошибка настроек", "COM-порт не выбран. Откройте настройки и выберите COM-порт.")
             return
@@ -1143,7 +1346,7 @@ class CheckStendMaWidget(QtWidgets.QWidget):
             f'Попытка подключения к МА через {com_port if mode == 0 else "тестовый режим"}, режим: {"реальный" if mode == 0 else "тестовый"}')
 
         try:
-            self.ma = MA(com_port=com_port, mode=mode)
+            self.ma = MA(com_port=com_port, mode=mode, command_delay=delay)
             self.ma.connect()
             if self.ma.bu_addr:
                 self.ma_connect_btn.setText(f'МА №{self.ma.bu_addr}')
@@ -1181,7 +1384,6 @@ class CheckStendMaWidget(QtWidgets.QWidget):
             self.set_button_connection_state(self.pna_connect_btn, False)
             self.show_error_message("Ошибка подключения PNA", f"Не удалось подключиться к PNA: {str(e)}")
 
-
     def set_device_settings(self, settings: dict):
         """Сохраняет параметры устройств из настроек для последующего применения."""
         self.device_settings = settings or {}
@@ -1189,53 +1391,68 @@ class CheckStendMaWidget(QtWidgets.QWidget):
         logger.debug(f'Новые настройки: {self.device_settings}')
 
     def show_ppm_details_graphics(self, ppm_num, global_pos):
-        if ppm_num not in self.ppm_data:
-            menu = QtWidgets.QMenu()
-            action = menu.addAction(f"ППМ {ppm_num} - данные не готовы")
-            action.setEnabled(False)
-            menu.exec_(global_pos)
-            return
-
-        data = self.ppm_data[ppm_num]
         menu = QtWidgets.QMenu()
 
-        status_text = "OK" if data['result'] else "FAIL"
-        status_color = "🟢" if data['result'] else "🔴"
-        header_action = menu.addAction(f"{status_color} ППМ {ppm_num} - {status_text}")
-        header_action.setEnabled(False)
-        menu.addSeparator()
-
-        if not np.isnan(data['amp']):
-            amp_action = menu.addAction(f"Амплитуда: {data['amp']:.2f} дБ")
+        if ppm_num not in self.ppm_data:
+            header_action = menu.addAction(f"ППМ {ppm_num} - данные не готовы")
+            header_action.setEnabled(False)
         else:
-            amp_action = menu.addAction("Амплитуда: ---")
-        amp_action.setEnabled(False)
-
-        if not np.isnan(data['phase']):
-            phase_action = menu.addAction(f"Фаза: {data['phase']:.1f}°")
-        else:
-            phase_action = menu.addAction("Фаза: ---")
-        phase_action.setEnabled(False)
-
-        if data['fv_data'] and len(data['fv_data']) > 0:
+            data = self.ppm_data[ppm_num]
+            status_text = "OK" if data['result'] else "FAIL"
+            status_color = "🟢" if data['result'] else "🔴"
+            header_action = menu.addAction(f"{status_color} ППМ {ppm_num} - {status_text}")
+            header_action.setEnabled(False)
             menu.addSeparator()
-            fv_header = menu.addAction("Значения ФВ:")
-            fv_header.setEnabled(False)
 
-            fv_names = ["Дельта ФВ", "5,625°", "11,25°", "22,5°", "45°", "90°", "180°"]
-            for i, value in enumerate(data['fv_data']):
-                if i < len(fv_names):
-                    if not np.isnan(value):
-                        fv_action = menu.addAction(f"  {fv_names[i]}: {value:.1f}°")
+            if not np.isnan(data['amp_zero']):
+                amp_action = menu.addAction(f"Амплитуда: {data['amp_zero']:.2f} дБ")
+            else:
+                amp_action = menu.addAction("Амплитуда: ---")
+            amp_action.setEnabled(False)
+
+            if not np.isnan(data['amp_diff']):
+                amp_action = menu.addAction(f"Амплитуда_дельта: {data['amp_diff']:.2f} дБ")
+            else:
+                amp_action = menu.addAction("Амплитуда_дельта: ---")
+            amp_action.setEnabled(False)
+
+
+            if not np.isnan(data['phase_zero']):
+                phase_action = menu.addAction(f"Фаза: {data['phase_zero']:.1f}°")
+            else:
+                phase_action = menu.addAction("Фаза: ---")
+            phase_action.setEnabled(False)
+
+            if not np.isnan(data['phase_diff']):
+                phase_action = menu.addAction(f"Фаза_дельта: {data['phase_diff']:.1f}°")
+            else:
+                phase_action = menu.addAction("Фаза_делта: ---")
+            phase_action.setEnabled(False)
+
+            if data['fv_data'] and len(data['fv_data']) > 0:
+                menu.addSeparator()
+                fv_header = menu.addAction("Значения ФВ:")
+                fv_header.setEnabled(False)
+
+                fv_names = ["Дельта ФВ", "5,625°", "11,25°", "22,5°", "45°", "90°", "180°"]
+                for i, value in enumerate(data['fv_data']):
+                    if i < len(fv_names):
+                        if not np.isnan(value):
+                            fv_action = menu.addAction(f"  {fv_names[i]}: {value:.1f}°")
+                        else:
+                            fv_action = menu.addAction(f"  {fv_names[i]}: ---")
+                        fv_action.setEnabled(False)
                     else:
-                        fv_action = menu.addAction(f"  {fv_names[i]}: ---")
-                    fv_action.setEnabled(False)
-                else:
-                    if not np.isnan(value):
-                        fv_action = menu.addAction(f"  ФВ {i + 1}: {value:.1f}°")
-                    else:
-                        fv_action = menu.addAction(f"  ФВ {i + 1}: ---")
-                    fv_action.setEnabled(False)
+                        if not np.isnan(value):
+                            fv_action = menu.addAction(f"  ФВ {i + 1}: {value:.1f}°")
+                        else:
+                            fv_action = menu.addAction(f"  ФВ {i + 1}: ---")
+                        fv_action.setEnabled(False)
+
+        if self.check_completed and self._can_remeasure():
+            menu.addSeparator()
+            remeasure_action = menu.addAction("🔄 Перемерить ППМ")
+            remeasure_action.triggered.connect(lambda: self.remeasure_ppm(ppm_num))
 
         menu.exec_(global_pos)
 
@@ -1248,12 +1465,10 @@ class CheckStendMaWidget(QtWidgets.QWidget):
         menu.addSeparator()
 
         if self.bottom_rect_data:
-            # Если есть данные - отобразим их
             for key, value in self.bottom_rect_data.items():
                 data_action = menu.addAction(f"{key}: {value}")
                 data_action.setEnabled(False)
         else:
-            # Если данных нет - показываем заглушку
             info_action = menu.addAction("Данные будут добавлены позже...")
             info_action.setEnabled(False)
 
@@ -1264,7 +1479,6 @@ class CheckStendMaWidget(QtWidgets.QWidget):
         self.bottom_rect_data = data
 
         self.ppm_field_view.update_bottom_rect_status("ok" if data else "")
-
 
 
     @QtCore.pyqtSlot(str, str)
@@ -1337,4 +1551,143 @@ class CheckStendMaWidget(QtWidgets.QWidget):
 
         except Exception as e:
             logger.error(f'Ошибка при применении настроек к интерфейсу: {e}')
+
+    def _can_remeasure(self) -> bool:
+        """Проверяет, возможен ли перемер (все устройства подключены и не идет измерение)"""
+        return (self.ma and self.ma.connection and
+                self.pna and self.pna.connection and
+                not self._check_thread or not self._check_thread.is_alive())
+
+    def remeasure_ppm(self, ppm_num: int):
+        """Запускает перемер конкретного ППМ"""
+        if not self._can_remeasure():
+            self.show_error_message("Ошибка", "Невозможно выполнить перемер. Проверьте подключение устройств.")
+            return
+
+        if not self.check_completed:
+            self.show_error_message("Ошибка", "Перемер доступен только после завершения основной проверки.")
+            return
+
+        if not self.last_normalization_values:
+            self.show_error_message("Ошибка",
+                                    "Нет сохраненных нормировочных значений. Выполните полную проверку сначала.")
+            return
+
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            'Подтверждение перемера',
+            f'Перемерить ППМ {ppm_num}?',
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.Yes
+        )
+
+        if reply == QtWidgets.QMessageBox.Yes:
+            logger.info(f"Запуск перемера ППМ {ppm_num}")
+            self.set_buttons_enabled(False)
+            self._check_thread = threading.Thread(target=self._run_single_ppm_check, args=(ppm_num,), daemon=True)
+            self._check_thread.start()
+
+    def _run_single_ppm_check(self, ppm_num: int):
+        """Выполняет проверку одного ППМ в отдельном потоке"""
+        try:
+            channel = Channel.Receiver if self.channel_combo.currentText() == 'Приемник' else Channel.Transmitter
+            direction = Direction.Horizontal if self.direction_combo.currentText() == 'Горизонтальная' else Direction.Vertical
+
+            logger.info(f'Перемер ППМ {ppm_num}, канал: {channel.value}, поляризация: {direction.value}')
+
+            if self.pna and self.pna_settings:
+                try:
+                    self.pna.set_freq_start(self.pna_settings.get('freq_start'))
+                    self.pna.set_freq_stop(self.pna_settings.get('freq_stop'))
+                    self.pna.set_points(self.pna_settings.get('freq_points'))
+                    self.pna.set_power(self.pna_settings.get('power'))
+                    self.pna.set_output(True)
+                except Exception as e:
+                    logger.error(f"Ошибка при настройке PNA для перемера: {e}")
+
+            class SinglePpmCheckMA(CheckMAStend):
+                def __init__(self, ma, pna, callback, criteria=None, normalization_values=None):
+                    super().__init__(ma, pna, threading.Event(), threading.Event())
+                    self.callback = callback
+
+                    if normalization_values:
+                        self.norm_amp, self.norm_phase, self.norm_delay = normalization_values
+                        logger.info(
+                            f"Используем нормировочные значения: amp={self.norm_amp}, phase={self.norm_phase}, delay={self.norm_delay}")
+
+                    if criteria:
+                        self.rx_amp_max = criteria.get('rx_amp_max', self.rx_amp_max)
+                        self.tx_amp_max = criteria.get('tx_amp_max', self.tx_amp_max)
+                        self.rx_phase_diff_min = criteria.get('rx_phase_min', self.rx_phase_diff_min)
+                        self.rx_phase_diff_max = criteria.get('rx_phase_max', self.rx_phase_diff_max)
+                        self.tx_phase_diff_min = criteria.get('tx_phase_min', self.tx_phase_diff_min)
+                        self.tx_phase_diff_max = criteria.get('tx_phase_max', self.tx_phase_diff_max)
+                        self.phase_shifter_tolerances = criteria.get('phase_shifter_tolerances', None)
+
+                def single_ppm_check(self, ppm_num: int, channel: Channel, direction: Direction):
+                    """Проверяет один ППМ и обновляет Excel"""
+                    self.ma.turn_on_vips()
+                    result, measurements = self.check_ppm(ppm_num, channel, direction)
+                    amp_zero, amp_diff, phase_zero, phase_diff, fv_data = measurements
+                    self.ma.turn_off_vips()
+
+                    if self.callback:
+                        self.callback.emit(ppm_num, result, amp_zero, amp_diff, phase_zero, phase_diff, fv_data)
+
+                    self._update_excel_for_ppm(ppm_num, result, measurements, channel, direction)
+
+                    return result, measurements
+
+                def _update_excel_for_ppm(self, ppm_num: int, result: bool, measurements: tuple, channel: Channel,
+                                          direction: Direction):
+                    """Обновляет Excel файл для конкретного ППМ"""
+                    try:
+                        from utils.excel_module import get_or_create_excel
+                        worksheet, workbook, file_path = get_or_create_excel(
+                            dir_name='check_data_collector',
+                            file_name=f'{self.ma.bu_addr}.xlsx',
+                            mode='check',
+                            chanel=channel,
+                            direction=direction,
+                            spacing=False
+                        )
+
+                        amp_zero, amp_diff, phase_zero, phase_diff, fv_data = measurements
+                        excel_row = [ppm_num, result, amp_zero, amp_diff, phase_zero] + fv_data
+                        for k, value in enumerate(excel_row):
+                            worksheet.cell(row=ppm_num + 2, column=k + 1).value = value
+
+                        workbook.save(file_path)
+                        logger.info(f"Excel файл обновлен для ППМ {ppm_num}")
+
+                    except Exception as e:
+                        logger.error(f"Ошибка обновления Excel для ППМ {ppm_num}: {e}")
+
+            check = SinglePpmCheckMA(
+                ma=self.ma,
+                pna=self.pna,
+                callback=self.update_table_signal,
+                criteria=self.check_criteria,
+                normalization_values=self.last_normalization_values
+            )
+
+            check.single_ppm_check(ppm_num, channel, direction)
+
+            try:
+                self.pna.set_output(False)
+            except Exception as e:
+                logger.error(f"Ошибка при выключении PNA после перемера: {e}")
+
+            logger.info(f'Перемер ППМ {ppm_num} завершен')
+
+        except Exception as e:
+            self.error_signal.emit("Ошибка перемера", f"Произошла ошибка при перемере ППМ {ppm_num}: {str(e)}")
+            logger.error(f"Ошибка при перемере ППМ {ppm_num}: {e}")
+            try:
+                if self.pna:
+                    self.pna.set_output(False)
+            except Exception as pna_error:
+                logger.error(f"Ошибка при аварийном выключении PNA: {pna_error}")
+        finally:
+            self.buttons_enabled_signal.emit(True)
 

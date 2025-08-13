@@ -143,7 +143,7 @@ class CheckMA:
         phase_diff = self._normalize_phase(phase_all - phase_zero)
         return phase_diff
         
-    def _check_ppm(self, ppm_num: int, channel: Channel, direction: Direction) -> tuple[bool, tuple[float, float, list]]:
+    def _check_ppm(self, ppm_num: int, channel: Channel, direction: Direction) -> tuple[bool, tuple[float, float, float, float, list]]:
         """Проверяет один ППМ"""
         try:
             self.ma.switch_ppm(ppm_num, channel, direction, PpmState.ON)
@@ -185,15 +185,15 @@ class CheckMA:
             result = amp_ok and phase_final_ok
 
             self.ma.switch_ppm(ppm_num, channel, direction, PpmState.OFF)
-            return result, (amp_diff, phase_diff, phase_vals)
+            return result, (amp_zero, amp_diff, phase_zero, phase_diff, phase_vals)
             
         except Exception as e:
             logger.error(f"Ошибка при проверке ППМ {ppm_num}: {e}")
-            return False, (np.nan, np.nan, [np.nan])
+            return False, (np.nan, np.nan, np.nan, np.nan, [np.nan])
         finally:
             self.ma.switch_ppm(ppm_num, channel, direction, PpmState.OFF)
 
-    def check_ppm(self, ppm_num: int, channel: Channel, direction: Direction) -> Tuple[bool, Tuple[float, float, List[float]]]:
+    def check_ppm(self, ppm_num: int, channel: Channel, direction: Direction) -> Tuple[bool, Tuple[float, float, float, float, List[float]]]:
         """
         Проверка работоспособности ППМ
         
@@ -226,7 +226,7 @@ class CheckMA:
             
         except Exception as e:
             logger.error(f"Ошибка при проверке ППМ {ppm_num}: {e}")
-            return False, (np.nan, np.nan, [np.nan for _ in range(6)])
+            return False, (np.nan, np.nan, np.nan, np.nan, [np.nan for _ in range(6)])
 
     def start(self, channel: Channel, direction: Direction) -> List[Tuple[int, Tuple[bool, Tuple[float, float]]]]:
         """
@@ -326,7 +326,8 @@ class CheckMA:
                     logger.info(f"Проверка ППМ {ppm_num}")
                     
                     result, measurements = self.check_ppm(ppm_num, channel, direction)
-                    excel_row = [ppm_num, result, measurements[0], measurements[1]] + measurements[2]
+
+                    excel_row = [ppm_num, result, measurements[0], measurements[1], measurements[2]] + measurements[4][1:]
                     for k, value in enumerate(excel_row):
                         worksheet.cell(row=ppm_num+2, column=k + 1).value = value
                     results.append((ppm_num, (result, measurements)))

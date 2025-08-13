@@ -10,15 +10,14 @@ from utils.logger import format_device_log
 class MA:
     """Класс для работы с модулем антенным"""
     
-    def __init__(self, com_port: str, mode: int = 0):
+    def __init__(self, com_port: str, mode: int = 0, command_delay=0.1):
         """
         Инициализация модуля антенного
         
         Args:
-            bu_addr: Адрес блока управления
-            ma_num: Номер модуля антенного
             com_port: COM-порт для подключения
             mode: Режим работы (0 - реальный, 1 - тестовый)
+            command_delay: Задержка между отправкой команд на МА
         """
         self.bu_addr = 0
         self.com_port = com_port
@@ -28,7 +27,7 @@ class MA:
         self.CRC_INIT = 0x1d0f
         self.ppm_data = bytearray(25)
         self.retry_counter = 0
-        self.command_delay = 0.05
+        self.command_delay = command_delay
 
     def connect(self) -> None:
         """Подключение к модулю антенному"""
