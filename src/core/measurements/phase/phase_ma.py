@@ -1,11 +1,10 @@
-from typing import Tuple
 from loguru import logger
 from core.devices.ma import MA
 from core.devices.pna  import PNA
 from core.devices.psn  import PSN
 from core.common.enums import Channel, Direction, PhaseDir, PpmState
 from core.common.exceptions import WrongInstrumentError, PlanarScannerError
-from utils.calibration_csv import CalibrationCSV
+from utils.excel_module import CalibrationCSV
 from PyQt5.QtCore import QThread
 
 import time

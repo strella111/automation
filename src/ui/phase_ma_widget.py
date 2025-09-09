@@ -3,7 +3,7 @@ from PyQt5.QtGui import QTextCursor
 from PyQt5.QtWidgets import QMessageBox, QStyle
 from PyQt5.QtCore import QSize
 from loguru import logger
-import sys
+import os
 import threading
 import numpy as np
 import pyqtgraph as pg
@@ -168,7 +168,7 @@ class PhaseMaWidget(QtWidgets.QWidget):
         self.direction_combo.addItems(['Горизонтальная', 'Вертикальная'])
         self.ma_tab_layout.addRow('Поляризация:', self.direction_combo)
         
-        self.param_tabs.addTab(self.ma_tab, 'MA')
+        self.param_tabs.addTab(self.ma_tab, 'Модуль антенный')
         
         self.pna_tab = QtWidgets.QWidget()
         self.pna_tab_layout = QtWidgets.QFormLayout(self.pna_tab)
@@ -226,7 +226,7 @@ class PhaseMaWidget(QtWidgets.QWidget):
         settings_layout.addWidget(self.load_file_btn, 0)
         
         self.pna_tab_layout.addRow('Файл настроек:', settings_layout)
-        self.param_tabs.addTab(self.pna_tab, 'PNA')
+        self.param_tabs.addTab(self.pna_tab, 'Анализатор')
         
         self.meas_tab = QtWidgets.QWidget()
         self.meas_tab_layout = QtWidgets.QVBoxLayout(self.meas_tab)
@@ -265,7 +265,7 @@ class PhaseMaWidget(QtWidgets.QWidget):
 
         self.meas_tab_layout.addStretch()
         
-        self.param_tabs.addTab(self.meas_tab, 'Meas')
+        self.param_tabs.addTab(self.meas_tab, 'Настройки измерения')
         self.left_layout.addWidget(self.param_tabs, 1)
 
         self.apply_btn = QtWidgets.QPushButton('Применить параметры')
@@ -371,6 +371,10 @@ class PhaseMaWidget(QtWidgets.QWidget):
         self.set_button_connection_state(self.psn_connect_btn, False)
         self.set_button_connection_state(self.ma_connect_btn, False)
 
+        # Персистентные настройки UI
+        self._ui_settings = QtCore.QSettings('PULSAR', 'PhaseMA_UI')
+        self.load_ui_settings()
+
 
     def update_pna_settings_files(self):
         """Обновляет список файлов настроек PNA в ComboBox"""
@@ -409,6 +413,11 @@ class PhaseMaWidget(QtWidgets.QWidget):
         coord_system_name = self.coord_system_combo.currentText()
         self.coord_system = self.coord_system_manager.get_system_by_name(coord_system_name)
         logger.info('Параметры успешно применены')
+        # Сохраняем значения UI
+        try:
+            self.save_ui_settings()
+        except Exception:
+            pass
 
     def start_phase_meas(self):
         if not (self.ma and self.pna and self.psn):
@@ -480,7 +489,11 @@ class PhaseMaWidget(QtWidgets.QWidget):
                 try:
                     self.pna.preset()
                     if self.pna_settings.get('settings_file'):
-                        self.pna.load_settings_file(self.pna_settings.get('settings_file'))
+                        settings_file = self.pna_settings.get('settings_file')
+                        base_path = self.device_settings.get('pna_files_path', '')
+                        if settings_file and base_path and not os.path.isabs(settings_file):
+                            settings_file = os.path.join(base_path, settings_file)
+                        self.pna.load_settings_file(settings_file)
                     else:
                         self.pna.create_measure(self.pna_settings.get('s_param'))
                         self.pna.turn_window(state=True)
@@ -838,6 +851,66 @@ class PhaseMaWidget(QtWidgets.QWidget):
 
         except Exception as e:
             logger.error(f'Ошибка при применении настроек к интерфейсу: {e}') 
+    def save_ui_settings(self):
+        """Сохраняет состояние контролов UI в QSettings."""
+        s = self._ui_settings
+        # MA
+        s.setValue('channel', self.channel_combo.currentText())
+        s.setValue('direction', self.direction_combo.currentText())
+        # PNA
+        s.setValue('s_param', self.s_param_combo.currentText())
+        s.setValue('pna_power', float(self.pna_power.value()))
+        s.setValue('pna_start_freq', int(self.pna_start_freq.value()))
+        s.setValue('pna_stop_freq', int(self.pna_stop_freq.value()))
+        s.setValue('pna_points', self.pna_number_of_points.currentText())
+        s.setValue('pna_settings_file', self.settings_file_edit.text())
+        # Coord system
+        s.setValue('coord_system', self.coord_system_combo.currentText())
+        s.sync()
+
+    def load_ui_settings(self):
+        """Восстанавливает состояние контролов UI из QSettings."""
+        s = self._ui_settings
+        # MA
+        if (v := s.value('channel')):
+            idx = self.channel_combo.findText(v)
+            if idx >= 0:
+                self.channel_combo.setCurrentIndex(idx)
+        if (v := s.value('direction')):
+            idx = self.direction_combo.findText(v)
+            if idx >= 0:
+                self.direction_combo.setCurrentIndex(idx)
+        # PNA
+        if (v := s.value('s_param')):
+            idx = self.s_param_combo.findText(v)
+            if idx >= 0:
+                self.s_param_combo.setCurrentIndex(idx)
+        if (v := s.value('pna_power')) is not None:
+            try:
+                self.pna_power.setValue(float(v))
+            except Exception:
+                pass
+        if (v := s.value('pna_start_freq')) is not None:
+            try:
+                self.pna_start_freq.setValue(int(float(v)))
+            except Exception:
+                pass
+        if (v := s.value('pna_stop_freq')) is not None:
+            try:
+                self.pna_stop_freq.setValue(int(float(v)))
+            except Exception:
+                pass
+        if (v := s.value('pna_points')):
+            idx = self.pna_number_of_points.findText(v)
+            if idx >= 0:
+                self.pna_number_of_points.setCurrentIndex(idx)
+        if (v := s.value('pna_settings_file')):
+            self.settings_file_edit.setText(v)
+        # Coord system
+        if (v := s.value('coord_system')):
+            idx = self.coord_system_combo.findText(v)
+            if idx >= 0:
+                self.coord_system_combo.setCurrentIndex(idx)
     @QtCore.pyqtSlot()
     def update_heatmaps(self):
         x_positions = np.asarray(self.x_cords, dtype=float)

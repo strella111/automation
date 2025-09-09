@@ -417,6 +417,37 @@ class MA:
         self._send_command(command)
 
 
+    def set_calb_mode(self, chanel: Channel,
+                      direction: Direction,
+                      delay_number: int,
+                      fv_number: int,
+                      att_ppm_number,
+                      att_mdo_number: int,
+                      number_of_strobes: int):
+
+        logger.info('Включение режима калибровки')
+        command_code = b'\xc9'
+        data = bytearray(6)
+        chanel_byte = 0x00
+        if chanel == Channel.Transmitter and direction == Direction.Horizontal:
+            chanel_byte = 0x01
+        elif chanel == Channel.Transmitter and direction == Direction.Vertical:
+            chanel_byte = 0x02
+        elif chanel == Channel.Receiver and direction == Direction.Horizontal:
+            chanel_byte = 0x04
+        elif chanel == Channel.Receiver and direction == Direction.Vertical:
+            chanel_byte = 0x08
+        data[0] = chanel_byte
+        data[1] = delay_number
+        data[2] = fv_number
+        data[3] = att_ppm_number
+        data[4] = att_mdo_number
+        data[5] = number_of_strobes
+
+        command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
+        self._send_command(command)
+
+
 if __name__ == '__main__':
     ma = MA('COM8', mode=0)
     ma.connect()

@@ -21,7 +21,7 @@ class SettingsDialog(QtWidgets.QDialog):
         self.pna_mode_combo = QtWidgets.QComboBox()
         self.pna_mode_combo.addItems(['Реальный', 'Тестовый'])
         self.pna_files_path = QtWidgets.QLineEdit()
-        self.pna_files_path.setPlaceholderText('C:\\Users\\Public\\Documents\\Network Analyzer\\')
+        self.pna_files_path.setPlaceholderText('C\\Users\\Public\\Documents\\Network Analyzer\\')
         pna_layout.addRow('IP:', self.pna_ip_edit)
         pna_layout.addRow('Порт:', self.pna_port_edit)
         pna_layout.addRow('Режим:', self.pna_mode_combo)
@@ -52,6 +52,18 @@ class SettingsDialog(QtWidgets.QDialog):
         psn_layout.addRow('Ускорение X:', self.psn_acc_x)
         psn_layout.addRow('Ускорение Y:', self.psn_acc_y)
         layout.addWidget(psn_group)
+
+        # --- Настройки TriggerBox ---
+        trigger_group = QtWidgets.QGroupBox('Настройки TriggerBox')
+        trigger_layout = QtWidgets.QFormLayout(trigger_group)
+        self.trigger_ip_edit = QtWidgets.QLineEdit()
+        self.trigger_port_edit = QtWidgets.QLineEdit()
+        self.trigger_mode_combo = QtWidgets.QComboBox()
+        self.trigger_mode_combo.addItems(['Реальный', 'Тестовый'])
+        trigger_layout.addRow('IP:', self.trigger_ip_edit)
+        trigger_layout.addRow('Порт:', self.trigger_port_edit)
+        trigger_layout.addRow('Режим:', self.trigger_mode_combo)
+        layout.addWidget(trigger_group)
 
         # --- Настройки MA ---
         ma_group = QtWidgets.QGroupBox('Настройки MA')
@@ -112,6 +124,9 @@ class SettingsDialog(QtWidgets.QDialog):
             'psn_speed_y': self.psn_speed_y.value(),
             'psn_acc_x': self.psn_acc_x.value(),
             'psn_acc_y': self.psn_acc_y.value(),
+            'trigger_ip': self.trigger_ip_edit.text(),
+            'trigger_port': self.trigger_port_edit.text(),
+            'trigger_mode': self.trigger_mode_combo.currentIndex(),
             'ma_com_port': self.ma_com_combo.currentText(),
             'ma_mode': self.ma_mode_combo.currentIndex(),
             'pna_mode': self.pna_mode_combo.currentIndex(),
@@ -134,6 +149,9 @@ class SettingsDialog(QtWidgets.QDialog):
         self.psn_speed_y.setValue(int(settings.get('psn_speed_y', 10)))
         self.psn_acc_x.setValue(int(settings.get('psn_acc_x', 5)))
         self.psn_acc_y.setValue(int(settings.get('psn_acc_y', 5)))
+        self.trigger_ip_edit.setText(settings.get('trigger_ip', ''))
+        self.trigger_port_edit.setText(settings.get('trigger_port', ''))
+        self.trigger_mode_combo.setCurrentIndex(int(settings.get('trigger_mode', 0)))
         self.ma_com_combo.setCurrentText(settings.get('ma_com_port', ''))
         self.ma_mode_combo.setCurrentIndex(int(settings.get('ma_mode', 0)))
         self.pna_files_path.setText(settings.get('pna_files_path', 'C:\\Users\\Public\\Documents\\Network Analyzer\\'))
@@ -258,6 +276,10 @@ class MainWindow(QtWidgets.QMainWindow):
         dlg.psn_acc_x.setValue(int(self.settings.value('psn_acc_x', 5)))
         dlg.psn_acc_y.setValue(int(self.settings.value('psn_acc_y', 5)))
         
+        dlg.trigger_ip_edit.setText(self.settings.value('trigger_ip', ''))
+        dlg.trigger_port_edit.setText(self.settings.value('trigger_port', ''))
+        dlg.trigger_mode_combo.setCurrentIndex(int(self.settings.value('trigger_mode', 0)))
+        
         dlg.ma_com_combo.setCurrentText(self.settings.value('ma_com_port', ''))
         dlg.ma_mode_combo.setCurrentIndex(int(self.settings.value('ma_mode', 0)))
         
@@ -290,6 +312,9 @@ class MainWindow(QtWidgets.QMainWindow):
         settings['psn_speed_y'] = int(self.settings.value('psn_speed_y', 10))
         settings['psn_acc_x'] = int(self.settings.value('psn_acc_x', 5))
         settings['psn_acc_y'] = int(self.settings.value('psn_acc_y', 5))
+        settings['trigger_ip'] = self.settings.value('trigger_ip', '')
+        settings['trigger_port'] = self.settings.value('trigger_port', '')
+        settings['trigger_mode'] = int(self.settings.value('trigger_mode', 0))
         settings['ma_com_port'] = self.settings.value('ma_com_port', '')
         settings['ma_mode'] = int(self.settings.value('ma_mode', 0))
         return settings
@@ -323,6 +348,10 @@ class MainWindow(QtWidgets.QMainWindow):
         settings['psn_speed_y'] = int(self.settings.value('psn_speed_y', 10))
         settings['psn_acc_x'] = int(self.settings.value('psn_acc_x', 5))
         settings['psn_acc_y'] = int(self.settings.value('psn_acc_y', 5))
+        
+        settings['trigger_ip'] = self.settings.value('trigger_ip', '')
+        settings['trigger_port'] = self.settings.value('trigger_port', '')
+        settings['trigger_mode'] = int(self.settings.value('trigger_mode', 0))
         
         settings['ma_com_port'] = self.settings.value('ma_com_port', '')
         settings['ma_mode'] = int(self.settings.value('ma_mode', 0))

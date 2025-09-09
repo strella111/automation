@@ -2,6 +2,7 @@ from PyQt5 import QtWidgets, QtCore, QtGui
 from PyQt5.QtGui import QTextCursor
 from PyQt5.QtWidgets import QMessageBox, QStyle
 from PyQt5.QtCore import QSize
+import os
 from loguru import logger
 import threading
 import numpy as np
@@ -425,7 +426,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.direction_combo.addItems(['Горизонтальная', 'Вертикальная'])
         self.ma_tab_layout.addRow('Поляризация:', self.direction_combo)
         
-        self.param_tabs.addTab(self.ma_tab, 'MA')
+        self.param_tabs.addTab(self.ma_tab, 'Модуль антенный')
 
         self.pna_tab = QtWidgets.QWidget()
         self.pna_tab_layout = QtWidgets.QFormLayout(self.pna_tab)
@@ -483,7 +484,7 @@ class CheckMaWidget(QtWidgets.QWidget):
         settings_layout.addWidget(self.load_file_btn, 0)
         
         self.pna_tab_layout.addRow('Файл настроек:', settings_layout)
-        self.param_tabs.addTab(self.pna_tab, 'PNA')
+        self.param_tabs.addTab(self.pna_tab, 'Анализатор')
 
         self.meas_tab = QtWidgets.QWidget()
         self.meas_tab_layout = QtWidgets.QVBoxLayout(self.meas_tab)
@@ -776,7 +777,7 @@ class CheckMaWidget(QtWidgets.QWidget):
 
         self.meas_tab_layout.addStretch()
         
-        self.param_tabs.addTab(self.meas_tab, 'Meas')
+        self.param_tabs.addTab(self.meas_tab, 'Настройки измерения')
         self.left_layout.addWidget(self.param_tabs, 1)
 
         self.apply_btn = QtWidgets.QPushButton('Применить параметры')
@@ -930,6 +931,10 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.set_button_connection_state(self.pna_connect_btn, False)
         self.set_button_connection_state(self.psn_connect_btn, False)
         self.set_button_connection_state(self.ma_connect_btn, False)
+
+        # Настройки UI (персистентность)
+        self._ui_settings = QtCore.QSettings('PULSAR', 'CheckMA')
+        self.load_ui_settings()
 
     def show_ppm_details(self, button: QtWidgets.QPushButton, ppm_num: int):
         """Показывает детальную информацию о ППМ в контекстном меню"""
@@ -1264,6 +1269,111 @@ class CheckMaWidget(QtWidgets.QWidget):
         coord_system_name = self.coord_system_combo.currentText()
         self.coord_system = self.coord_system_manager.get_system_by_name(coord_system_name)
         logger.info('Параметры успешно применены')
+        # Сохраняем UI параметры
+        try:
+            self.save_ui_settings()
+        except Exception as _:
+            pass
+
+    def save_ui_settings(self):
+        """Сохраняет значения элементов интерфейса в QSettings."""
+        s = self._ui_settings
+        # MA
+        s.setValue('channel', self.channel_combo.currentText())
+        s.setValue('direction', self.direction_combo.currentText())
+        # PNA
+        s.setValue('s_param', self.s_param_combo.currentText())
+        s.setValue('pna_power', float(self.pna_power.value()))
+        s.setValue('pna_start_freq', int(self.pna_start_freq.value()))
+        s.setValue('pna_stop_freq', int(self.pna_stop_freq.value()))
+        s.setValue('pna_points', self.pna_number_of_points.currentText())
+        s.setValue('pna_settings_file', self.settings_file_edit.text())
+        # Coord system
+        s.setValue('coord_system', self.coord_system_combo.currentText())
+        # Criteria
+        s.setValue('rx_amp_max', float(self.rx_amp_tolerance.value()))
+        s.setValue('tx_amp_max', float(self.tx_amp_tolerance.value()))
+        s.setValue('rx_phase_min', float(self.rx_phase_min.value()))
+        s.setValue('rx_phase_max', float(self.rx_phase_max.value()))
+        s.setValue('tx_phase_min', float(self.tx_phase_min.value()))
+        s.setValue('tx_phase_max', float(self.tx_phase_max.value()))
+        # Phase shifter tolerances
+        for angle, controls in self.phase_shifter_tolerances.items():
+            s.setValue(f'ps_tol_{angle}_min', float(controls['min'].value()))
+            s.setValue(f'ps_tol_{angle}_max', float(controls['max'].value()))
+        # Delay tolerances
+        s.setValue('delay_amp_tol', float(self.delay_amp_tolerance.value()))
+        s.setValue('delay1_min', float(self.delay1_min.value()))
+        s.setValue('delay1_max', float(self.delay1_max.value()))
+        s.setValue('delay2_min', float(self.delay2_min.value()))
+        s.setValue('delay2_max', float(self.delay2_max.value()))
+        s.setValue('delay4_min', float(self.delay4_min.value()))
+        s.setValue('delay4_max', float(self.delay4_max.value()))
+        s.setValue('delay8_min', float(self.delay8_min.value()))
+        s.setValue('delay8_max', float(self.delay8_max.value()))
+        s.sync()
+
+    def load_ui_settings(self):
+        """Восстанавливает значения элементов интерфейса из QSettings."""
+        s = self._ui_settings
+        # MA
+        val = s.value('channel')
+        if val:
+            idx = self.channel_combo.findText(val)
+            if idx >= 0: self.channel_combo.setCurrentIndex(idx)
+        val = s.value('direction')
+        if val:
+            idx = self.direction_combo.findText(val)
+            if idx >= 0: self.direction_combo.setCurrentIndex(idx)
+        # PNA
+        val = s.value('s_param');  idx = self.s_param_combo.findText(val) if val else -1
+        if idx >= 0: self.s_param_combo.setCurrentIndex(idx)
+        if (v := s.value('pna_power')) is not None:
+            try: self.pna_power.setValue(float(v))
+            except Exception: pass
+        if (v := s.value('pna_start_freq')) is not None:
+            try: self.pna_start_freq.setValue(int(float(v)))
+            except Exception: pass
+        if (v := s.value('pna_stop_freq')) is not None:
+            try: self.pna_stop_freq.setValue(int(float(v)))
+            except Exception: pass
+        val = s.value('pna_points');  idx = self.pna_number_of_points.findText(val) if val else -1
+        if idx >= 0: self.pna_number_of_points.setCurrentIndex(idx)
+        if (v := s.value('pna_settings_file')): self.settings_file_edit.setText(v)
+        # Coord system
+        if (v := s.value('coord_system')):
+            idx = self.coord_system_combo.findText(v)
+            if idx >= 0: self.coord_system_combo.setCurrentIndex(idx)
+        # Criteria
+        for key, widget in [
+            ('rx_amp_max', self.rx_amp_tolerance), ('tx_amp_max', self.tx_amp_tolerance),
+            ('rx_phase_min', self.rx_phase_min), ('rx_phase_max', self.rx_phase_max),
+            ('tx_phase_min', self.tx_phase_min), ('tx_phase_max', self.tx_phase_max)
+        ]:
+            v = s.value(key)
+            if v is not None:
+                try: widget.setValue(float(v))
+                except Exception: pass
+        # Phase shifters
+        for angle, controls in self.phase_shifter_tolerances.items():
+            if (v := s.value(f'ps_tol_{angle}_min')) is not None:
+                try: controls['min'].setValue(float(v))
+                except Exception: pass
+            if (v := s.value(f'ps_tol_{angle}_max')) is not None:
+                try: controls['max'].setValue(float(v))
+                except Exception: pass
+        # Delay
+        for key, widget in [
+            ('delay_amp_tol', self.delay_amp_tolerance),
+            ('delay1_min', self.delay1_min), ('delay1_max', self.delay1_max),
+            ('delay2_min', self.delay2_min), ('delay2_max', self.delay2_max),
+            ('delay4_min', self.delay4_min), ('delay4_max', self.delay4_max),
+            ('delay8_min', self.delay8_min), ('delay8_max', self.delay8_max)
+        ]:
+            v = s.value(key)
+            if v is not None:
+                try: widget.setValue(float(v))
+                except Exception: pass
 
     def start_check(self):
         """Запускает процесс проверки"""
@@ -1357,7 +1467,11 @@ class CheckMaWidget(QtWidgets.QWidget):
                 try:
                     self.pna.preset()
                     if self.pna_settings.get('settings_file'):
-                        self.pna.load_settings_file(self.pna_settings.get('settings_file'))
+                        settings_file = self.pna_settings.get('settings_file')
+                        base_path = self.device_settings.get('pna_files_path', '')
+                        if settings_file and base_path and not os.path.isabs(settings_file):
+                            settings_file = os.path.join(base_path, settings_file)
+                        self.pna.load_settings_file(settings_file)
                     else:
                         self.pna.create_measure(self.pna_settings.get('s_param'))
                         self.pna.turn_window(state=True)
@@ -1855,8 +1969,8 @@ class CheckMaWidget(QtWidgets.QWidget):
                 def _update_excel_for_ppm(self, ppm_num: int, result: bool, measurements: tuple, channel: Channel, direction: Direction):
                     """Обновляет Excel файл для конкретного ППМ"""
                     try:
-                        from utils.excel_module import get_or_create_excel
-                        worksheet, workbook, file_path = get_or_create_excel(
+                        from utils.excel_module import get_or_create_excel_for_check
+                        worksheet, workbook, file_path = get_or_create_excel_for_check(
                             dir_name='check_data_collector',
                             file_name=f'{self.ma.bu_addr}.xlsx',
                             mode='check',

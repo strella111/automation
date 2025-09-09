@@ -5,7 +5,7 @@ from ...devices.ma import MA
 from ...devices.pna import PNA
 from ...devices.psn import PSN
 from core.common.enums import Channel, Direction, PpmState
-from utils.excel_module import get_or_create_excel
+from utils.excel_module import get_or_create_excel_for_check
 from ...common.exceptions import WrongInstrumentError, PlanarScannerError
 from PyQt5.QtCore import QThread
 import threading
@@ -244,7 +244,7 @@ class CheckMA:
         delay_results = []
         try:
 
-            worksheet, workbook, file_path = get_or_create_excel(dir_name=f'check_data_collector',
+            worksheet, workbook, file_path = get_or_create_excel_for_check(dir_name=f'check_data_collector',
                                                                  file_name=f'{self.ma.bu_addr}.xlsx',
                                                                  mode='check',
                                                                  chanel=channel,
@@ -326,8 +326,12 @@ class CheckMA:
                     logger.info(f"Проверка ППМ {ppm_num}")
                     
                     result, measurements = self.check_ppm(ppm_num, channel, direction)
+                    if result:
+                        result_row = 'ОК'
+                    else:
+                        result_row = 'НЕ ОК'
 
-                    excel_row = [ppm_num, result, measurements[0], measurements[1], measurements[2]] + measurements[4][1:]
+                    excel_row = [ppm_num, result_row, measurements[0], measurements[1], measurements[2], measurements[3]] + measurements[4][1:]
                     for k, value in enumerate(excel_row):
                         worksheet.cell(row=ppm_num+2, column=k + 1).value = value
                     results.append((ppm_num, (result, measurements)))
