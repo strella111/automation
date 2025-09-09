@@ -40,6 +40,7 @@ class QTextEditLogHandler(QtCore.QObject):
 class StendCheckMaWidget(QtWidgets.QWidget):
     update_data_signal = QtCore.pyqtSignal(dict)   # словарь {fv_angle: [A1,P1,...,A32,P32] с относительными фазами}
     update_realtime_signal = QtCore.pyqtSignal(float, int, float, float)  # angle, ppm_index(1..32), amp_abs, phase_rel
+    update_lz_signal = QtCore.pyqtSignal(dict)  # {lz: (mean_amp_delta, mean_delay_delta)}
     error_signal = QtCore.pyqtSignal(str, str)  # title, message
     buttons_enabled_signal = QtCore.pyqtSignal(bool)  # enabled
     check_finished_signal = QtCore.pyqtSignal()  # когда проверка завершена
@@ -243,50 +244,61 @@ class StendCheckMaWidget(QtWidgets.QWidget):
         tx_label.setAlignment(QtCore.Qt.AlignCenter)
         criteria_layout.addWidget(tx_label, 0, 2)
 
+        criteria_layout.addWidget(QtWidgets.QLabel("Мин. Амплитуда:"), 1, 0)
 
-        min_phase_label = QtWidgets.QLabel("Мин. фаза (все ФВ):")
-        criteria_layout.addWidget(min_phase_label, 2, 0)
 
-        self.rx_phase_min = QtWidgets.QDoubleSpinBox()
-        self.rx_phase_min.setRange(0.1, 50.0)
-        self.rx_phase_min.setSingleStep(0.1)
-        self.rx_phase_min.setDecimals(1)
-        self.rx_phase_min.setValue(2.0)
-        self.rx_phase_min.setSuffix('°')
-        self.rx_phase_min.setMinimumWidth(80)
-        criteria_layout.addWidget(self.rx_phase_min, 2, 1)
+        # Порог по абсолютной амплитуде (минимально допустимая), отдельно для RX/TX
+        self.abs_amp_min_rx = QtWidgets.QDoubleSpinBox()
+        self.abs_amp_min_rx.setRange(-200.0, 200.0)
+        self.abs_amp_min_rx.setDecimals(2)
+        self.abs_amp_min_rx.setSingleStep(0.1)
+        self.abs_amp_min_rx.setValue(-5.00)
+        self.abs_amp_min_rx.setSuffix(' дБ')
+        criteria_layout.addWidget(self.abs_amp_min_rx, 1, 1)
 
-        self.tx_phase_min = QtWidgets.QDoubleSpinBox()
-        self.tx_phase_min.setRange(0.1, 50.0)
-        self.tx_phase_min.setSingleStep(0.1)
-        self.tx_phase_min.setDecimals(1)
-        self.tx_phase_min.setValue(2.0)
-        self.tx_phase_min.setSuffix('°')
-        self.tx_phase_min.setMinimumWidth(80)
-        criteria_layout.addWidget(self.tx_phase_min, 2, 2)
+        self.abs_amp_min_tx = QtWidgets.QDoubleSpinBox()
+        self.abs_amp_min_tx.setRange(-200.0, 200.0)
+        self.abs_amp_min_tx.setDecimals(2)
+        self.abs_amp_min_tx.setSingleStep(0.1)
+        self.abs_amp_min_tx.setValue(-5.00)
+        self.abs_amp_min_tx.setSuffix(' дБ')
+        criteria_layout.addWidget(self.abs_amp_min_tx, 1, 2)
 
-        max_phase_label = QtWidgets.QLabel("Макс. фаза (все ФВ):")
-        criteria_layout.addWidget(max_phase_label, 3, 0)
 
-        self.rx_phase_max = QtWidgets.QDoubleSpinBox()
-        self.rx_phase_max.setRange(1.0, 100.0)
-        self.rx_phase_max.setSingleStep(0.1)
-        self.rx_phase_max.setDecimals(1)
-        self.rx_phase_max.setValue(12.0)
-        self.rx_phase_max.setSuffix('°')
-        self.rx_phase_max.setMinimumWidth(80)
-        criteria_layout.addWidget(self.rx_phase_max, 3, 1)
-
-        self.tx_phase_max = QtWidgets.QDoubleSpinBox()
-        self.tx_phase_max.setRange(1.0, 100.0)
-        self.tx_phase_max.setSingleStep(0.1)
-        self.tx_phase_max.setDecimals(1)
-        self.tx_phase_max.setValue(20.0)
-        self.tx_phase_max.setSuffix('°')
-        self.tx_phase_max.setMinimumWidth(80)
-        criteria_layout.addWidget(self.tx_phase_max, 3, 2)
 
         self.meas_tab_layout.addWidget(criteria_group)
+
+        # Допуски линий задержки (по каждой ЛЗ отдельно)
+        lz_group = QtWidgets.QGroupBox('Допуски линий задержки')
+        lz_grid = QtWidgets.QGridLayout(lz_group)
+        lz_grid.setContentsMargins(15, 15, 15, 15)
+        lz_grid.setSpacing(8)
+
+        lz_grid.addWidget(QtWidgets.QLabel(''), 0, 0)
+        lz_grid.addWidget(QtWidgets.QLabel('ΔАмп (± дБ)'), 0, 1)
+        lz_grid.addWidget(QtWidgets.QLabel('ΔЗадержка от (пс)'), 0, 2)
+        lz_grid.addWidget(QtWidgets.QLabel('ΔЗадержка до (пс)'), 0, 3)
+
+        self.lz_amp_tolerances_db = {}
+        self.lz_delay_tolerances = {}
+        lz_rows = [(1, 80.0, 120.0), (2, 150.0, 220.0), (4, 360.0, 440.0), (8, 650.0, 800.0)]
+        for r, (disc, dmin, dmax) in enumerate(lz_rows, start=1):
+            lz_grid.addWidget(QtWidgets.QLabel(f'ЛЗ{disc}'), r, 0)
+
+            amp_sb = QtWidgets.QDoubleSpinBox();  amp_sb.setRange(0.0, 20.0);  amp_sb.setDecimals(2)
+            amp_sb.setSingleStep(0.1);  amp_sb.setValue(1.0);  amp_sb.setSuffix(' дБ')
+            self.lz_amp_tolerances_db[disc] = amp_sb
+            lz_grid.addWidget(amp_sb, r, 1)
+
+            min_sb = QtWidgets.QDoubleSpinBox();  min_sb.setRange(-10000.0, 10000.0);  min_sb.setDecimals(1)
+            min_sb.setSingleStep(1.0);  min_sb.setValue(dmin);  min_sb.setSuffix(' пс')
+            max_sb = QtWidgets.QDoubleSpinBox();  max_sb.setRange(-10000.0, 10000.0);  max_sb.setDecimals(1)
+            max_sb.setSingleStep(1.0);  max_sb.setValue(dmax);  max_sb.setSuffix(' пс')
+            self.lz_delay_tolerances[disc] = {'min': min_sb, 'max': max_sb}
+            lz_grid.addWidget(min_sb, r, 2)
+            lz_grid.addWidget(max_sb, r, 3)
+
+        self.meas_tab_layout.addWidget(lz_group)
 
         ps_group = QtWidgets.QGroupBox('Допуски фазовращателей')
         ps_main_layout = QtWidgets.QVBoxLayout(ps_group)
@@ -400,16 +412,16 @@ class StendCheckMaWidget(QtWidgets.QWidget):
 
 
         self.delay_table = QtWidgets.QTableWidget()
-        self.delay_table.setColumnCount(4)
+        self.delay_table.setColumnCount(5)
         self.delay_table.setHorizontalHeaderLabels([
-            'Дискрет ЛЗ', 'Задержка (пс)', 'Амплитуда (дБ)', 'Статус'])
+            'Дискрет ЛЗ', 'ΔАмп (дБ)', 'ΔЗадержка (пс)', 'Статус ампл.', 'Статус задержки'])
         self.delay_table.setRowCount(4)
 
         delay_header = self.delay_table.horizontalHeader()
         delay_header.setSectionResizeMode(0, QtWidgets.QHeaderView.Fixed)
         delay_header.resizeSection(0, 80)
 
-        for i in range(1, 4):
+        for i in range(1, 5):
             delay_header.setSectionResizeMode(i, QtWidgets.QHeaderView.Stretch)
 
         self.delay_table.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Fixed)
@@ -425,7 +437,7 @@ class StendCheckMaWidget(QtWidgets.QWidget):
             item = QtWidgets.QTableWidgetItem(f"ЛЗ{discrete}")
             item.setTextAlignment(QtCore.Qt.AlignCenter)
             self.delay_table.setItem(row, 0, item)
-            for col in range(1, 4):
+            for col in range(1, 5):
                 item = QtWidgets.QTableWidgetItem("")
                 item.setTextAlignment(QtCore.Qt.AlignCenter)
                 self.delay_table.setItem(row, col, item)
@@ -460,6 +472,7 @@ class StendCheckMaWidget(QtWidgets.QWidget):
 
         self.update_data_signal.connect(self.update_table_from_data)
         self.update_realtime_signal.connect(self.update_table_realtime)
+        self.update_lz_signal.connect(self.update_delay_table_from_lz)
         self.error_signal.connect(self.show_error_message)
         self.buttons_enabled_signal.connect(self.set_buttons_enabled)
         self.check_finished_signal.connect(self.on_check_finished)
@@ -550,6 +563,43 @@ class StendCheckMaWidget(QtWidgets.QWidget):
         return item
 
     @QtCore.pyqtSlot(dict)
+    def update_delay_table_from_lz(self, lz_results: dict):
+        """Отрисовывает усреднённые значения ЛЗ и статусы по допускам.
+        Ожидается формат {lz:int: (amp_delta_db:float, delay_delta_ps:float)}"""
+        try:
+            order = [1, 2, 4, 8]
+            for row, lz in enumerate(order):
+                amp_delta, delay_delta = lz_results.get(lz, (float('nan'), float('nan')))
+                # Значения
+                self.delay_table.setItem(row, 1, self.create_centered_table_item("" if np.isnan(amp_delta) else f"{amp_delta:.2f}"))
+                self.delay_table.setItem(row, 2, self.create_centered_table_item("" if np.isnan(delay_delta) else f"{delay_delta:.1f}"))
+
+                if np.isnan(amp_delta):
+                    amp_item = self.create_neutral_status_item("-")
+                else:
+                    amp_tol = float(self.lz_amp_tolerances_db.get(lz).value()) if self.lz_amp_tolerances_db.get(lz) else 1.0
+                    amp_ok = (-amp_tol <= amp_delta <= amp_tol)
+                    amp_item = self.create_status_table_item("OK" if amp_ok else "FAIL", amp_ok)
+                self.delay_table.setItem(row, 3, amp_item)
+
+                if np.isnan(delay_delta):
+                    delay_item = self.create_neutral_status_item("-")
+                else:
+                    tol = self.lz_delay_tolerances.get(lz)
+                    dmin = float(tol['min'].value()) if tol else -float('inf')
+                    dmax = float(tol['max'].value()) if tol else float('inf')
+                    delay_ok = (dmin <= delay_delta <= dmax)
+                    delay_item = self.create_status_table_item("OK" if delay_ok else "FAIL", delay_ok)
+                self.delay_table.setItem(row, 4, delay_item)
+
+            try:
+                self.delay_table.viewport().update()
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"Ошибка обновления таблицы ЛЗ: {e}")
+
+    @QtCore.pyqtSlot(dict)
     def update_table_from_data(self, data: dict):
         """Заполняет таблицу по словарю {fv_angle: [A1,P1,...,A32,P32]}.
         Фазы считаются относительными (для 0° – всегда 0). Статусы считаем только по фазе.
@@ -565,6 +615,10 @@ class StendCheckMaWidget(QtWidgets.QWidget):
                     return None
                 tol = self.check_criteria.get('phase_shifter_tolerances', {})
                 return tol.get(angle) or tol.get(float(angle))
+
+            # Функция порога амплитуды по каналу
+            def get_abs_amp_min():
+                return float(self.abs_amp_min_rx.value()) if self.channel_combo.currentText() == 'Приемник' else float(self.abs_amp_min_tx.value())
 
             # Проходим по ППМ
             for ppm_idx in range(32):
@@ -584,8 +638,10 @@ class StendCheckMaWidget(QtWidgets.QWidget):
                     amp_val = values[ppm_idx * 2]
                     phase_rel = values[ppm_idx * 2 + 1]
 
-                    # Амплитуда — просто число
-                    self.results_table.setItem(row, col, self.create_centered_table_item(f"{amp_val:.2f}"))
+                    # Амплитуда — проверка по абсолютному порогу и окраска
+                    abs_min = get_abs_amp_min()
+                    amp_ok = (amp_val >= abs_min)
+                    self.results_table.setItem(row, col, self.create_status_table_item(f"{amp_val:.2f}", amp_ok))
 
                     # Фаза — статус по допускам (кроме 0°)
                     if angle == 0.0:
@@ -617,8 +673,10 @@ class StendCheckMaWidget(QtWidgets.QWidget):
 
             # Колонка пары (Амп., Фаза) для данного угла
             base_col = 1 + fv_order.index(angle) * 2
-            # Амплитуда
-            self.results_table.setItem(row, base_col, self.create_centered_table_item(f"{amp_abs:.2f}"))
+            # Амплитуда с проверкой порога
+            abs_min = float(self.abs_amp_min_rx.value()) if self.channel_combo.currentText() == 'Приемник' else float(self.abs_amp_min_tx.value())
+            amp_ok = (amp_abs >= abs_min)
+            self.results_table.setItem(row, base_col, self.create_status_table_item(f"{amp_abs:.2f}", amp_ok))
             # Фаза (+ статус кроме 0°)
             if angle == 0.0:
                 self.results_table.setItem(row, base_col + 1, self.create_centered_table_item(f"{phase_rel:.1f}"))
@@ -682,6 +740,8 @@ class StendCheckMaWidget(QtWidgets.QWidget):
         s.setValue('pna_points', self.pna_number_of_points.currentText())
         s.setValue('pna_settings_file', self.settings_file_edit.text())
         # Criteria
+        s.setValue('abs_amp_min_rx', float(self.abs_amp_min_rx.value()))
+        s.setValue('abs_amp_min_tx', float(self.abs_amp_min_tx.value()))
         # Phase shifters
         for angle, controls in self.phase_shifter_tolerances.items():
             s.setValue(f'ps_tol_{angle}_min', float(controls['min'].value()))
@@ -722,6 +782,12 @@ class StendCheckMaWidget(QtWidgets.QWidget):
         if (v := s.value('pna_settings_file')):
             self.settings_file_edit.setText(v)
         # Criteria
+        if (v := s.value('abs_amp_min_rx')) is not None:
+            try: self.abs_amp_min_rx.setValue(float(v))
+            except Exception: pass
+        if (v := s.value('abs_amp_min_tx')) is not None:
+            try: self.abs_amp_min_tx.setValue(float(v))
+            except Exception: pass
 
         # Phase shifters
         for angle, controls in self.phase_shifter_tolerances.items():
@@ -853,6 +919,11 @@ class StendCheckMaWidget(QtWidgets.QWidget):
             # Пробросим колбэк для поэлементных обновлений
             try:
                 check.realtime_callback = self.update_realtime_signal
+            except Exception:
+                pass
+            # Колбэк с усреднёнными данными ЛЗ
+            try:
+                check.delay_callback = self.update_lz_signal
             except Exception:
                 pass
 

@@ -447,6 +447,12 @@ class MA:
         command = self._generate_command(bu_num=self.bu_addr, command_code=command_code, data=data)
         self._send_command(command)
 
+    def preset_task(self):
+        logger.info('Сбро задания на МА')
+        command_code = b'\x66'
+        command = self._generate_command(bu_num=self.bu_addr, command_code=command_code)
+        self._send_command(command)
+
 
 if __name__ == '__main__':
     ma = MA('COM8', mode=0)
