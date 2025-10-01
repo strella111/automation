@@ -13,9 +13,9 @@ from core.measurements.check.check_ma import CheckMA
 from core.common.enums import Channel, Direction
 from core.common.coordinate_system import CoordinateSystemManager
 
-from ui.pna_file_dialog import PnaFileDialog
-from ui.device_connection_worker import DeviceConnectionWorker
-from ui.base_measurement_widget import BaseMeasurementWidget, QTextEditLogHandler
+from ui.dialogs.pna_file_dialog import PnaFileDialog
+from core.workers.device_connection_worker import DeviceConnectionWorker
+from ui.widgets.base_measurement_widget import BaseMeasurementWidget, QTextEditLogHandler
 
 
 class AddCoordinateSystemDialog(QtWidgets.QDialog):

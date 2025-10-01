@@ -1,8 +1,8 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
-from .phase_ma_widget import PhaseMaWidget
-from .check_ma_widget import CheckMaWidget
-from .check_stend_ma_widget import StendCheckMaWidget
-from .manual_control_widget import ManualControlWindow
+from .widgets.phase_ma_widget import PhaseMaWidget
+from .widgets.check_ma_widget import CheckMaWidget
+from .widgets.check_stend_ma_widget import StendCheckMaWidget
+from .widgets.manual_control_widget import ManualControlWindow
 import serial.tools.list_ports
 from loguru import logger
 

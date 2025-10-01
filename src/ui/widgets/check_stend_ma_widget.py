@@ -12,9 +12,9 @@ from core.devices.trigger_box import E5818Config, E5818
 from core.measurements.check_stend.check_stend import CheckMAStend
 from core.common.enums import Channel, Direction
 
-from ui.pna_file_dialog import PnaFileDialog
-from ui.device_connection_worker import DeviceConnectionWorker
-from ui.base_measurement_widget import BaseMeasurementWidget, QTextEditLogHandler
+from ui.dialogs.pna_file_dialog import PnaFileDialog
+from core.workers.device_connection_worker import DeviceConnectionWorker
+from ui.widgets.base_measurement_widget import BaseMeasurementWidget, QTextEditLogHandler
 
 
 

@@ -19,9 +19,9 @@ from pyqtgraph.Qt import QtGui
 import pyqtgraph.opengl as gl
 from pyqtgraph.colormap import ColorMap
 
-from ui.pna_file_dialog import PnaFileDialog
-from ui.device_connection_worker import DeviceConnectionWorker
-from ui.base_measurement_widget import BaseMeasurementWidget, QTextEditLogHandler
+from ui.dialogs.pna_file_dialog import PnaFileDialog
+from core.workers.device_connection_worker import DeviceConnectionWorker
+from ui.widgets.base_measurement_widget import BaseMeasurementWidget, QTextEditLogHandler
 
 
 class AddCoordinateSystemDialog(QtWidgets.QDialog):
