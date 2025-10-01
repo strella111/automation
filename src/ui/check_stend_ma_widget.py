@@ -13,6 +13,7 @@ from core.measurements.check_stend.check_stend import CheckMAStend
 from core.common.enums import Channel, Direction
 
 from ui.pna_file_dialog import PnaFileDialog
+from ui.device_connection_worker import DeviceConnectionWorker
 
 
 
@@ -44,6 +45,10 @@ class StendCheckMaWidget(QtWidgets.QWidget):
     error_signal = QtCore.pyqtSignal(str, str)  # title, message
     buttons_enabled_signal = QtCore.pyqtSignal(bool)  # enabled
     check_finished_signal = QtCore.pyqtSignal()  # когда проверка завершена
+    
+    # Сигналы для асинхронного подключения к устройствам
+    device_connection_started = QtCore.pyqtSignal(str)  # device_name
+    device_connection_finished = QtCore.pyqtSignal(str, bool, str)  # device_name, success, message
 
     def __init__(self):
         super().__init__()
@@ -148,12 +153,6 @@ class StendCheckMaWidget(QtWidgets.QWidget):
         self.pna_tab_layout.addRow('Кол-во точек:', self.pna_number_of_points)
 
 
-        self.pna_period = QtWidgets.QDoubleSpinBox()
-        self.pna_period.setRange(1E-3, 1E12)
-        self.pna_period.setSuffix(' мкс')
-        self.pna_period.setValue(200)
-        self.pna_tab_layout.addRow('Период', self.pna_period)
-
         settings_layout = QtWidgets.QHBoxLayout()
         settings_layout.setSpacing(4)
         self.settings_file_edit = QtWidgets.QLineEdit()
@@ -183,6 +182,7 @@ class StendCheckMaWidget(QtWidgets.QWidget):
         self.trig_tab = QtWidgets.QWidget()
         self.trig_tab_layout = QtWidgets.QFormLayout(self.trig_tab)
 
+
         self.trig_ttl_channel = QtWidgets.QComboBox()
         self.trig_ttl_channel.addItems(['TTL1', 'TTL2'])
         self.trig_tab_layout.addRow('Канал TTL:', self.trig_ttl_channel)
@@ -206,6 +206,14 @@ class StendCheckMaWidget(QtWidgets.QWidget):
         self.trig_pulse_period.setSuffix(' мкс')
         self.trig_pulse_period.setValue(500.000)
         self.trig_tab_layout.addRow('Период импульса:', self.trig_pulse_period)
+
+        self.trig_post_trigger_delay = QtWidgets.QDoubleSpinBox()
+        self.trig_post_trigger_delay.setDecimals(3)
+        self.trig_post_trigger_delay.setRange(0.001, 100.000)
+        self.trig_post_trigger_delay.setSingleStep(0.1)
+        self.trig_post_trigger_delay.setSuffix(' мс')
+        self.trig_post_trigger_delay.setValue(1.000)
+        self.trig_tab_layout.addRow('Задержка после обратного триггера:', self.trig_post_trigger_delay)
 
         self.trig_min_alarm_guard = QtWidgets.QDoubleSpinBox()
         self.trig_min_alarm_guard.setRange(0.0, 10e6)
@@ -461,6 +469,11 @@ class StendCheckMaWidget(QtWidgets.QWidget):
         self._check_thread = None
         self._stop_flag = threading.Event()
         self._pause_flag = threading.Event()
+        
+        # Потоки для асинхронного подключения к устройствам
+        self._ma_connection_thread = None
+        self._pna_connection_thread = None
+        self._trigger_connection_thread = None
 
         self.ma_connect_btn.clicked.connect(self.connect_ma)
         self.pna_connect_btn.clicked.connect(self.connect_pna)
@@ -472,10 +485,17 @@ class StendCheckMaWidget(QtWidgets.QWidget):
 
         self.update_data_signal.connect(self.update_table_from_data)
         self.update_realtime_signal.connect(self.update_table_realtime)
+
+        self.update_data_signal.connect(lambda d: setattr(self, '_stend_fv_data', d))
+        self.update_lz_signal.connect(self._accumulate_lz_data)
         self.update_lz_signal.connect(self.update_delay_table_from_lz)
         self.error_signal.connect(self.show_error_message)
         self.buttons_enabled_signal.connect(self.set_buttons_enabled)
         self.check_finished_signal.connect(self.on_check_finished)
+        
+        # Подключение сигналов для асинхронного подключения к устройствам
+        self.device_connection_started.connect(self._on_device_connection_started)
+        self.device_connection_finished.connect(self._on_device_connection_finished)
 
         self.set_buttons_enabled(True)
         self.device_settings = {}
@@ -494,7 +514,6 @@ class StendCheckMaWidget(QtWidgets.QWidget):
 
         self.ppm_data = {}
         self.check_completed = False  # Флаг завершения основной проверки
-        self.last_excel_path = None  # Путь к последнему Excel файлу
 
         self.set_button_connection_state(self.pna_connect_btn, False)
         self.set_button_connection_state(self.ma_connect_btn, False)
@@ -568,9 +587,11 @@ class StendCheckMaWidget(QtWidgets.QWidget):
         Ожидается формат {lz:int: (amp_delta_db:float, delay_delta_ps:float)}"""
         try:
             order = [1, 2, 4, 8]
-            for row, lz in enumerate(order):
-                amp_delta, delay_delta = lz_results.get(lz, (float('nan'), float('nan')))
-                # Значения
+            for lz, (amp_delta, delay_delta) in lz_results.items():
+                if lz not in order:
+                    continue 
+                    
+                row = order.index(lz)
                 self.delay_table.setItem(row, 1, self.create_centered_table_item("" if np.isnan(amp_delta) else f"{amp_delta:.2f}"))
                 self.delay_table.setItem(row, 2, self.create_centered_table_item("" if np.isnan(delay_delta) else f"{delay_delta:.1f}"))
 
@@ -605,22 +626,18 @@ class StendCheckMaWidget(QtWidgets.QWidget):
         Фазы считаются относительными (для 0° – всегда 0). Статусы считаем только по фазе.
         """
         try:
-            # Порядок ФВ для колонок
             fv_order = [0.0, 5.625, 11.25, 22.5, 45.0, 90.0, 180.0]
 
-            # Хелперы для поиска допусков
             def get_phase_tolerance(angle: float):
                 if angle == 0.0:
-                    # для 0° всегда 0, статус не окрашиваем
                     return None
                 tol = self.check_criteria.get('phase_shifter_tolerances', {})
                 return tol.get(angle) or tol.get(float(angle))
 
-            # Функция порога амплитуды по каналу
             def get_abs_amp_min():
                 return float(self.abs_amp_min_rx.value()) if self.channel_combo.currentText() == 'Приемник' else float(self.abs_amp_min_tx.value())
 
-            # Проходим по ППМ
+
             for ppm_idx in range(32):
                 row = ppm_idx
                 self.results_table.setItem(row, 0, self.create_centered_table_item(str(ppm_idx + 1)))
@@ -638,12 +655,10 @@ class StendCheckMaWidget(QtWidgets.QWidget):
                     amp_val = values[ppm_idx * 2]
                     phase_rel = values[ppm_idx * 2 + 1]
 
-                    # Амплитуда — проверка по абсолютному порогу и окраска
                     abs_min = get_abs_amp_min()
                     amp_ok = (amp_val >= abs_min)
                     self.results_table.setItem(row, col, self.create_status_table_item(f"{amp_val:.2f}", amp_ok))
 
-                    # Фаза — статус по допускам (кроме 0°)
                     if angle == 0.0:
                         self.results_table.setItem(row, col + 1, self.create_centered_table_item(f"{phase_rel:.1f}"))
                     else:
@@ -671,9 +686,8 @@ class StendCheckMaWidget(QtWidgets.QWidget):
             if row < 0 or row >= 32:
                 return
 
-            # Колонка пары (Амп., Фаза) для данного угла
             base_col = 1 + fv_order.index(angle) * 2
-            # Амплитуда с проверкой порога
+
             abs_min = float(self.abs_amp_min_rx.value()) if self.channel_combo.currentText() == 'Приемник' else float(self.abs_amp_min_tx.value())
             amp_ok = (amp_abs >= abs_min)
             self.results_table.setItem(row, base_col, self.create_status_table_item(f"{amp_abs:.2f}", amp_ok))
@@ -718,6 +732,8 @@ class StendCheckMaWidget(QtWidgets.QWidget):
                 'min': controls['min'].value(),
                 'max': controls['max'].value()
             }
+
+
 
 
         logger.info('Параметры успешно применены')
@@ -783,11 +799,16 @@ class StendCheckMaWidget(QtWidgets.QWidget):
             self.settings_file_edit.setText(v)
         # Criteria
         if (v := s.value('abs_amp_min_rx')) is not None:
-            try: self.abs_amp_min_rx.setValue(float(v))
-            except Exception: pass
+            try: 
+                self.abs_amp_min_rx.setValue(float(v))
+            except Exception: 
+                pass
         if (v := s.value('abs_amp_min_tx')) is not None:
-            try: self.abs_amp_min_tx.setValue(float(v))
-            except Exception: pass
+            try: 
+                self.abs_amp_min_tx.setValue(float(v))
+            except Exception: 
+                pass
+
 
         # Phase shifters
         for angle, controls in self.phase_shifter_tolerances.items():
@@ -929,9 +950,10 @@ class StendCheckMaWidget(QtWidgets.QWidget):
 
             # Установим тайминги триггера из UI перед стартом
             try:
-                # Период в UI в мкс → секунды; lead в мс → секунды
+                # Период в UI в мкс → секунды; lead в мс → секунды; post_trigger_delay в мс → секунды
                 check.period = float(self.trig_pulse_period.value()) * 1e-6
                 check.lead = float(self.trig_start_lead.value()) * 1e-3
+                check.post_trigger_delay = float(self.trig_post_trigger_delay.value()) * 1e-3
             except Exception:
                 pass
 
@@ -965,6 +987,11 @@ class StendCheckMaWidget(QtWidgets.QWidget):
                 self.show_error_message("Ошибка отключения МА", f"Не удалось отключить МА: {str(e)}")
                 return
 
+        # Проверяем, не идет ли уже подключение
+        if self._ma_connection_thread and self._ma_connection_thread.isRunning():
+            logger.info("Подключение к МА уже выполняется...")
+            return
+
         com_port = self.device_settings.get('ma_com_port', '')
         mode = self.device_settings.get('ma_mode', 0)
         delay = float(self.ma_command_delay.value())
@@ -976,17 +1003,17 @@ class StendCheckMaWidget(QtWidgets.QWidget):
         logger.info(
             f'Попытка подключения к МА через {com_port if mode == 0 else "тестовый режим"}, режим: {"реальный" if mode == 0 else "тестовый"}')
 
-        try:
-            self.ma = MA(com_port=com_port, mode=mode, command_delay=delay)
-            self.ma.connect()
-            if self.ma.bu_addr:
-                self.ma_connect_btn.setText(f'МА №{self.ma.bu_addr}')
-            self.set_button_connection_state(self.ma_connect_btn, True)
-            logger.info(f'МА успешно подключен {"" if mode == 0 else "(тестовый режим)"}')
-        except Exception as e:
-            self.ma = None
-            self.set_button_connection_state(self.ma_connect_btn, False)
-            self.show_error_message("Ошибка подключения МА", f"Не удалось подключиться к МА: {str(e)}")
+        # Создаем поток для подключения
+        connection_params = {
+            'com_port': com_port,
+            'mode': mode,
+            'command_delay': delay
+        }
+        
+        self._ma_connection_thread = DeviceConnectionWorker('MA', connection_params)
+        self._ma_connection_thread.connection_finished.connect(self._on_ma_connection_finished)
+        self.device_connection_started.emit('MA')
+        self._ma_connection_thread.start()
 
     def connect_pna(self):
         """Подключает/отключает PNA"""
@@ -1001,19 +1028,26 @@ class StendCheckMaWidget(QtWidgets.QWidget):
                 self.show_error_message("Ошибка отключения PNA", f"Не удалось отключить PNA: {str(e)}")
                 return
 
+        # Проверяем, не идет ли уже подключение
+        if self._pna_connection_thread and self._pna_connection_thread.isRunning():
+            logger.info("Подключение к PNA уже выполняется...")
+            return
+
         ip = self.device_settings.get('pna_ip', '')
         port = int(self.device_settings.get('pna_port', ''))
         mode = self.device_settings.get('pna_mode', 0)
 
-        try:
-            self.pna = PNA(ip=ip, port=port, mode=mode)
-            self.pna.connect()
-            self.set_button_connection_state(self.pna_connect_btn, True)
-            logger.info(f'PNA успешно подключен {"" if mode == 0 else "(тестовый режим)"}')
-        except Exception as e:
-            self.pna = None
-            self.set_button_connection_state(self.pna_connect_btn, False)
-            self.show_error_message("Ошибка подключения PNA", f"Не удалось подключиться к PNA: {str(e)}")
+        # Создаем поток для подключения
+        connection_params = {
+            'ip': ip,
+            'port': port,
+            'mode': mode
+        }
+        
+        self._pna_connection_thread = DeviceConnectionWorker('PNA', connection_params)
+        self._pna_connection_thread.connection_finished.connect(self._on_pna_connection_finished)
+        self.device_connection_started.emit('PNA')
+        self._pna_connection_thread.start()
 
     def connect_trigger(self):
         """Подключает/отключает устройство синхронизации (TriggerBox E5818)."""
@@ -1061,8 +1095,14 @@ class StendCheckMaWidget(QtWidgets.QWidget):
         # Таймаут берем из общих настроек устройств, если присутствует
         visa_timeout_ms = int(self.device_settings.get('trigger_visa_timeout_ms', 2000))
 
-        try:
-            cfg = E5818Config(
+        # Проверяем, не идет ли уже подключение
+        if self._trigger_connection_thread and self._trigger_connection_thread.isRunning():
+            logger.info("Подключение к устройству синхронизации уже выполняется...")
+            return
+
+        # Создаем поток для подключения
+        connection_params = {
+            'config': E5818Config(
                 resource=visa_resource,
                 ttl_channel=ttl_channel,
                 ext_channel=ext_channel,
@@ -1073,15 +1113,12 @@ class StendCheckMaWidget(QtWidgets.QWidget):
                 ext_debounce_s=ext_debounce_s,
                 logger=lambda m: logger.debug(f"E5818 | {m}")
             )
-
-            self.trigger = E5818(cfg)
-            idn = self.trigger.connect()
-            self.set_button_connection_state(self.gen_connect_btn, True)
-            logger.info(f'Устройство синхронизации подключено: {idn if idn else "OK"}')
-        except Exception as e:
-            self.trigger = None
-            self.set_button_connection_state(self.gen_connect_btn, False)
-            self.show_error_message("Ошибка подключения устройства синхронизации", f"Не удалось подключиться: {str(e)}")
+        }
+        
+        self._trigger_connection_thread = DeviceConnectionWorker('Trigger', connection_params)
+        self._trigger_connection_thread.connection_finished.connect(self._on_trigger_connection_finished)
+        self.device_connection_started.emit('Trigger')
+        self._trigger_connection_thread.start()
 
     def set_device_settings(self, settings: dict):
         """Сохраняет параметры устройств из настроек для последующего применения."""
@@ -1194,6 +1231,76 @@ class StendCheckMaWidget(QtWidgets.QWidget):
         """Показывает всплывающее окно с информацией"""
         QMessageBox.information(self, title, message)
         logger.info(f"{title}: {message}")
+
+    def _accumulate_lz_data(self, lz_chunk: dict):
+        try:
+            for k, v in lz_chunk.items():
+                self._stend_lz_data[k] = v
+        except Exception:
+            pass
+
+    @QtCore.pyqtSlot(str)
+    def _on_device_connection_started(self, device_name: str):
+        """Обработчик начала подключения к устройству"""
+        logger.info(f"Начинается подключение к {device_name}...")
+        # Можно добавить индикатор загрузки или изменить текст кнопки
+
+    @QtCore.pyqtSlot(str, bool, str)
+    def _on_device_connection_finished(self, device_name: str, success: bool, message: str):
+        """Обработчик завершения подключения к устройству"""
+        if success:
+            logger.info(f"{device_name} успешно подключен: {message}")
+        else:
+            logger.error(f"Ошибка подключения к {device_name}: {message}")
+            self.show_error_message(f"Ошибка подключения к {device_name}", message)
+
+    @QtCore.pyqtSlot(str, bool, str, object)
+    def _on_ma_connection_finished(self, device_name: str, success: bool, message: str, device_instance):
+        """Обработчик завершения подключения к МА"""
+        if success:
+            self.ma = device_instance
+            if self.ma.bu_addr:
+                self.ma_connect_btn.setText(f'МА №{self.ma.bu_addr}')
+            self.set_button_connection_state(self.ma_connect_btn, True)
+            logger.info(f'МА успешно подключен: {message}')
+        else:
+            self.ma = None
+            self.set_button_connection_state(self.ma_connect_btn, False)
+            self.show_error_message("Ошибка подключения МА", f"Не удалось подключиться к МА: {message}")
+        
+        # Очищаем ссылку на поток
+        self._ma_connection_thread = None
+
+    @QtCore.pyqtSlot(str, bool, str, object)
+    def _on_pna_connection_finished(self, device_name: str, success: bool, message: str, device_instance):
+        """Обработчик завершения подключения к PNA"""
+        if success:
+            self.pna = device_instance
+            self.set_button_connection_state(self.pna_connect_btn, True)
+            logger.info(f'PNA успешно подключен: {message}')
+        else:
+            self.pna = None
+            self.set_button_connection_state(self.pna_connect_btn, False)
+            self.show_error_message("Ошибка подключения PNA", f"Не удалось подключиться к PNA: {message}")
+        
+        # Очищаем ссылку на поток
+        self._pna_connection_thread = None
+
+    @QtCore.pyqtSlot(str, bool, str, object)
+    def _on_trigger_connection_finished(self, device_name: str, success: bool, message: str, device_instance):
+        """Обработчик завершения подключения к Trigger"""
+        if success:
+            self.trigger = device_instance
+            self.set_button_connection_state(self.gen_connect_btn, True)
+            logger.info(f'Устройство синхронизации успешно подключено: {message}')
+        else:
+            self.trigger = None
+            self.set_button_connection_state(self.gen_connect_btn, False)
+            self.show_error_message("Ошибка подключения устройства синхронизации", f"Не удалось подключиться: {message}")
+        
+        # Очищаем ссылку на поток
+        self._trigger_connection_thread = None
+
 
     def open_file_dialog(self):
         """Открытие диалога выбора файла настроек PNA"""

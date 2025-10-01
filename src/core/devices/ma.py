@@ -210,19 +210,6 @@ class MA:
                 self._send_command(command, is_check=True)
 
 
-
-            # if self._check_request():
-            #     logger.debug(f'Команда успешно принята БУ')
-            #     self.retry_counter = 0
-            #     return
-            # else:
-            #     if self.retry_counter > 3:
-            #         raise MaCommandNotDelivered(f'После 3 попыток не удалось отправить команду {command.hex(" ")} на БУ')
-            #     time.sleep(0.5)
-            #     self.retry_counter += 1
-            #     self._send_command(command)
-
-
     def set_ppm_att(self, chanel: Channel, direction: Direction, ppm_num:int, value: int):
         logger.info(f'Установка аттенюатора {value} в ППМ№{ppm_num}. Канал - {chanel}, поляризация {direction}')
         command_code = b'\x09'
@@ -452,6 +439,47 @@ class MA:
         command_code = b'\x66'
         command = self._generate_command(bu_num=self.bu_addr, command_code=command_code)
         self._send_command(command)
+
+    def get_tm(self):
+        logger.info('Запрошена телеметрия МА')
+        command_code = b'\xfa'
+        command = self._generate_command(bu_num=self.bu_addr, command_code=command_code)
+        self._send_command(command)
+        response = self.read()
+        if not response:
+            logger.error("Не поступило ответа на команду КУ-ТМ от БУ№{self.bu_addr}")
+
+        data = dict()
+        data['addr']= int(response[1] & 0x3f)
+        data['command_code'] = response[2]
+        data['command_id'] = response[3]
+        data['crc'] = response[-2:]
+        for j in range(32):
+            data[f'ppm{j}'] = response[4+j:4+j+1]
+
+        data['mdo'] = response[68:70]
+        data['bu'] = response[71]
+        data['vip1'] = response[72:73]
+        data['vip2'] = response[74:75]
+        data['table_beam_number'] = int(response[76:77])
+        data['crc_of_table_beam_number'] = response[78:81]
+        data['crc_calb_table'] = response[82:85]
+        data['strobs_prd'] = int(response[86:89])
+        data['strobs_prm'] = int(response[90:93])
+        data['amount_beams'] = int(response[94:95])
+        data['beam_number_prd'] = int(response[96:97])
+        data['beam_number_prm'] = int(response[98:99])
+        data['configuration_ports'] = response[100]
+        data['crc_voltage_table'] = response[101:104]
+        data['state_bu'] = response[105]
+
+        return data
+
+
+
+
+
+
 
 
 if __name__ == '__main__':

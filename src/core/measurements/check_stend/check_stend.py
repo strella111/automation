@@ -1,6 +1,9 @@
 from typing import Tuple, List, Dict
+
+from PyQt5 import QtCore
 from loguru import logger
 
+from utils.excel_module import get_or_create_excel_for_check
 from ...devices.ma import MA
 from ...devices.pna import PNA
 from core.devices.trigger_box import E5818
@@ -8,6 +11,7 @@ from core.common.enums import Channel, Direction
 from ...common.exceptions import WrongInstrumentError
 import threading
 import time
+from PyQt5.QtCore import QThread
 
 
 class CheckMAStend:
@@ -43,6 +47,7 @@ class CheckMAStend:
         self.period = None
         self.number_of_freqs = None
         self.lead = None
+        self.post_trigger_delay = 0.001  # Задержка после обратного триггера по умолчанию
 
         self.phase_shifts = [0, 5.625, 11.25, 22.5, 45, 90, 180]
         self.delay_lines = [0, 1, 2, 4, 8]
@@ -80,6 +85,28 @@ class CheckMAStend:
             return False
         return True
 
+    def burst_and_check_external_trigger(self, ppm_num):
+        self.gen.burst(period_s=self.period, count=self.number_of_freqs, lead_s=self.lead)
+        counter = 0
+        while True:
+            evt = self.gen.pop_ext_event()
+            counter += 1
+            if counter > 5:
+                amount_strobs = self.ma.get_tm()['strobs_prd'] if self.channel == Channel.Transmitter else self.ma.get_tm()['strobs_prm']
+                expected_strobs = ppm_num * self.number_of_freqs
+                if amount_strobs == expected_strobs:
+                    self.gen.burst(period_s=self.period, count=self.number_of_freqs, lead_s=self.lead)
+                    while True:
+                        evt = self.gen.pop_ext_event()
+                        if evt:
+                            return
+                else:
+                    return
+
+            if evt:
+                return
+
+
     def _check_fv(self, chanel: Channel, direction: Direction) -> Dict[float, List[float]]:
 
         results: Dict[float, List[float]] = {}
@@ -99,12 +126,22 @@ class CheckMAStend:
             ppm_index = 0
             # Собираем 32 значения (64 числа) последовательно
             for ppm_num in range(1, 33):
-                self.gen.burst(period_s=self.period, count=self.number_of_freqs, lead_s=self.lead)
-                while True:
-                    evt = self.gen.pop_ext_event()
-                    if evt:
-                        break
-                time.sleep(0.001)
+                if self._stop_event.is_set():
+                    self.ma.turn_off_vips()
+                    self.pna.set_output(False)
+                    logger.info("Измерение остановлено пользователем")
+                    return results
+
+                if self._pause_event.is_set():
+                    logger.info("Измерение приостановлено пользователем")
+
+                while self._pause_event.is_set() and not self._stop_event.is_set():
+                    QThread.msleep(100)
+
+                self.burst_and_check_external_trigger(ppm_num=ppm_num)
+
+                time.sleep(self.post_trigger_delay)
+
                 amp_db, phase_deg = self.pna.get_center_freq_data()
                 results[fv].extend([amp_db, phase_deg])
 
@@ -151,12 +188,19 @@ class CheckMAStend:
 
             collected = 0
             for ppm_num in range(1, 33):
-                self.gen.burst(period_s=self.period, count=self.number_of_freqs, lead_s=self.lead)
-                while True:
-                    evt = self.gen.pop_ext_event()
-                    if evt:
-                        break
-                time.sleep(0.001)
+                if self._stop_event.is_set():
+                    self.ma.turn_off_vips()
+                    self.pna.set_output(False)
+                    logger.info("Измерение остановлено пользователем")
+                    return {}
+
+                if self._pause_event.is_set():
+                    logger.info("Измерение приостановлено пользователем")
+                while self._pause_event.is_set() and not self._stop_event.is_set():
+                    QThread.msleep(100)
+
+                self.burst_and_check_external_trigger(ppm_num=ppm_num)
+                time.sleep(self.post_trigger_delay)
                 try:
                     amp_mean = float(self.pna.get_mean_value_from_sdata())
                 except Exception:
@@ -180,7 +224,7 @@ class CheckMAStend:
                 amp_delta_rt = 0.0
                 delay_delta_rt = 0.0
             else:
-                # Если по какой-то причине базовая ЛЗ ещё не определена – считаем без нормировки
+
                 if zero_amp_mean is None or zero_delay_mean is None:
                     amp_delta_rt = mean_amp
                     delay_delta_rt = mean_delay
@@ -223,9 +267,6 @@ class CheckMAStend:
 
         return results
 
-
-
-
     def start(self, channel: Channel, direction: Direction):
         """
         Запуск проверки всех ППМ
@@ -238,6 +279,14 @@ class CheckMAStend:
             ConnectionError: При отсутствии подключения устройств
             WrongInstrumentError: При ошибке работы с устройствами
         """
+        worksheet, workbook, file_path = get_or_create_excel_for_check(
+            base_dir=QtCore.QSettings('PULSAR', 'PhaseMA').value('base_save_dir', ''),
+            dir_name='stend',
+            file_name=f'{self.ma.bu_addr}.xlsx',
+            mode='stend',
+            chanel=channel,
+            direction=direction)
+
         results = []
         try:
             if not self._check_connections():
@@ -256,7 +305,6 @@ class CheckMAStend:
             data = self._check_fv(chanel=channel, direction=direction)
             self.data_real = data
 
-            # Формируем относительные фазы: фаза(0) - фаза(ФВ), амплитуды оставляем как есть
             if 0 in data:
                 rel_data: Dict[float, List[float]] = {}
                 zero_list = data[0]
@@ -274,18 +322,37 @@ class CheckMAStend:
                 logger.warning('Не найдены данные для ФВ=0. Относительные фазы не будут сформированы')
                 self.data_relative = None
 
+
+            for ppm_num in range(1, 33):
+                excel_row = [ppm_num, ]
+                for fv, res in self.data_relative.items():
+                    excel_row.append(res[(ppm_num-1) * 2])
+                    excel_row.append(res[(ppm_num-1) * 2 + 1])
+                for k, value in enumerate(excel_row):
+                    worksheet.cell(row=ppm_num + 2, column=k + 1).value = value
+
             if self.data_callback and self.data_relative is not None:
                 try:
                     self.data_callback.emit(self.data_relative)
                 except Exception as e:
                     logger.error(f"Ошибка при отправке результирующих данных в UI: {e}")
 
-            # После ФВ запускаем проверку линий задержки и отправляем усреднённые дельты
             try:
                 lz_results = self._check_lz(chanel=channel, direction=direction)
                 # ожидаемый формат: {lz: (mean_amp_delta, mean_delay_delta)}
                 if self.delay_callback and lz_results:
                     self.delay_callback.emit(lz_results)
+
+                excel_row = [f'ЛЗ№', 'Относительная амплитуда', 'Задержка, пс']
+                for i, value in enumerate(excel_row):
+                    worksheet.cell(row=36, column=i+1).value = value
+                for lz, result in lz_results.items():
+                    if lz == 0:
+                        continue
+                    excel_row = [f'ЛЗ{lz}', result[0], result[1]]
+                    for i, value in enumerate(excel_row):
+                        worksheet.cell(row=36 + self.delay_lines.index(lz), column=i + 1).value = value
+
             except Exception as e:
                 logger.error(f"Ошибка проверки линий задержки: {e}")
 
@@ -304,5 +371,6 @@ class CheckMAStend:
                 logger.error(f"Ошибка при аварийном выключении PNA: {e}")
             raise
 
+        workbook.save(file_path)
         self.ma.turn_off_vips()
         return results

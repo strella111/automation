@@ -10,6 +10,7 @@ from ...common.exceptions import WrongInstrumentError, PlanarScannerError
 from PyQt5.QtCore import QThread
 import threading
 import numpy as np
+from PyQt5 import QtCore
 
 class CheckMA:
     """Класс для проверки антенного модуля"""
@@ -244,7 +245,8 @@ class CheckMA:
         delay_results = []
         try:
 
-            worksheet, workbook, file_path = get_or_create_excel_for_check(dir_name=f'check_data_collector',
+            worksheet, workbook, file_path = get_or_create_excel_for_check(base_dir=QtCore.QSettings('PULSAR', 'PhaseMA').value('base_save_dir', ''),
+                                                                 dir_name='check',
                                                                  file_name=f'{self.ma.bu_addr}.xlsx',
                                                                  mode='check',
                                                                  chanel=channel,

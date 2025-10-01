@@ -9,9 +9,16 @@ from loguru import logger
 class SettingsDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle('Настройки устройств')
+        self.setWindowTitle('Параметры')
         self.setModal(True)
         layout = QtWidgets.QVBoxLayout(self)
+
+        tabs = QtWidgets.QTabWidget()
+        layout.addWidget(tabs)
+
+        # --- Вкладка: Устройства ---
+        devices_tab = QtWidgets.QWidget()
+        devices_layout = QtWidgets.QVBoxLayout(devices_tab)
 
         # --- Настройки PNA ---
         pna_group = QtWidgets.QGroupBox('Настройки PNA')
@@ -26,7 +33,7 @@ class SettingsDialog(QtWidgets.QDialog):
         pna_layout.addRow('Порт:', self.pna_port_edit)
         pna_layout.addRow('Режим:', self.pna_mode_combo)
         pna_layout.addRow('Путь к файлам:', self.pna_files_path)
-        layout.addWidget(pna_group)
+        devices_layout.addWidget(pna_group)
 
         # --- Настройки Генератора АКИП ---
         akip_group = QtWidgets.QGroupBox('Настройки генератора АКИП')
@@ -51,7 +58,7 @@ class SettingsDialog(QtWidgets.QDialog):
         psn_layout.addRow('Скорость Y:', self.psn_speed_y)
         psn_layout.addRow('Ускорение X:', self.psn_acc_x)
         psn_layout.addRow('Ускорение Y:', self.psn_acc_y)
-        layout.addWidget(psn_group)
+        devices_layout.addWidget(psn_group)
 
         # --- Настройки TriggerBox ---
         trigger_group = QtWidgets.QGroupBox('Настройки TriggerBox')
@@ -63,7 +70,7 @@ class SettingsDialog(QtWidgets.QDialog):
         trigger_layout.addRow('IP:', self.trigger_ip_edit)
         trigger_layout.addRow('Порт:', self.trigger_port_edit)
         trigger_layout.addRow('Режим:', self.trigger_mode_combo)
-        layout.addWidget(trigger_group)
+        devices_layout.addWidget(trigger_group)
 
         # --- Настройки MA ---
         ma_group = QtWidgets.QGroupBox('Настройки MA')
@@ -79,7 +86,29 @@ class SettingsDialog(QtWidgets.QDialog):
         self.ma_mode_combo = QtWidgets.QComboBox()
         self.ma_mode_combo.addItems(['Реальный', 'Тестовый'])
         ma_layout.addRow('Режим:', self.ma_mode_combo)
-        layout.addWidget(ma_group)
+        devices_layout.addWidget(ma_group)
+        tabs.addTab(devices_tab, 'Устройства')
+
+        # --- Вкладка: Другое (сохранение) ---
+        other_tab = QtWidgets.QWidget()
+        other_layout = QtWidgets.QFormLayout(other_tab)
+        self.base_save_dir_edit = QtWidgets.QLineEdit()
+        self.base_save_dir_edit.setReadOnly(True)
+        self.base_save_dir_btn = QtWidgets.QPushButton('Выбрать папку...')
+        def pick_base_dir():
+            path = QtWidgets.QFileDialog.getExistingDirectory(self, 'Выбор общей папки сохранения')
+            if path:
+                self.base_save_dir_edit.setText(path)
+        self.base_save_dir_btn.clicked.connect(pick_base_dir)
+        h = QtWidgets.QHBoxLayout()
+        h.addWidget(self.base_save_dir_edit, 1)
+        h.addWidget(self.base_save_dir_btn, 0)
+        container = QtWidgets.QWidget(); container.setLayout(h)
+        other_layout.addRow('Общая папка хранения данных:', container)
+        info_lbl = QtWidgets.QLabel('Внутри будут созданы подпапки: check, stend, phase')
+        info_lbl.setStyleSheet('color: gray')
+        other_layout.addRow('', info_lbl)
+        tabs.addTab(other_tab, 'Другое')
 
         # Обновляем список COM портов сразу при создании диалога
         self.update_com_ports()
@@ -132,6 +161,7 @@ class SettingsDialog(QtWidgets.QDialog):
             'pna_mode': self.pna_mode_combo.currentIndex(),
             'psn_mode': self.psn_mode_combo.currentIndex(),
             'pna_files_path': self.pna_files_path.text(),
+            'base_save_dir': self.base_save_dir_edit.text(),
         }
 
     def set_settings(self, settings):
@@ -155,6 +185,7 @@ class SettingsDialog(QtWidgets.QDialog):
         self.ma_com_combo.setCurrentText(settings.get('ma_com_port', ''))
         self.ma_mode_combo.setCurrentIndex(int(settings.get('ma_mode', 0)))
         self.pna_files_path.setText(settings.get('pna_files_path', 'C:\\Users\\Public\\Documents\\Network Analyzer\\'))
+        self.base_save_dir_edit.setText(settings.get('base_save_dir', ''))
 
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
@@ -267,6 +298,7 @@ class MainWindow(QtWidgets.QMainWindow):
         dlg.pna_port_edit.setText(self.settings.value('pna_port', ''))
         dlg.pna_mode_combo.setCurrentIndex(int(self.settings.value('pna_mode', 0)))
         dlg.pna_files_path.setText(self.settings.value('pna_files_path', 'C:\\Users\\Public\\Documents\\Network Analyzer\\'))
+        dlg.base_save_dir_edit.setText(self.settings.value('base_save_dir', ''))
         
         dlg.psn_ip_edit.setText(self.settings.value('psn_ip', ''))
         dlg.psn_port_edit.setText(self.settings.value('psn_port', ''))
@@ -294,6 +326,13 @@ class MainWindow(QtWidgets.QMainWindow):
             logger.debug(f'Сохраненные настройки: {settings}')
             
             # Передаём параметры в оба виджета
+            self.phase_ma_widget.set_device_settings(settings)
+            self.check_ma_widget.set_device_settings(settings)
+            self.check_stend_ma_widget.set_device_settings(settings)
+        else:
+            # При отмене — не сохраняем, но всё равно пробросим актуальные настройки (на случай, если были активные)
+            settings = self._collect_current_settings()
+            settings['base_save_dir'] = self.settings.value('base_save_dir', '')
             self.phase_ma_widget.set_device_settings(settings)
             self.check_ma_widget.set_device_settings(settings)
             self.check_stend_ma_widget.set_device_settings(settings)

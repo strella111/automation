@@ -14,6 +14,7 @@ from core.common.enums import Channel, Direction
 from core.common.coordinate_system import CoordinateSystemManager
 
 from ui.pna_file_dialog import PnaFileDialog
+from ui.device_connection_worker import DeviceConnectionWorker
 
 
 class AddCoordinateSystemDialog(QtWidgets.QDialog):
@@ -361,6 +362,10 @@ class CheckMaWidget(QtWidgets.QWidget):
     error_signal = QtCore.pyqtSignal(str, str)  # title, message
     buttons_enabled_signal = QtCore.pyqtSignal(bool)  # enabled
     check_finished_signal = QtCore.pyqtSignal()  # когда проверка завершена
+    
+    # Сигналы для асинхронного подключения к устройствам
+    device_connection_started = QtCore.pyqtSignal(str)  # device_name
+    device_connection_finished = QtCore.pyqtSignal(str, bool, str)  # device_name, success, message
     
     def __init__(self):
         super().__init__()
@@ -876,6 +881,11 @@ class CheckMaWidget(QtWidgets.QWidget):
         self._check_thread = None
         self._stop_flag = threading.Event()
         self._pause_flag = threading.Event()
+        
+        # Потоки для асинхронного подключения к устройствам
+        self._ma_connection_thread = None
+        self._pna_connection_thread = None
+        self._psn_connection_thread = None
 
         self.ma_connect_btn.clicked.connect(self.connect_ma)
         self.pna_connect_btn.clicked.connect(self.connect_pna)
@@ -890,6 +900,10 @@ class CheckMaWidget(QtWidgets.QWidget):
         self.error_signal.connect(self.show_error_message)
         self.buttons_enabled_signal.connect(self.set_buttons_enabled)
         self.check_finished_signal.connect(self.on_check_finished)
+        
+        # Подключение сигналов для асинхронного подключения к устройствам
+        self.device_connection_started.connect(self._on_device_connection_started)
+        self.device_connection_finished.connect(self._on_device_connection_finished)
 
         self.set_buttons_enabled(True)
         self.device_settings = {}
@@ -1579,19 +1593,23 @@ class CheckMaWidget(QtWidgets.QWidget):
             self.show_error_message("Ошибка настроек", "COM-порт не выбран. Откройте настройки и выберите COM-порт.")
             return
 
+        # Проверяем, не идет ли уже подключение
+        if self._ma_connection_thread and self._ma_connection_thread.isRunning():
+            logger.info("Подключение к МА уже выполняется...")
+            return
+
         logger.info(f'Попытка подключения к МА через {com_port if mode == 0 else "тестовый режим"}, режим: {"реальный" if mode == 0 else "тестовый"}')
 
-        try:
-            self.ma = MA(com_port=com_port, mode=mode)
-            self.ma.connect()
-            if self.ma.bu_addr:
-                self.ma_connect_btn.setText(f'МА №{self.ma.bu_addr}')
-            self.set_button_connection_state(self.ma_connect_btn, True)
-            logger.info(f'МА успешно подключен {"" if mode == 0 else "(тестовый режим)"}')
-        except Exception as e:
-            self.ma = None
-            self.set_button_connection_state(self.ma_connect_btn, False)
-            self.show_error_message("Ошибка подключения МА", f"Не удалось подключиться к МА: {str(e)}")
+        # Создаем поток для подключения
+        connection_params = {
+            'com_port': com_port,
+            'mode': mode
+        }
+        
+        self._ma_connection_thread = DeviceConnectionWorker('MA', connection_params)
+        self._ma_connection_thread.connection_finished.connect(self._on_ma_connection_finished)
+        self.device_connection_started.emit('MA')
+        self._ma_connection_thread.start()
 
     def connect_pna(self):
         """Подключает/отключает PNA"""
@@ -1606,19 +1624,26 @@ class CheckMaWidget(QtWidgets.QWidget):
                 self.show_error_message("Ошибка отключения PNA", f"Не удалось отключить PNA: {str(e)}")
                 return
 
+        # Проверяем, не идет ли уже подключение
+        if self._pna_connection_thread and self._pna_connection_thread.isRunning():
+            logger.info("Подключение к PNA уже выполняется...")
+            return
+
         ip = self.device_settings.get('pna_ip', '')
         port = int(self.device_settings.get('pna_port', ''))
         mode = self.device_settings.get('pna_mode', 0)
 
-        try:
-            self.pna = PNA(ip=ip, port=port, mode=mode)
-            self.pna.connect()
-            self.set_button_connection_state(self.pna_connect_btn, True)
-            logger.info(f'PNA успешно подключен {"" if mode == 0 else "(тестовый режим)"}')
-        except Exception as e:
-            self.pna = None
-            self.set_button_connection_state(self.pna_connect_btn, False)
-            self.show_error_message("Ошибка подключения PNA", f"Не удалось подключиться к PNA: {str(e)}")
+        # Создаем поток для подключения
+        connection_params = {
+            'ip': ip,
+            'port': port,
+            'mode': mode
+        }
+        
+        self._pna_connection_thread = DeviceConnectionWorker('PNA', connection_params)
+        self._pna_connection_thread.connection_finished.connect(self._on_pna_connection_finished)
+        self.device_connection_started.emit('PNA')
+        self._pna_connection_thread.start()
 
     def connect_psn(self):
         """Подключает/отключает PSN"""
@@ -1633,19 +1658,26 @@ class CheckMaWidget(QtWidgets.QWidget):
                 self.show_error_message("Ошибка отключения PSN", f"Не удалось отключить PSN: {str(e)}")
                 return
 
+        # Проверяем, не идет ли уже подключение
+        if self._psn_connection_thread and self._psn_connection_thread.isRunning():
+            logger.info("Подключение к PSN уже выполняется...")
+            return
+
         ip = self.device_settings.get('psn_ip', '')
         port = self.device_settings.get('psn_port', '')
         mode = self.device_settings.get('psn_mode', 0)
 
-        try:
-            self.psn = PSN(ip=ip, port=port, mode=mode)
-            self.psn.connect()
-            self.set_button_connection_state(self.psn_connect_btn, True)
-            logger.info(f'PSN успешно подключен {"" if mode == 0 else "(тестовый режим)"}')
-        except Exception as e:
-            self.psn = None
-            self.set_button_connection_state(self.psn_connect_btn, False)
-            self.show_error_message("Ошибка подключения PSN", f"Не удалось подключиться к PSN: {str(e)}")
+        # Создаем поток для подключения
+        connection_params = {
+            'ip': ip,
+            'port': port,
+            'mode': mode
+        }
+        
+        self._psn_connection_thread = DeviceConnectionWorker('PSN', connection_params)
+        self._psn_connection_thread.connection_finished.connect(self._on_psn_connection_finished)
+        self.device_connection_started.emit('PSN')
+        self._psn_connection_thread.start()
 
     def set_device_settings(self, settings: dict):
         """Сохраняет параметры устройств из настроек для последующего применения."""
@@ -1817,6 +1849,67 @@ class CheckMaWidget(QtWidgets.QWidget):
         QMessageBox.information(self, title, message)
         logger.info(f"{title}: {message}")
 
+    @QtCore.pyqtSlot(str)
+    def _on_device_connection_started(self, device_name: str):
+        """Обработчик начала подключения к устройству"""
+        logger.info(f"Начинается подключение к {device_name}...")
+
+    @QtCore.pyqtSlot(str, bool, str)
+    def _on_device_connection_finished(self, device_name: str, success: bool, message: str):
+        """Обработчик завершения подключения к устройству"""
+        if success:
+            logger.info(f"{device_name} успешно подключен: {message}")
+        else:
+            logger.error(f"Ошибка подключения к {device_name}: {message}")
+            self.show_error_message(f"Ошибка подключения к {device_name}", message)
+
+    @QtCore.pyqtSlot(str, bool, str, object)
+    def _on_ma_connection_finished(self, device_name: str, success: bool, message: str, device_instance):
+        """Обработчик завершения подключения к МА"""
+        if success:
+            self.ma = device_instance
+            if self.ma.bu_addr:
+                self.ma_connect_btn.setText(f'МА №{self.ma.bu_addr}')
+            self.set_button_connection_state(self.ma_connect_btn, True)
+            logger.info(f'МА успешно подключен: {message}')
+        else:
+            self.ma = None
+            self.set_button_connection_state(self.ma_connect_btn, False)
+            self.show_error_message("Ошибка подключения МА", f"Не удалось подключиться к МА: {message}")
+        
+        # Очищаем ссылку на поток
+        self._ma_connection_thread = None
+
+    @QtCore.pyqtSlot(str, bool, str, object)
+    def _on_pna_connection_finished(self, device_name: str, success: bool, message: str, device_instance):
+        """Обработчик завершения подключения к PNA"""
+        if success:
+            self.pna = device_instance
+            self.set_button_connection_state(self.pna_connect_btn, True)
+            logger.info(f'PNA успешно подключен: {message}')
+        else:
+            self.pna = None
+            self.set_button_connection_state(self.pna_connect_btn, False)
+            self.show_error_message("Ошибка подключения PNA", f"Не удалось подключиться к PNA: {message}")
+        
+        # Очищаем ссылку на поток
+        self._pna_connection_thread = None
+
+    @QtCore.pyqtSlot(str, bool, str, object)
+    def _on_psn_connection_finished(self, device_name: str, success: bool, message: str, device_instance):
+        """Обработчик завершения подключения к PSN"""
+        if success:
+            self.psn = device_instance
+            self.set_button_connection_state(self.psn_connect_btn, True)
+            logger.info(f'Планарный сканер успешно подключен: {message}')
+        else:
+            self.psn = None
+            self.set_button_connection_state(self.psn_connect_btn, False)
+            self.show_error_message("Ошибка подключения планарного сканера", f"Не удалось подключиться к PSN: {message}")
+        
+        # Очищаем ссылку на поток
+        self._psn_connection_thread = None
+
     def open_file_dialog(self):
         """Открытие диалога выбора файла настроек PNA"""
         try:
@@ -1970,8 +2063,11 @@ class CheckMaWidget(QtWidgets.QWidget):
                     """Обновляет Excel файл для конкретного ППМ"""
                     try:
                         from utils.excel_module import get_or_create_excel_for_check
+                        import os
+                        base_dir = self.device_settings.get('base_save_dir', '').strip() or 'check_data_collector'
+                        dir_name = os.path.join(base_dir, 'check')
                         worksheet, workbook, file_path = get_or_create_excel_for_check(
-                            dir_name='check_data_collector',
+                            dir_name=dir_name,
                             file_name=f'{self.ma.bu_addr}.xlsx',
                             mode='check',
                             chanel=channel,
