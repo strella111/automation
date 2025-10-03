@@ -270,7 +270,6 @@ class CheckMA:
                 logger.info("Нормировка PNA...")
                 self.ma.switch_ppm(self.ppm_norm_number, chanel=channel, direction=direction, state=PpmState.ON)
                 self.ma.set_delay(chanel=channel, direction=direction,value=0)
-                time.sleep(0.5)
                 self.pna.normal_current_trace()
                 self.norm_amp, self.norm_phase = self.pna.get_center_freq_data()
                 self.pna.set_delay_type()
@@ -284,7 +283,6 @@ class CheckMA:
 
 
                 for delay in self.delay_lines[1:]:
-                    time.sleep(0.5)
                     self.ma.set_delay(chanel=channel, direction=direction, value=delay)
                     delay_abs = self.pna.get_mean_value()
                     amp_abs = self.pna.get_mean_value_from_sdata()

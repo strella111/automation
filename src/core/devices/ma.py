@@ -10,14 +10,13 @@ from utils.logger import format_device_log
 class MA:
     """Класс для работы с модулем антенным"""
     
-    def __init__(self, com_port: str, mode: int = 0, command_delay=0.1):
+    def __init__(self, com_port: str, mode: int = 0):
         """
         Инициализация модуля антенного
         
         Args:
             com_port: COM-порт для подключения
             mode: Режим работы (0 - реальный, 1 - тестовый)
-            command_delay: Задержка между отправкой команд на МА
         """
         self.bu_addr = 0
         self.com_port = com_port
@@ -27,7 +26,6 @@ class MA:
         self.CRC_INIT = 0x1d0f
         self.ppm_data = bytearray(25)
         self.retry_counter = 0
-        self.command_delay = command_delay
 
     def connect(self) -> None:
         """Подключение к модулю антенному"""
@@ -102,7 +100,6 @@ class MA:
                 logger.error('Не обнаружено подключение к MA при попытке отправки данных')
                 raise WrongInstrumentError('При попытке обращения к connection MA произошла ошибка')
             self.connection.write(string if isinstance(string, bytes) else string.encode())
-            time.sleep(self.command_delay)
             logger.debug(format_device_log('MA', '>>', string))
 
     def read(self) -> bytes:
@@ -205,7 +202,6 @@ class MA:
                     logger.error(f'После 3 попыток не удалось отправить команду {command.hex(" ")} на БУ')
                     return
                     #raise MaCommandNotDelivered(f'После 3 попыток не удалось отправить команду {command.hex(" ")} на БУ')
-                time.sleep(0.5)
                 self.retry_counter += 1
                 self._send_command(command, is_check=True)
 

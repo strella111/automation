@@ -157,8 +157,6 @@ class PhaseMaMeas:
             self.ma.switch_ppm(self.ppm_norm_number, chanel=chanel, direction=direction, state=PpmState.ON)
             self.ma.set_phase_shifter(self.ppm_norm_number, chanel=chanel, direction=direction, value=0)
             self.ma.set_delay(chanel, direction=direction, value=0)
-            time.sleep(5)
-            time.sleep(0.5)
             _ , self.norm_phase = self.pna.get_center_freq_data()
             self.ma.switch_ppm(self.ppm_norm_number, chanel=chanel, direction=direction, state=PpmState.OFF)
 

@@ -85,11 +85,6 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.direction_combo.addItems(['Горизонтальная', 'Вертикальная'])
         self.ma_tab_layout.addRow('Поляризация:', self.direction_combo)
 
-        self.ma_command_delay = QtWidgets.QDoubleSpinBox()
-        self.ma_command_delay.setRange(0.01, 10)
-        self.ma_command_delay.setSingleStep(0.01)
-        self.ma_command_delay.setValue(0.1)
-        self.ma_tab_layout.addRow('Задержка между командами', self.ma_command_delay)
 
         self.param_tabs.addTab(self.ma_tab, 'Модуль антенный')
 
@@ -181,13 +176,6 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.trig_pulse_period.setValue(500.000)
         self.trig_tab_layout.addRow('Период импульса:', self.trig_pulse_period)
 
-        self.trig_post_trigger_delay = QtWidgets.QDoubleSpinBox()
-        self.trig_post_trigger_delay.setDecimals(3)
-        self.trig_post_trigger_delay.setRange(0.001, 100.000)
-        self.trig_post_trigger_delay.setSingleStep(0.1)
-        self.trig_post_trigger_delay.setSuffix(' мс')
-        self.trig_post_trigger_delay.setValue(1.000)
-        self.trig_tab_layout.addRow('Задержка после обратного триггера:', self.trig_post_trigger_delay)
 
         self.trig_min_alarm_guard = QtWidgets.QDoubleSpinBox()
         self.trig_min_alarm_guard.setRange(0.0, 10e6)
@@ -668,7 +656,6 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         # MA
         s.setValue('channel', self.channel_combo.currentText())
         s.setValue('direction', self.direction_combo.currentText())
-        s.setValue('ma_command_delay', float(self.ma_command_delay.value()))
         # PNA
         s.setValue('s_param', self.s_param_combo.currentText())
         s.setValue('pna_power', float(self.pna_power.value()))
@@ -683,6 +670,13 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         for angle, controls in self.phase_shifter_tolerances.items():
             s.setValue(f'ps_tol_{angle}_min', float(controls['min'].value()))
             s.setValue(f'ps_tol_{angle}_max', float(controls['max'].value()))
+        # Synchronization parameters
+        s.setValue('trig_ttl_channel', self.trig_ttl_channel.currentText())
+        s.setValue('trig_ext_channel', self.trig_ext_channel.currentText())
+        s.setValue('trig_start_lead', float(self.trig_start_lead.value()))
+        s.setValue('trig_pulse_period', float(self.trig_pulse_period.value()))
+        s.setValue('trig_min_alarm_guard', float(self.trig_min_alarm_guard.value()))
+        s.setValue('trig_ext_debounce', float(self.trig_ext_debounce.value()))
         s.sync()
 
     def load_ui_settings(self):
@@ -694,9 +688,6 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         if (v := s.value('direction')):
             idx = self.direction_combo.findText(v)
             if idx >= 0: self.direction_combo.setCurrentIndex(idx)
-        if (v := s.value('ma_command_delay')) is not None:
-            try: self.ma_command_delay.setValue(float(v))
-            except Exception: pass
         # PNA
         if (v := s.value('s_param')):
             idx = self.s_param_combo.findText(v)
@@ -740,6 +731,24 @@ class StendCheckMaWidget(BaseMeasurementWidget):
                 try: controls['max'].setValue(float(v))
                 except Exception: pass
 
+        # Synchronization parameters
+        if (v := s.value('trig_ttl_channel')):
+            idx = self.trig_ttl_channel.findText(v)
+            if idx >= 0: self.trig_ttl_channel.setCurrentIndex(idx)
+        if (v := s.value('trig_ext_channel')):
+            idx = self.trig_ext_channel.findText(v)
+            if idx >= 0: self.trig_ext_channel.setCurrentIndex(idx)
+        for key, widget in [
+            ('trig_start_lead', self.trig_start_lead),
+            ('trig_pulse_period', self.trig_pulse_period),
+            ('trig_min_alarm_guard', self.trig_min_alarm_guard),
+            ('trig_ext_debounce', self.trig_ext_debounce)
+        ]:
+            val = s.value(key)
+            if val is not None:
+                try: widget.setValue(float(val))
+                except Exception: pass
+
 
     def start_check(self):
         """Запускает процесс проверки"""
@@ -752,12 +761,21 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self._pause_flag.clear()
         self.pause_btn.setText('Пауза')
 
+        # Очистка таблицы результатов ППМ
         self.results_table.clearContents()
         for row in range(32):
             self.results_table.setItem(row, 0, self.create_centered_table_item(str(row + 1)))
             for col in range(1, 15):
                 self.results_table.setItem(row, col, QtWidgets.QTableWidgetItem(""))
 
+        # Очистка таблицы линий задержки
+        self.delay_table.clearContents()
+        for row in range(4):
+            self.delay_table.setItem(row, 0, self.create_centered_table_item(f"ЛЗ{row}"))
+            for col in range(1, 5):
+                self.delay_table.setItem(row, col, QtWidgets.QTableWidgetItem(""))
+
+        # Очистка оперативных данных
         self.ppm_data.clear()
         self.check_completed = False
 
@@ -836,10 +854,11 @@ class StendCheckMaWidget(BaseMeasurementWidget):
                         self.phase_shifter_tolerances = criteria.get('phase_shifter_tolerances', None)
 
                 def start(self, chanel: Channel, direction: Direction):
-                    """Переопределяем метод start для сохранения нормировочных значений"""
+                    """Переопределяем метод start для очистки оперативных данных"""
+                    # Очищаем оперативные данные перед началом нового измерения
+                    self.data_relative = None
+                    
                     results = super().start(chanel, direction)
-
-
                     return results
 
                 # Поэлементные методы колбэка не нужны: обновление идёт через realtime/paket
@@ -874,7 +893,6 @@ class StendCheckMaWidget(BaseMeasurementWidget):
                 # Период в UI в мкс → секунды; lead в мс → секунды; post_trigger_delay в мс → секунды
                 check.period = float(self.trig_pulse_period.value()) * 1e-6
                 check.lead = float(self.trig_start_lead.value()) * 1e-3
-                check.post_trigger_delay = float(self.trig_post_trigger_delay.value()) * 1e-3
             except Exception:
                 pass
 

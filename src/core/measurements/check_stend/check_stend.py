@@ -47,7 +47,6 @@ class CheckMAStend:
         self.period = None
         self.number_of_freqs = None
         self.lead = None
-        self.post_trigger_delay = 0.01  # Задержка после обратного триггера по умолчанию
 
         self.phase_shifts = [0, 5.625, 11.25, 22.5, 45, 90, 180]
         self.delay_lines = [0, 1, 2, 4, 8]
@@ -209,7 +208,6 @@ class CheckMAStend:
                     QThread.msleep(100)
 
                 self.burst_and_check_external_trigger(ppm_num=ppm_num)
-                time.sleep(self.post_trigger_delay)
                 try:
                     amp_mean = float(self.pna.get_mean_value_from_sdata())
                 except Exception:

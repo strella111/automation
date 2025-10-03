@@ -160,7 +160,6 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
 
         com_port = self.device_settings.get('ma_com_port', '')
         mode = self.device_settings.get('ma_mode', 0)
-        delay = float(getattr(self, 'ma_command_delay', type('obj', (object,), {'value': lambda: 0.1})()).value())
 
         if mode == 0 and (not com_port or com_port == 'Тестовый'):
             self.show_error_message("Ошибка настроек", "COM-порт не выбран. Откройте настройки и выберите COM-порт.")
@@ -171,8 +170,7 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
         # Создаем поток для подключения
         connection_params = {
             'com_port': com_port,
-            'mode': mode,
-            'command_delay': delay
+            'mode': mode
         }
         
         self._ma_connection_thread = DeviceConnectionWorker('MA', connection_params)
