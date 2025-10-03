@@ -444,34 +444,34 @@ class MA:
         logger.info('Запрошена телеметрия МА')
         command_code = b'\xfa'
         command = self._generate_command(bu_num=self.bu_addr, command_code=command_code)
-        self._send_command(command)
+        self.write(command)
         response = self.read()
         if not response:
-            logger.error("Не поступило ответа на команду КУ-ТМ от БУ№{self.bu_addr}")
+            logger.error(f"Не поступило ответа на команду КУ-ТМ от БУ№{self.bu_addr}")
 
         data = dict()
         data['addr']= int(response[1] & 0x3f)
         data['command_code'] = response[2]
-        data['command_id'] = response[3]
+        data['command_id'] = response[3:5]
         data['crc'] = response[-2:]
         for j in range(32):
-            data[f'ppm{j}'] = response[4+j:4+j+1]
+            data[f'ppm{j+1}'] = response[5+j:5+j+2]
 
-        data['mdo'] = response[68:70]
-        data['bu'] = response[71]
-        data['vip1'] = response[72:73]
-        data['vip2'] = response[74:75]
-        data['table_beam_number'] = int(response[76:77])
-        data['crc_of_table_beam_number'] = response[78:81]
-        data['crc_calb_table'] = response[82:85]
-        data['strobs_prd'] = int(response[86:89])
-        data['strobs_prm'] = int(response[90:93])
-        data['amount_beams'] = int(response[94:95])
-        data['beam_number_prd'] = int(response[96:97])
-        data['beam_number_prm'] = int(response[98:99])
-        data['configuration_ports'] = response[100]
-        data['crc_voltage_table'] = response[101:104]
-        data['state_bu'] = response[105]
+        data['mdo'] = response[69:72]
+        data['bu'] = response[72]
+        data['vip1'] = response[73:75]
+        data['vip2'] = response[75:77]
+        data['table_beam_number'] = int.from_bytes(response[77:79], byteorder='big')
+        data['crc_of_table_beam_number'] = response[79:83]
+        data['crc_calb_table'] = response[83:87]
+        data['strobs_prd'] = int.from_bytes(response[87:91], byteorder='big')
+        data['strobs_prm'] = int.from_bytes(response[91:95], byteorder='big')
+        data['amount_beams'] = int.from_bytes(response[95:97], byteorder='big')
+        data['beam_number_prd'] = int.from_bytes(response[97:99], byteorder='big')
+        data['beam_number_prm'] = int.from_bytes(response[99:101], byteorder='big')
+        data['configuration_ports'] = response[101]
+        data['crc_voltage_table'] = response[102:106]
+        data['state_bu'] = response[106]
 
         return data
 

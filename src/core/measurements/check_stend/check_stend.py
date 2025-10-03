@@ -47,7 +47,7 @@ class CheckMAStend:
         self.period = None
         self.number_of_freqs = None
         self.lead = None
-        self.post_trigger_delay = 0.001  # Задержка после обратного триггера по умолчанию
+        self.post_trigger_delay = 0.01  # Задержка после обратного триггера по умолчанию
 
         self.phase_shifts = [0, 5.625, 11.25, 22.5, 45, 90, 180]
         self.delay_lines = [0, 1, 2, 4, 8]
@@ -87,6 +87,7 @@ class CheckMAStend:
 
     def burst_and_check_external_trigger(self, ppm_num):
         self.gen.burst(period_s=self.period, count=self.number_of_freqs, lead_s=self.lead)
+        QThread.msleep(int((self.lead + self.period*self.number_of_freqs)*1000))
         counter = 0
         while True:
             evt = self.gen.pop_ext_event()
@@ -106,6 +107,14 @@ class CheckMAStend:
             if evt:
                 return
 
+
+    def _normalize_phase(self, phase: float) -> float:
+        """Нормализует фазу в диапазон [-180, 180]"""
+        while phase > 180:
+            phase -= 360
+        while phase < -180:
+            phase += 360
+        return phase
 
     def _check_fv(self, chanel: Channel, direction: Direction) -> Dict[float, List[float]]:
 
@@ -140,8 +149,6 @@ class CheckMAStend:
 
                 self.burst_and_check_external_trigger(ppm_num=ppm_num)
 
-                time.sleep(self.post_trigger_delay)
-
                 amp_db, phase_deg = self.pna.get_center_freq_data()
                 results[fv].extend([amp_db, phase_deg])
 
@@ -152,7 +159,9 @@ class CheckMAStend:
                     phase_rel = 0.0
                 else:
                     phase_zero = zero_phases[ppm_index] if ppm_index < len(zero_phases) else 0.0
-                    phase_rel = phase_zero - phase_deg
+                    phase_rel = self._normalize_phase(phase_zero - phase_deg)
+                    if phase_rel < 0:
+                        phase_rel += 360
 
                 # Рилтайм-эмит для UI: (угол, номер ППМ 1..32, амплитуда, относительная фаза)
                 if self.realtime_callback:
@@ -314,7 +323,7 @@ class CheckMAStend:
                         amp_val = values[i]
                         phase_val = values[i + 1]
                         phase_zero = zero_list[i + 1] if i + 1 < len(zero_list) else 0.0
-                        phase_rel = phase_zero - phase_val if fv != 0 else 0.0
+                        phase_rel = self._normalize_phase(phase_zero - phase_val) if fv != 0 else 0.0
                         rel_list.extend([amp_val, phase_rel])
                     rel_data[fv] = rel_list
                 self.data_relative = rel_data

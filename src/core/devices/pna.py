@@ -289,9 +289,8 @@ class PNA:
         self._send_data(command)
 
 if __name__ == '__main__':
-    pna = PNA(ip='10.10.61.32', port=5025, mode=0)
+    pna = PNA(ip='192.168.0.12', port=5025, mode=0)
     pna.connect()
-    pna.set_delay_type()
-    response = pna.get_selected_meas()
+    response = pna.get_data()
     print(response)
 

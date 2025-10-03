@@ -297,8 +297,8 @@ class E5818:
 
     def _schedule_alarm_burst(self, start_in_s: float, period_s: float, count: int):
         """Настраивает ALARM1 на серию импульсов начиная с (now + start_in_s)."""
-        if period_s < 0.0001:
-            raise ValueError("period_s слишком мал (минимум 100 мкс)")
+        if period_s < 0.00001:
+            raise ValueError("period_s слишком мал (минимум 10 мкс)")
         if count < 1 or count > 5000:
             raise ValueError("count вне диапазона (1..5000)")
         print('Я тут (314 строка)')

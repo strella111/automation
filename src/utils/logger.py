@@ -16,13 +16,13 @@ def setup_logging(log_file: str = "logs/app.log"):
 
     logger.add(
         sys.stderr,
-        format="{time:YYYY-MM-DD HH:mm:ss}\t{level}\t{message}",
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS}\t{level}\t{message}",
         level="DEBUG"
     )
 
     logger.add(
         log_file,
-        format="{time:YYYY-MM-DD HH:mm:ss}\t{level}\t{message}",
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS}\t{level}\t{message}",
         level="DEBUG",
         retention="7 days",
         compression="zip"
