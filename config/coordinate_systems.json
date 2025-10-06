@@ -2,8 +2,13 @@
     "coordinate_systems": [
         {
             "name": "Аппаратная",
-            "x_offset": 0,
-            "y_offset": 0
+            "x_offset": 0.0,
+            "y_offset": 0.0
+        },
+        {
+            "name": "Тестовая",
+            "x_offset": 11.0,
+            "y_offset": -10.0
         }
     ]
 }

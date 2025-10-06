@@ -2,7 +2,6 @@ from PyQt5 import QtWidgets, QtCore, QtGui
 from PyQt5.QtGui import QTextCursor
 from PyQt5.QtWidgets import QMessageBox, QStyle
 from PyQt5.QtCore import QSize
-import os
 from loguru import logger
 import threading
 import numpy as np
@@ -11,347 +10,10 @@ from core.common.enums import Channel, Direction
 from core.common.coordinate_system import CoordinateSystemManager
 
 from ui.dialogs.pna_file_dialog import PnaFileDialog
-from ui.widgets.base_measurement_widget import BaseMeasurementWidget, QTextEditLogHandler
-
-
-class AddCoordinateSystemDialog(QtWidgets.QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle('Добавить систему координат')
-        self.setModal(True)
-        self.setFixedSize(350, 200)
-        
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
-
-        form_layout = QtWidgets.QFormLayout()
-        form_layout.setSpacing(10)
-        
-        self.name_edit = QtWidgets.QLineEdit()
-        self.name_edit.setPlaceholderText('Введите название системы координат')
-        form_layout.addRow('Название:', self.name_edit)
-        
-        self.x_offset_spinbox = QtWidgets.QDoubleSpinBox()
-        self.x_offset_spinbox.setRange(-9999.0, 9999.0)
-        self.x_offset_spinbox.setDecimals(2)
-        self.x_offset_spinbox.setSuffix(' см')
-        self.x_offset_spinbox.setValue(0.0)
-        form_layout.addRow('Смещение X:', self.x_offset_spinbox)
-        
-        self.y_offset_spinbox = QtWidgets.QDoubleSpinBox()
-        self.y_offset_spinbox.setRange(-9999.0, 9999.0)
-        self.y_offset_spinbox.setDecimals(2)
-        self.y_offset_spinbox.setSuffix(' см')
-        self.y_offset_spinbox.setValue(0.0)
-        form_layout.addRow('Смещение Y:', self.y_offset_spinbox)
-        
-        layout.addLayout(form_layout)
-        
-        # Кнопки
-        buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-        
-        # Валидация при изменении текста
-        self.name_edit.textChanged.connect(self.validate_input)
-        self.validate_input()
-        
-    def validate_input(self):
-        """Проверяет корректность введенных данных"""
-        name = self.name_edit.text().strip()
-        ok_button = self.findChild(QtWidgets.QDialogButtonBox).button(QtWidgets.QDialogButtonBox.Ok)
-        ok_button.setEnabled(len(name) > 0)
-        
-    def get_values(self):
-        """Возвращает введенные значения"""
-        return (
-            self.name_edit.text().strip(),
-            self.x_offset_spinbox.value(),
-            self.y_offset_spinbox.value()
-        )
-
-
-class QTextEditLogHandler(QtCore.QObject):
-    log_signal = QtCore.pyqtSignal(str)
-
-    def __init__(self, text_edit: QtWidgets.QTextEdit):
-        super().__init__()
-        self.text_edit = text_edit
-        self.log_signal.connect(self.append_text)
-
-    def write(self, message):
-        self.log_signal.emit(message)
-
-    def flush(self):
-        pass
-
-    def append_text(self, message):
-        self.text_edit.moveCursor(QTextCursor.End)
-        self.text_edit.insertPlainText(message)
-        self.text_edit.moveCursor(QTextCursor.End)
-
-class PpmRect(QtWidgets.QGraphicsRectItem):
-    def __init__(self, ppm_num, parent_widget, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.ppm_num = ppm_num
-        self.parent_widget = parent_widget
-        self.setAcceptHoverEvents(True)
-        self.setFlag(QtWidgets.QGraphicsItem.ItemIsSelectable, True)
-
-        default_color = "#f8f9fa"
-        border_color = "#dee2e6"
-        
-        self.setBrush(QtGui.QBrush(QtGui.QColor(default_color)))
-        self.setPen(QtGui.QPen(QtGui.QColor(border_color), 1.5))
-        self.text = None
-        self.status = None
-        self._hover_prev_color = QtGui.QColor(245, 248, 252)
-
-    def set_status(self, status):
-        # Нормализация входного статуса: поддержка bool и строк в любом регистре
-        if isinstance(status, bool):
-            norm = 'ok' if status else 'fail'
-        elif isinstance(status, str):
-            norm = status.strip().lower()
-        else:
-            norm = 'fail' if not status else 'ok'
-
-        if norm == "ok":
-            color = "#28a745"  # зеленый
-        elif norm == "fail":
-            color = "#dc3545"  # красный
-        else:
-            color = "#f8f9fa"  # серый по умолчанию
-        
-        self.setBrush(QtGui.QBrush(QtGui.QColor(color)))
-        self.status = norm
-
-    def hoverEnterEvent(self, event):
-        """Подсветка при наведении мыши"""
-        hover_color = "#e9ecef"
-
-        if self.status == "ok":
-            hover_color = "#28a745"  # зеленый
-        elif self.status == "fail":
-            hover_color = "#dc3545"  # красный
-
-        color = QtGui.QColor(hover_color)
-        color = color.lighter(110)
-        self.setBrush(QtGui.QBrush(color))
-        super().hoverEnterEvent(event)
-
-    def hoverLeaveEvent(self, event):
-        """Восстанавливаем цвет при уходе мыши"""
-        self.set_status(self.status)
-        super().hoverLeaveEvent(event)
-
-    def mousePressEvent(self, event):
-        if event.button() == QtCore.Qt.LeftButton:
-            self.setSelected(True)
-        super().mousePressEvent(event)
-
-
-class BottomRect(QtWidgets.QGraphicsRectItem):
-    def __init__(self, parent_widget, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.parent_widget = parent_widget
-        self.setAcceptHoverEvents(True)
-        self.setFlag(QtWidgets.QGraphicsItem.ItemIsSelectable, True)
-
-        default_color = "#f8f9fa"
-        border_color = "#dee2e6"
-        
-        self.setBrush(QtGui.QBrush(QtGui.QColor(default_color)))
-        self.setPen(QtGui.QPen(QtGui.QColor(border_color), 1.5))
-        self.status = None
-
-    def set_status(self, status):
-        if status == "ok":
-            color = "#28a745"  # зеленый
-        elif status == "fail":
-            color = "#dc3545"  # красный
-        else:
-            color = "#f8f9fa"  # серый по умолчанию
-            
-        qcolor = QtGui.QColor(color)
-        self.setBrush(QtGui.QBrush(qcolor))
-        self.status = status
-        self._hover_prev_color = qcolor
-
-    def hoverEnterEvent(self, event):
-        """Подсветка при наведении мыши"""
-        self._hover_prev_color = self.brush().color()
-        lighter = QtGui.QColor(self._hover_prev_color)
-        lighter = lighter.lighter(110)
-        self.setBrush(QtGui.QBrush(lighter))
-        super().hoverEnterEvent(event)
-
-    def hoverLeaveEvent(self, event):
-        """Восстанавливаем цвет при уходе мыши"""
-        if self._hover_prev_color is not None:
-            self.setBrush(QtGui.QBrush(self._hover_prev_color))
-        super().hoverLeaveEvent(event)
-
-    def mousePressEvent(self, event):
-        if event.button() == QtCore.Qt.LeftButton:
-            self.setSelected(True)
-        super().mousePressEvent(event)
-
-class PpmFieldView(QtWidgets.QGraphicsView):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setScene(QtWidgets.QGraphicsScene(self))
-        self.rects = {}
-        self.texts = {}
-        self.bottom_rect = None
-        self.bottom_text = None
-        self.bottom_rect_height = 70
-        self.setRenderHint(QtGui.QPainter.Antialiasing)
-        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        self.parent_widget = parent
-        self.create_rects()
-
-        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-        self.customContextMenuRequested.connect(self.show_context_menu)
-
-    def create_rects(self):
-        self.scene().clear()
-        self.rects.clear()
-        self.texts.clear()
-
-        text_color = "#212529"
-        font_size = 10
-
-        for col in range(4):
-            for row in range(8):
-                ppm_num = col * 8 + row + 1
-                rect = PpmRect(ppm_num, self.parent_widget, 0, 0, 1, 1)
-                self.scene().addItem(rect)
-                self.rects[ppm_num] = rect
-                # Явно устанавливаем нейтральный статус до старта измерений
-                rect.set_status("")
-
-                font = QtGui.QFont("Segoe UI", font_size, QtGui.QFont.Weight.DemiBold)
-                text = self.scene().addText(f"ППМ {ppm_num}", font)
-                text.setDefaultTextColor(QtGui.QColor(text_color))
-                self.texts[ppm_num] = text
-
-        self.bottom_rect = BottomRect(self.parent_widget, 0, 0, 1, 1)
-        self.scene().addItem(self.bottom_rect)
-        
-        font = QtGui.QFont("Segoe UI", font_size, QtGui.QFont.Weight.DemiBold)
-        self.bottom_text = self.scene().addText("Линии задержки", font)
-        self.bottom_text.setDefaultTextColor(QtGui.QColor(text_color))
-        
-        self.update_layout()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.update_layout()
-        self.fitInView(self.sceneRect(), QtCore.Qt.KeepAspectRatio)
-
-    def update_layout(self):
-        total_height = self.viewport().height()
-        ppm_area_height = total_height - self.bottom_rect_height - 4  # 4 пикселя отступ
-        
-        w = self.viewport().width() / 4
-        h = ppm_area_height / 8
-
-        margin = 2
-        cell_w = w - margin
-        cell_h = h - margin
-
-        for col in range(4):
-            for row in range(8):
-                ppm_num = col * 8 + row + 1
-                rect = self.rects[ppm_num]
-
-                x = col * w + margin / 2
-                y = row * h + margin / 2
-                rect.setRect(x, y, cell_w, cell_h)
-
-                text = self.texts[ppm_num]
-                text_rect = text.boundingRect()
-
-                text_x = x + (cell_w - text_rect.width()) / 2
-                text_y = y + (cell_h - text_rect.height()) / 2
-                
-                text.setPos(text_x, text_y)
-
-        if self.bottom_rect:
-            bottom_y = 8 * h + 2
-            bottom_w = 4 * w - margin
-            
-            self.bottom_rect.setRect(margin / 2, bottom_y, bottom_w, self.bottom_rect_height - margin)
-            
-            if self.bottom_text:
-                text_rect = self.bottom_text.boundingRect()
-                text_x = margin / 2 + (bottom_w - text_rect.width()) / 2
-                text_y = bottom_y + (self.bottom_rect_height - margin - text_rect.height()) / 2
-                self.bottom_text.setPos(text_x, text_y)
-                
-        self.scene().setSceneRect(0, 0, 4*w, total_height)
-
-    def update_ppm(self, ppm_num, status):
-        if ppm_num in self.rects:
-            self.rects[ppm_num].set_status(status)
-    
-    def update_bottom_rect_status(self, status):
-        """Обновляет статус нижнего прямоугольника"""
-        if self.bottom_rect:
-            self.bottom_rect.set_status(status)
-    
-    def set_bottom_rect_text(self, text):
-        """Изменяет текст нижнего прямоугольника"""
-        if self.bottom_text:
-            self.bottom_text.setPlainText(text)
-            self.update_layout()  # Обновляем layout для правильного центрирования текста
-    
-    def get_ppm_at_position(self, pos):
-        """Определяет номер ППМ или нижний прямоугольник по позиции клика"""
-        total_height = self.viewport().height()
-        ppm_area_height = total_height - self.bottom_rect_height - 4  # 4 пикселя отступ
-        
-        w = self.viewport().width() / 4
-        h = ppm_area_height / 8
-        margin = 2
-
-        bottom_y = 8 * h + 2  # 2 пикселя отступ сверху
-        if pos.y() >= bottom_y and pos.y() <= (bottom_y + self.bottom_rect_height - margin):
-            bottom_w = 4 * w - margin
-            if pos.x() >= margin/2 and pos.x() <= (margin/2 + bottom_w):
-                return "bottom_rect"  # Специальное значение для нижнего прямоугольника
-
-        col = int(pos.x() / w)
-        row = int(pos.y() / h)
-
-        if 0 <= col < 4 and 0 <= row < 8:
-            x_in_cell = pos.x() - col * w
-            y_in_cell = pos.y() - row * h
-            
-            if x_in_cell >= margin/2 and y_in_cell >= margin/2:
-                ppm_num = col * 8 + row + 1
-                return ppm_num
-        return None
-    
-    def show_context_menu(self, pos):
-        """Показывает контекстное меню для ППМ или нижнего прямоугольника в указанной позиции"""
-        element = self.get_ppm_at_position(pos)
-        if element is not None and self.parent_widget is not None:
-            if element == "bottom_rect":
-                if self.bottom_rect:
-                    self.bottom_rect.setSelected(True)
-                self.parent_widget.show_bottom_rect_details(self.mapToGlobal(pos))
-            else:
-                ppm_num = element
-                if ppm_num in self.rects:
-                    self.rects[ppm_num].setSelected(True)
-                self.parent_widget.show_ppm_details_graphics(ppm_num, self.mapToGlobal(pos))
+from ui.widgets.base_measurement_widget import BaseMeasurementWidget
+from ui.dialogs.add_coord_syst_dialog import AddCoordinateSystemDialog
+from ui.components.log_handler import QTextEditLogHandler
+from ui.components.ppm_field_view import PpmFieldView
 
 class CheckMaWidget(BaseMeasurementWidget):
     update_table_signal = QtCore.pyqtSignal(int, bool, float, float, float, float, list)
@@ -1429,53 +1091,11 @@ class CheckMaWidget(BaseMeasurementWidget):
             direction = Direction.Horizontal if self.direction_combo.currentText()=='Горизонтальная' else Direction.Vertical
             logger.info(f'Используем канал: {channel.value}, поляризация: {direction.value}')
 
-            if self.psn and self.device_settings:
-                try:
-                    self.psn.preset()
-                    self.psn.preset_axis(0)
-                    self.psn.preset_axis(1)
+            # Настройка сканера
+            self.setup_scanner_common()
 
-                    x_offset = self.coord_system.x_offset if self.coord_system else 0
-                    y_offset = self.coord_system.y_offset if self.coord_system else 0
-                    
-                    self.psn.set_offset(x_offset, y_offset)
-                    speed_x = int(self.device_settings.get('psn_speed_x', 0))
-                    speed_y = int(self.device_settings.get('psn_speed_y', 0))
-                    acc_x = int(self.device_settings.get('psn_acc_x', 0))
-                    acc_y = int(self.device_settings.get('psn_acc_y', 0))
-                    self.psn.set_speed(0, speed_x)
-                    self.psn.set_speed(1, speed_y)
-                    self.psn.set_acc(0, acc_x)
-                    self.psn.set_acc(1, acc_y)
-                    logger.info(f'Параметры PSN успешно применены перед измерением (смещения: x={x_offset}, y={y_offset})')
-                except Exception as e:
-                    logger.error(f'Ошибка применения параметров PSN перед измерением: {e}')
-
-            if self.pna and self.pna_settings:
-                try:
-                    self.pna.preset()
-                    if self.pna_settings.get('settings_file'):
-                        settings_file = self.pna_settings.get('settings_file')
-                        base_path = self.device_settings.get('pna_files_path', '')
-                        if settings_file and base_path and not os.path.isabs(settings_file):
-                            settings_file = os.path.join(base_path, settings_file)
-                        self.pna.load_settings_file(settings_file)
-                    else:
-                        self.pna.create_measure(self.pna_settings.get('s_param'))
-                        self.pna.turn_window(state=True)
-                        self.pna.put_and_visualize_trace()
-                    self.pna.set_freq_start(self.pna_settings.get('freq_start'))
-                    self.pna.set_freq_stop(self.pna_settings.get('freq_stop'))
-                    self.pna.set_points(self.pna_settings.get('freq_points'))
-                    self.pna.set_power(self.pna_settings.get('power'))
-                    self.pna.set_output(True)
-                    meas = self.pna.get_selected_meas()
-                    if not meas:
-                        measures = self.pna.get_all_meas()
-                        self.pna.set_current_meas(measures[0])
-                except Exception as e:
-                    logger.error(f"Ошибка при настройке PNA: {e}")
-                    raise
+            # Настройка PNA
+            self.setup_pna_common()
 
             class CheckMAWithCallback(CheckMA):
                 def __init__(self, ma, psn, pna, stop_event, pause_event, callback, delay_callback=None, criteria=None, parent_widget=None):
@@ -1538,11 +1158,8 @@ class CheckMaWidget(BaseMeasurementWidget):
         except Exception as e:
             self.error_signal.emit("Ошибка проверки", f"Произошла ошибка при выполнении проверки: {str(e)}")
             logger.error(f"Ошибка при выполнении проверки: {e}")
-            try:
-                if self.pna:
-                    self.pna.set_output(False)
-            except Exception as pna_error:
-                logger.error(f"Ошибка при аварийном выключении PNA: {pna_error}")
+            # Выключение PNA
+            self.turn_off_pna()
         finally:
             self.check_finished_signal.emit()
 
@@ -1810,22 +1427,11 @@ class CheckMaWidget(BaseMeasurementWidget):
             logger.info(f'Перемер ППМ {ppm_num}, канал: {channel.value}, поляризация: {direction.value}')
 
             if self.psn and self.device_settings:
-                try:
-                    x_offset = self.coord_system.x_offset if self.coord_system else 0
-                    y_offset = self.coord_system.y_offset if self.coord_system else 0
-                    self.psn.set_offset(x_offset, y_offset)
-                except Exception as e:
-                    logger.error(f'Ошибка настройки PSN для перемера: {e}')
+                # Обновление смещений сканера для перемера
+                self.update_scanner_offset()
 
-            if self.pna and self.pna_settings:
-                try:
-                    self.pna.set_freq_start(self.pna_settings.get('freq_start'))
-                    self.pna.set_freq_stop(self.pna_settings.get('freq_stop'))
-                    self.pna.set_points(self.pna_settings.get('freq_points'))
-                    self.pna.set_power(self.pna_settings.get('power'))
-                    self.pna.set_output(True)
-                except Exception as e:
-                    logger.error(f"Ошибка при настройке PNA для перемера: {e}")
+            # Настройка PNA для перемера
+            self.setup_pna_common()
 
             class SinglePpmCheckMA(CheckMA):
                 def __init__(self, ma, psn, pna, callback, criteria=None, normalization_values=None):
@@ -1897,21 +1503,16 @@ class CheckMaWidget(BaseMeasurementWidget):
 
             check.single_ppm_check(ppm_num, channel, direction)
             
-            try:
-                self.pna.set_output(False)
-            except Exception as e:
-                logger.error(f"Ошибка при выключении PNA после перемера: {e}")
+            # Выключение PNA после перемера
+            self.turn_off_pna()
                 
             logger.info(f'Перемер ППМ {ppm_num} завершен')
 
         except Exception as e:
             self.error_signal.emit("Ошибка перемера", f"Произошла ошибка при перемере ППМ {ppm_num}: {str(e)}")
             logger.error(f"Ошибка при перемере ППМ {ppm_num}: {e}")
-            try:
-                if self.pna:
-                    self.pna.set_output(False)
-            except Exception as pna_error:
-                logger.error(f"Ошибка при аварийном выключении PNA: {pna_error}")
+            # Выключение PNA
+            self.turn_off_pna()
         finally:
             self.buttons_enabled_signal.emit(True)
 

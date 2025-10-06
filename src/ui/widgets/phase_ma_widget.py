@@ -20,70 +20,9 @@ import pyqtgraph.opengl as gl
 from pyqtgraph.colormap import ColorMap
 
 from ui.dialogs.pna_file_dialog import PnaFileDialog
-from core.workers.device_connection_worker import DeviceConnectionWorker
 from ui.widgets.base_measurement_widget import BaseMeasurementWidget, QTextEditLogHandler
+from ui.dialogs.add_coord_syst_dialog import AddCoordinateSystemDialog
 
-
-class AddCoordinateSystemDialog(QtWidgets.QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle('Добавить систему координат')
-        self.setModal(True)
-        self.setFixedSize(350, 200)
-        
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
-        
-        # Поля ввода
-        form_layout = QtWidgets.QFormLayout()
-        form_layout.setSpacing(10)
-        
-        self.name_edit = QtWidgets.QLineEdit()
-        self.name_edit.setPlaceholderText('Введите название системы координат')
-        form_layout.addRow('Название:', self.name_edit)
-        
-        self.x_offset_spinbox = QtWidgets.QDoubleSpinBox()
-        self.x_offset_spinbox.setRange(-9999.0, 9999.0)
-        self.x_offset_spinbox.setDecimals(2)
-        self.x_offset_spinbox.setSuffix(' см')
-        self.x_offset_spinbox.setValue(0.0)
-        form_layout.addRow('Смещение X:', self.x_offset_spinbox)
-        
-        self.y_offset_spinbox = QtWidgets.QDoubleSpinBox()
-        self.y_offset_spinbox.setRange(-9999.0, 9999.0)
-        self.y_offset_spinbox.setDecimals(2)
-        self.y_offset_spinbox.setSuffix(' см')
-        self.y_offset_spinbox.setValue(0.0)
-        form_layout.addRow('Смещение Y:', self.y_offset_spinbox)
-        
-        layout.addLayout(form_layout)
-        
-        # Кнопки
-        buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-        
-        # Валидация при изменении текста
-        self.name_edit.textChanged.connect(self.validate_input)
-        self.validate_input()
-        
-    def validate_input(self):
-        """Проверяет корректность введенных данных"""
-        name = self.name_edit.text().strip()
-        ok_button = self.findChild(QtWidgets.QDialogButtonBox).button(QtWidgets.QDialogButtonBox.Ok)
-        ok_button.setEnabled(len(name) > 0)
-        
-    def get_values(self):
-        """Возвращает введенные значения"""
-        return (
-            self.name_edit.text().strip(),
-            self.x_offset_spinbox.value(),
-            self.y_offset_spinbox.value()
-        )
 
 
 
@@ -464,54 +403,12 @@ class PhaseMaWidget(BaseMeasurementWidget):
     def _run_phase_ma_real(self):
         logger.info('Начало выполнения процесса фазировки МА')
         try:
-            if self.psn and self.device_settings:
-                try:
-                    self.psn.preset()
-                    self.psn.preset_axis(0)
-                    self.psn.preset_axis(1)
-                    
-                    x_offset = self.coord_system.x_offset if self.coord_system else 0
-                    y_offset = self.coord_system.y_offset if self.coord_system else 0
-                    self.psn.set_offset(x_offset, y_offset)
-
-                    speed_x = int(self.device_settings.get('psn_speed_x', 0))
-                    speed_y = int(self.device_settings.get('psn_speed_y', 0))
-                    acc_x = int(self.device_settings.get('psn_acc_x', 0))
-                    acc_y = int(self.device_settings.get('psn_acc_y', 0))
-                    self.psn.set_speed(0, speed_x)
-                    self.psn.set_speed(1, speed_y)
-                    self.psn.set_acc(0, acc_x)
-                    self.psn.set_acc(1, acc_y)
-                    logger.info(f'Параметры PSN успешно применены перед измерением (смещения: x={x_offset}, y={y_offset})')
-                except Exception as e:
-                    logger.error(f'Ошибка применения параметров PSN перед измерением: {e}')
+            # Настройка сканера
+            self.setup_scanner_common()
 
 
-            if self.pna and self.pna_settings:
-                try:
-                    self.pna.preset()
-                    if self.pna_settings.get('settings_file'):
-                        settings_file = self.pna_settings.get('settings_file')
-                        base_path = self.device_settings.get('pna_files_path', '')
-                        if settings_file and base_path and not os.path.isabs(settings_file):
-                            settings_file = os.path.join(base_path, settings_file)
-                        self.pna.load_settings_file(settings_file)
-                    else:
-                        self.pna.create_measure(self.pna_settings.get('s_param'))
-                        self.pna.turn_window(state=True)
-                        self.pna.put_and_visualize_trace()
-                    self.pna.set_freq_start(self.pna_settings.get('freq_start'))
-                    self.pna.set_freq_stop(self.pna_settings.get('freq_stop'))
-                    self.pna.set_points(self.pna_settings.get('freq_points'))
-                    self.pna.set_power(self.pna_settings.get('power'))
-                    self.pna.set_output(True)
-                    meas = self.pna.get_selected_meas()
-                    if not meas:
-                        measures = self.pna.get_all_meas()
-                        self.pna.set_current_meas(measures[0])
-                except Exception as e:
-                    logger.error(f"Ошибка при настройке PNA: {e}")
-                    raise
+            # Настройка PNA
+            self.setup_pna_common()
             
             chanel = Channel.Receiver if self.channel_combo.currentText() == 'Приемник' else Channel.Transmitter
             direction = Direction.Horizontal if self.direction_combo.currentText() == 'Горизонтальная' else Direction.Vertical
@@ -607,25 +504,8 @@ class PhaseMaWidget(BaseMeasurementWidget):
     def set_device_settings(self, settings: dict):
         """Сохраняет параметры устройств (PSN/PNA) из настроек для последующего применения."""
         self.device_settings = settings or {}
-        if self.psn:
-            try:
-                self.psn.preset()
-                self.psn.preset_axis(0)
-                self.psn.preset_axis(1)
-                x_offset = float(self.device_settings.get('psn_x_offset', 0))
-                y_offset = float(self.device_settings.get('psn_y_offset', 0))
-                self.psn.set_offset(x_offset, y_offset)
-                speed_x = int(self.device_settings.get('psn_speed_x', 0))
-                speed_y = int(self.device_settings.get('psn_speed_y', 0))
-                acc_x = int(self.device_settings.get('psn_acc_x', 0))
-                acc_y = int(self.device_settings.get('psn_acc_y', 0))
-                self.psn.set_speed(0, speed_x)
-                self.psn.set_speed(1, speed_y)
-                self.psn.set_acc(0, acc_x)
-                self.psn.set_acc(1, acc_y)
-                logger.info('Параметры PSN успешно применены')
-            except Exception as e:
-                logger.error(f'Ошибка применения параметров PSN: {e}')
+        # Настройка сканера
+        self.setup_scanner_common()
 
     def add_coordinate_system(self):
         """Открывает диалог для добавления новой системы координат"""

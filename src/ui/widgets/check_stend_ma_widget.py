@@ -912,38 +912,8 @@ class StendCheckMaWidget(BaseMeasurementWidget):
             direction = Direction.Horizontal if self.direction_combo.currentText() == 'Горизонтальная' else Direction.Vertical
             logger.info(f'Используем канал: {channel.value}, поляризация: {direction.value}')
 
-            if self.pna and self.pna_settings:
-                try:
-                    self.pna.preset()
-                    if self.pna_settings.get('settings_file'):
-                        settings_file = self.pna_settings.get('settings_file')
-                        base_path = self.device_settings.get('pna_files_path', '')
-                        if settings_file and base_path and not os.path.isabs(settings_file):
-                            settings_file = os.path.join(base_path, settings_file)
-                        self.pna.load_settings_file(settings_file)
-                    else:
-                        self.pna.create_measure(self.pna_settings.get('s_param'))
-                        self.pna.turn_window(state=True)
-                        self.pna.put_and_visualize_trace()
-                    self.pna.set_freq_start(self.pna_settings.get('freq_start'))
-                    self.pna.set_freq_stop(self.pna_settings.get('freq_stop'))
-                    self.pna.set_points(self.pna_settings.get('freq_points'))
-                    self.pna.set_power(self.pna_settings.get('power'))
-                    self.pna.set_s_param(self.pna_settings.get('s_param'))
-                    if self.pna_settings.get('pulse_mode').lower() == 'STD'.lower():
-                        self.pna.set_standard_pulse()
-                    else:
-                        self.pna.set_pulse_mode_off()
-                    self.pna.set_period(self.pna_settings.get('pulse_period'))
-                    self.pna.set_pulse_width(self.pna_settings.get('pulse_width'))
-                    self.pna.set_output(True)
-                    meas = self.pna.get_selected_meas()
-                    if not meas:
-                        measures = self.pna.get_all_meas()
-                        self.pna.set_current_meas(measures[0])
-                except Exception as e:
-                    logger.error(f"Ошибка при настройке PNA: {e}")
-                    raise
+            # Настройка PNA
+            self.setup_pna_common()
 
             class CheckMAWithCallback(CheckMAStend):
                 def __init__(self, ma, pna, stop_event, pause_event, criteria=None,
@@ -1002,11 +972,8 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         except Exception as e:
             self.error_signal.emit("Ошибка проверки", f"Произошла ошибка при выполнении проверки: {str(e)}")
             logger.error(f"Ошибка при выполнении проверки: {e}")
-            try:
-                if self.pna:
-                    self.pna.set_output(False)
-            except Exception as pna_error:
-                logger.error(f"Ошибка при аварийном выключении PNA: {pna_error}")
+            # Выключение PNA
+            self.turn_off_pna()
         finally:
             self.check_finished_signal.emit()
 

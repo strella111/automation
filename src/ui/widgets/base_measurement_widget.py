@@ -3,30 +3,11 @@ from PyQt5.QtGui import QTextCursor
 from PyQt5.QtWidgets import QMessageBox
 from loguru import logger
 import threading
+import os
 from core.devices.trigger_box import E5818Config
 
 from core.workers.device_connection_worker import DeviceConnectionWorker
-
-
-class QTextEditLogHandler(QtCore.QObject):
-    """Обработчик логов для QTextEdit"""
-    log_signal = QtCore.pyqtSignal(str)
-
-    def __init__(self, text_edit: QtWidgets.QTextEdit):
-        super().__init__()
-        self.text_edit = text_edit
-        self.log_signal.connect(self.append_text)
-
-    def write(self, message):
-        self.log_signal.emit(message)
-
-    def flush(self):
-        pass
-
-    def append_text(self, message):
-        self.text_edit.moveCursor(QTextCursor.End)
-        self.text_edit.insertPlainText(message)
-        self.text_edit.moveCursor(QTextCursor.End)
+from ui.components.log_handler import QTextEditLogHandler
 
 
 class BaseMeasurementWidget(QtWidgets.QWidget):
@@ -41,7 +22,6 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
         
-        # Общие переменные для устройств
         self.ma = None
         self.pna = None
         self.psn = None
@@ -404,3 +384,112 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
         item.setTextAlignment(QtCore.Qt.AlignCenter)
         item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEditable)
         return item
+
+    def setup_pna_common(self):
+        """Общая настройка PNA для всех измерений"""
+        if not self.pna or not self.pna_settings:
+            return
+            
+        try:
+            self.pna.preset()
+            
+            # Загрузка файла настроек или создание измерения
+            if self.pna_settings.get('settings_file'):
+                settings_file = self.pna_settings.get('settings_file')
+                base_path = self.device_settings.get('pna_files_path', '')
+                if settings_file and base_path and not os.path.isabs(settings_file):
+                    settings_file = os.path.join(base_path, settings_file)
+                self.pna.load_settings_file(settings_file)
+            else:
+                self.pna.create_measure(self.pna_settings.get('s_param'))
+                self.pna.turn_window(state=True)
+                self.pna.put_and_visualize_trace()
+            
+            # Базовые настройки частоты и мощности
+            self.pna.set_freq_start(self.pna_settings.get('freq_start'))
+            self.pna.set_freq_stop(self.pna_settings.get('freq_stop'))
+            self.pna.set_points(self.pna_settings.get('freq_points'))
+            self.pna.set_power(self.pna_settings.get('power'))
+            
+            # Дополнительные настройки (если есть)
+            if 's_param' in self.pna_settings:
+                self.pna.set_s_param(self.pna_settings.get('s_param'))
+            
+            # Настройки импульсного режима (если есть)
+            if 'pulse_mode' in self.pna_settings:
+                if self.pna_settings.get('pulse_mode').lower() == 'STD'.lower():
+                    self.pna.set_standard_pulse()
+                else:
+                    self.pna.set_pulse_mode_off()
+                self.pna.set_period(self.pna_settings.get('pulse_period'))
+                self.pna.set_pulse_width(self.pna_settings.get('pulse_width'))
+            
+            # Включение выхода
+            self.pna.set_output(True)
+            
+            # Проверка и установка активного измерения
+            meas = self.pna.get_selected_meas()
+            if not meas:
+                measures = self.pna.get_all_meas()
+                if measures:
+                    self.pna.set_current_meas(measures[0])
+                    
+            logger.info('PNA успешно настроен')
+            
+        except Exception as e:
+            logger.error(f"Ошибка при настройке PNA: {e}")
+            raise
+
+    def setup_scanner_common(self):
+        """Общая настройка сканера для измерений с PSN"""
+        if not self.psn or not self.device_settings:
+            return
+            
+        try:
+            self.psn.preset()
+            self.psn.preset_axis(0)
+            self.psn.preset_axis(1)
+
+            # Установка смещений из системы координат
+            x_offset = self.coord_system.x_offset if self.coord_system else 0
+            y_offset = self.coord_system.y_offset if self.coord_system else 0
+            self.psn.set_offset(x_offset, y_offset)
+            
+            # Настройка скорости и ускорения
+            speed_x = int(self.device_settings.get('psn_speed_x', 0))
+            speed_y = int(self.device_settings.get('psn_speed_y', 0))
+            acc_x = int(self.device_settings.get('psn_acc_x', 0))
+            acc_y = int(self.device_settings.get('psn_acc_y', 0))
+            
+            self.psn.set_speed(0, speed_x)
+            self.psn.set_speed(1, speed_y)
+            self.psn.set_acc(0, acc_x)
+            self.psn.set_acc(1, acc_y)
+            
+            logger.info(f'Параметры PSN успешно применены (смещения: x={x_offset}, y={y_offset})')
+            
+        except Exception as e:
+            logger.error(f'Ошибка применения параметров PSN: {e}')
+            raise
+
+    def turn_off_pna(self):
+        """Выключение PNA"""
+        try:
+            if self.pna:
+                self.pna.set_output(False)
+                logger.info('PNA выключен')
+        except Exception as e:
+            logger.error(f"Ошибка при выключении PNA: {e}")
+
+    def update_scanner_offset(self):
+        """Обновление смещений сканера (для перемера)"""
+        if not self.psn or not self.coord_system:
+            return
+            
+        try:
+            x_offset = self.coord_system.x_offset
+            y_offset = self.coord_system.y_offset
+            self.psn.set_offset(x_offset, y_offset)
+            logger.info(f'Смещения PSN обновлены (x={x_offset}, y={y_offset})')
+        except Exception as e:
+            logger.error(f'Ошибка обновления смещений PSN: {e}')
