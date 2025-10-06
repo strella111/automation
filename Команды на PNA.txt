@@ -63,3 +63,16 @@ send_command("SENS:SWE:PULS:MAST:PER 0.0001")
 # Запросить текущий период
 period = query("SENS:SWE:PULS:MAST:PER?")
 ____________________________________________________
+# Включить автовыбор метода детектирования
+send_command("SENS:SWE:PULS:DET:AUTO ON")
+
+# Выключить автовыбор (ручной режим)
+send_command("SENS:SWE:PULS:DET:AUTO OFF")
+__________________________________________
+# Установить широкополосный режим
+send_command("SENS:SWE:PULS:WID ON")
+
+# Установить узкополосный режим  
+send_command("SENS:SWE:PULS:WID OFF")
+___________________________________________
+

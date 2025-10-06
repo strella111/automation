@@ -3,7 +3,7 @@ from loguru import logger
 from core.devices.ma import MA
 from core.devices.pna import PNA
 from core.devices.psn import PSN
-from core.devices.trigger_box import E5818, E5818Config
+from core.devices.trigger_box import E5818
 
 
 class DeviceConnectionWorker(QThread):

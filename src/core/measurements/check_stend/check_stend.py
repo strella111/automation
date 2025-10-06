@@ -10,7 +10,6 @@ from core.devices.trigger_box import E5818
 from core.common.enums import Channel, Direction
 from ...common.exceptions import WrongInstrumentError
 import threading
-import time
 from PyQt5.QtCore import QThread
 
 
@@ -69,8 +68,38 @@ class CheckMAStend:
         self.delay_callback = None
         self.data_callback = None
         self.realtime_callback = None
+        
+        # Ограничения для управления памятью
+        self.max_ppm_count = 32
+        self.max_phase_shifts = len(self.phase_shifts)
+        self.max_delay_lines = len(self.delay_lines)
+        
+        # Данные (будут очищаться после использования)
         self.data_real = None
         self.data_relative = None
+
+    def _clear_memory(self):
+        """Очистка данных из памяти для предотвращения накопления"""
+        if self.data_real is not None:
+            self.data_real.clear()
+            self.data_real = None
+        if self.data_relative is not None:
+            self.data_relative.clear()
+            self.data_relative = None
+        logger.debug("Память очищена от данных измерений")
+
+    def _get_memory_usage_info(self) -> str:
+        """Получение информации об использовании памяти"""
+        import sys
+        
+        real_size = sys.getsizeof(self.data_real) if self.data_real else 0
+        relative_size = sys.getsizeof(self.data_relative) if self.data_relative else 0
+        
+        # Подсчет элементов в словарях
+        real_items = sum(len(v) for v in self.data_real.values()) if self.data_real else 0
+        relative_items = sum(len(v) for v in self.data_relative.values()) if self.data_relative else 0
+        
+        return f"Память: real={real_size} байт ({real_items} элементов), relative={relative_size} байт ({relative_items} элементов)"
 
     def _check_connections(self) -> bool:
         """
@@ -92,15 +121,24 @@ class CheckMAStend:
             evt = self.gen.pop_ext_event()
             counter += 1
             if counter > 5:
-                amount_strobs = self.ma.get_tm()['strobs_prd'] if self.channel == Channel.Transmitter else self.ma.get_tm()['strobs_prm']
-                expected_strobs = ppm_num * self.number_of_freqs
-                if amount_strobs == expected_strobs:
-                    self.gen.burst(period_s=self.period, count=self.number_of_freqs, lead_s=self.lead)
-                    while True:
-                        evt = self.gen.pop_ext_event()
-                        if evt:
-                            return
-                else:
+                try:
+                    tm_data = self.ma.get_tm()
+                    if tm_data is None:
+                        logger.warning(f"Не удалось получить телеметрию для ППМ {ppm_num}")
+                        return
+                    
+                    amount_strobs = tm_data['strobs_prd'] if self.channel == Channel.Transmitter else tm_data['strobs_prm']
+                    expected_strobs = ppm_num * self.number_of_freqs
+                    if amount_strobs == expected_strobs:
+                        self.gen.burst(period_s=self.period, count=self.number_of_freqs, lead_s=self.lead)
+                        while True:
+                            evt = self.gen.pop_ext_event()
+                            if evt:
+                                return
+                    else:
+                        return
+                except Exception as e:
+                    logger.error(f"Ошибка при проверке телеметрии для ППМ {ppm_num}: {e}")
                     return
 
             if evt:
@@ -119,6 +157,9 @@ class CheckMAStend:
 
         results: Dict[float, List[float]] = {}
         zero_phases: List[float] = []
+        
+        # Ограничиваем размер данных для предотвращения накопления памяти
+        max_data_per_fv = self.max_ppm_count * 2  # 2 значения на ППМ (амплитуда, фаза)
         for fv in self.phase_shifts:
             code = int(fv / 5.625)
             self.ma.set_calb_mode(chanel=chanel,
@@ -149,11 +190,16 @@ class CheckMAStend:
                 self.burst_and_check_external_trigger(ppm_num=ppm_num)
 
                 amp_db, phase_deg = self.pna.get_center_freq_data()
-                results[fv].extend([amp_db, phase_deg])
+                
+                # Проверяем размер данных перед добавлением
+                if len(results[fv]) < max_data_per_fv:
+                    results[fv].extend([amp_db, phase_deg])
+                else:
+                    logger.warning(f"Превышен лимит данных для ФВ={fv}, пропускаем ППМ {ppm_num}")
 
                 # Сохраняем опорные фазы для ФВ=0 и считаем относительную фазу для realtime
                 if fv == 0:
-                    if len(zero_phases) < 32:
+                    if len(zero_phases) < self.max_ppm_count:
                         zero_phases.append(phase_deg)
                     phase_rel = 0.0
                 else:
@@ -208,19 +254,25 @@ class CheckMAStend:
                     QThread.msleep(100)
 
                 self.burst_and_check_external_trigger(ppm_num=ppm_num)
+
+                try:
+                    delay_mean = float(self.pna.get_mean_value_from_fdata()) * 1e12
+                except Exception:
+                    delay_mean = float('nan')
+
                 try:
                     amp_mean = float(self.pna.get_mean_value_from_sdata())
                 except Exception:
                     amp_mean = float('nan')
 
-                try:
-                    delay_mean = float(self.pna.get_mean_value()) * 1e12
-                except Exception:
-                    delay_mean = float('nan')
 
-                lz_to_amps[lz].append(amp_mean)
-                lz_to_delays[lz].append(delay_mean)
-                collected += 1
+                # Проверяем размер данных перед добавлением
+                if len(lz_to_amps[lz]) < self.max_ppm_count:
+                    lz_to_amps[lz].append(amp_mean)
+                    lz_to_delays[lz].append(delay_mean)
+                    collected += 1
+                else:
+                    logger.warning(f"Превышен лимит данных для ЛЗ={lz}, пропускаем ППМ {ppm_num}")
 
             mean_amp = (sum(lz_to_amps[lz]) / len(lz_to_amps[lz])) if lz_to_amps[lz] else float('nan')
             mean_delay = (sum(lz_to_delays[lz]) / len(lz_to_delays[lz])) if lz_to_delays[lz] else float('nan')
@@ -311,20 +363,25 @@ class CheckMAStend:
 
             data = self._check_fv(chanel=channel, direction=direction)
             self.data_real = data
+            logger.debug(f"После _check_fv: {self._get_memory_usage_info()}")
 
             if 0 in data:
                 rel_data: Dict[float, List[float]] = {}
                 zero_list = data[0]
+                max_relative_data = self.max_ppm_count * 2  # Ограничиваем размер относительных данных
+                
                 for fv, values in data.items():
                     rel_list: List[float] = []
-                    for i in range(0, len(values), 2):
-                        amp_val = values[i]
-                        phase_val = values[i + 1]
-                        phase_zero = zero_list[i + 1] if i + 1 < len(zero_list) else 0.0
-                        phase_rel = self._normalize_phase(phase_zero - phase_val) if fv != 0 else 0.0
-                        rel_list.extend([amp_val, phase_rel])
+                    for i in range(0, min(len(values), max_relative_data), 2):
+                        if i + 1 < len(values):
+                            amp_val = values[i]
+                            phase_val = values[i + 1]
+                            phase_zero = zero_list[i + 1] if i + 1 < len(zero_list) else 0.0
+                            phase_rel = self._normalize_phase(phase_zero - phase_val) if fv != 0 else 0.0
+                            rel_list.extend([amp_val, phase_rel])
                     rel_data[fv] = rel_list
                 self.data_relative = rel_data
+                logger.debug(f"После обработки относительных данных: {self._get_memory_usage_info()}")
             else:
                 logger.warning('Не найдены данные для ФВ=0. Относительные фазы не будут сформированы')
                 self.data_relative = None
@@ -333,22 +390,24 @@ class CheckMAStend:
             for ppm_num in range(1, 33):
                 excel_row = [ppm_num, ]
                 for fv, res in self.data_relative.items():
-                    excel_row.append(res[(ppm_num-1) * 2])
-                    excel_row.append(res[(ppm_num-1) * 2 + 1])
+                    # Безопасная проверка индексов для предотвращения IndexError
+                    amp_index = (ppm_num-1) * 2
+                    phase_index = (ppm_num-1) * 2 + 1
+                    
+                    if amp_index < len(res) and phase_index < len(res):
+                        excel_row.append(res[amp_index])
+                        excel_row.append(res[phase_index])
+                    else:
+                        logger.warning(f"Недостаточно данных для ППМ {ppm_num} в ФВ {fv}")
+                        excel_row.extend([0.0, 0.0])  # Заполняем нулями при отсутствии данных
+                        
                 for k, value in enumerate(excel_row):
                     worksheet.cell(row=ppm_num + 2, column=k + 1).value = value
 
-            if self.data_callback and self.data_relative is not None:
-                try:
-                    self.data_callback.emit(self.data_relative)
-                except Exception as e:
-                    logger.error(f"Ошибка при отправке результирующих данных в UI: {e}")
 
             try:
                 lz_results = self._check_lz(chanel=channel, direction=direction)
                 # ожидаемый формат: {lz: (mean_amp_delta, mean_delay_delta)}
-                if self.delay_callback and lz_results:
-                    self.delay_callback.emit(lz_results)
 
                 excel_row = [f'ЛЗ№', 'Относительная амплитуда', 'Задержка, пс']
                 for i, value in enumerate(excel_row):
@@ -370,14 +429,22 @@ class CheckMAStend:
                 raise WrongInstrumentError(f"Ошибка выключения PNA: {e}")
 
             logger.info("Измерение ППМ завершена")
+            
+            # Очищаем память после завершения измерений
+            self._clear_memory()
+            
         except Exception as e:
             logger.error(f"Ошибка при выполнении проверки: {e}")
             try:
                 self.pna.set_output(False)
             except Exception as e:
                 logger.error(f"Ошибка при аварийном выключении PNA: {e}")
+            
+            # Очищаем память даже при ошибке
+            self._clear_memory()
             raise
 
         workbook.save(file_path)
         self.ma.turn_off_vips()
         return results
+

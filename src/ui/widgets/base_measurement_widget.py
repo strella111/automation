@@ -1,15 +1,9 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
 from PyQt5.QtGui import QTextCursor
-from PyQt5.QtWidgets import QMessageBox, QStyle
-from PyQt5.QtCore import QSize
+from PyQt5.QtWidgets import QMessageBox
 from loguru import logger
 import threading
-import numpy as np
-from core.devices.ma import MA
-from core.devices.pna import PNA
-from core.devices.psn import PSN
-from core.devices.trigger_box import E5818Config, E5818
-from core.common.enums import Channel, Direction
+from core.devices.trigger_box import E5818Config
 
 from core.workers.device_connection_worker import DeviceConnectionWorker
 

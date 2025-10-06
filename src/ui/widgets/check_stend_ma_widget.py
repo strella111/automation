@@ -1,19 +1,15 @@
-from PyQt5 import QtWidgets, QtCore, QtGui
+from PyQt5 import QtWidgets, QtCore
 import os
-from PyQt5.QtGui import QTextCursor
 from PyQt5.QtWidgets import QMessageBox, QStyle
 from PyQt5.QtCore import QSize
 from loguru import logger
 import threading
+import time
 import numpy as np
-from core.devices.ma import MA
-from core.devices.pna import PNA
-from core.devices.trigger_box import E5818Config, E5818
 from core.measurements.check_stend.check_stend import CheckMAStend
 from core.common.enums import Channel, Direction
 
 from ui.dialogs.pna_file_dialog import PnaFileDialog
-from core.workers.device_connection_worker import DeviceConnectionWorker
 from ui.widgets.base_measurement_widget import BaseMeasurementWidget, QTextEditLogHandler
 
 
@@ -120,6 +116,26 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.pna_number_of_points.addItems(['3', '11', '101', '201'])
         self.pna_number_of_points.setCurrentText('11')
         self.pna_tab_layout.addRow('Кол-во точек:', self.pna_number_of_points)
+
+        self.pulse_mode_combo = QtWidgets.QComboBox()
+        self.pulse_mode_combo.addItems(['Standard', 'Off'])
+        self.pna_tab_layout.addRow('Импульсный режим', self.pulse_mode_combo)
+
+        self.pulse_width = QtWidgets.QDoubleSpinBox()
+        self.pulse_width.setDecimals(3)
+        self.pulse_width.setRange(5, 50)
+        self.pulse_width.setSingleStep(1)
+        self.pulse_width.setValue(20)
+        self.pulse_width.setSuffix(' мкс')
+        self.pna_tab_layout.addRow('Ширина импульса', self.pulse_width)
+
+        self.pulse_period = QtWidgets.QDoubleSpinBox()
+        self.pulse_width.setDecimals(3)
+        self.pulse_period.setRange(20, 20000)
+        self.pulse_period.setValue(2000)
+        self.pulse_period.setSingleStep(10)
+        self.pulse_period.setSuffix(' мкс')
+        self.pna_tab_layout.addRow('Период импульса', self.pulse_period)
 
 
         settings_layout = QtWidgets.QHBoxLayout()
@@ -423,7 +439,7 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.right_layout.addWidget(self.console, stretch=1)
 
         self.log_handler = QTextEditLogHandler(self.console)
-        logger.add(self.log_handler, format="{time:HH:mm:ss} | {level} | {message}")
+        logger.add(self.log_handler, format="{time:HH:mm:ss.SSS} | {level} | {message}")
 
         self._check_thread = None
 
@@ -459,6 +475,7 @@ class StendCheckMaWidget(BaseMeasurementWidget):
 
         self.ppm_data = {}
         self.check_completed = False  # Флаг завершения основной проверки
+        self.measurement_start_time = None  # Время начала измерения
 
         self.set_button_connection_state(self.pna_connect_btn, False)
         self.set_button_connection_state(self.ma_connect_btn, False)
@@ -476,6 +493,67 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.pause_btn.setText('Пауза')
         self.check_completed = True
         logger.info('Проверка завершена, интерфейс восстановлен')
+        
+        # Показываем диалог завершения с временем выполнения
+        self.show_completion_dialog()
+
+    def show_completion_dialog(self):
+        """Показывает диалог завершения измерения с временем выполнения"""
+        if self.measurement_start_time is None:
+            duration_text = "Время выполнения неизвестно"
+        else:
+            duration_seconds = time.time() - self.measurement_start_time
+            hours = int(duration_seconds // 3600)
+            minutes = int((duration_seconds % 3600) // 60)
+            seconds = int(duration_seconds % 60)
+            
+            if hours > 0:
+                duration_text = f"{hours}ч {minutes}м {seconds}с"
+            elif minutes > 0:
+                duration_text = f"{minutes}м {seconds}с"
+            else:
+                duration_text = f"{seconds}с"
+        
+        # Создаем диалог
+        msg_box = QMessageBox()
+        msg_box.setWindowTitle("Измерение завершено")
+        msg_box.setIcon(QMessageBox.Information)
+        msg_box.setText("Измерение успешно завершено!")
+        msg_box.setInformativeText(f"Время выполнения: {duration_text}")
+        msg_box.setStandardButtons(QMessageBox.Ok)
+        msg_box.setDefaultButton(QMessageBox.Ok)
+        
+        # Показываем диалог
+        msg_box.exec_()
+
+    def show_stop_dialog(self):
+        """Показывает диалог остановки измерения с временем выполнения"""
+        if self.measurement_start_time is None:
+            duration_text = "Время выполнения неизвестно"
+        else:
+            duration_seconds = time.time() - self.measurement_start_time
+            hours = int(duration_seconds // 3600)
+            minutes = int((duration_seconds % 3600) // 60)
+            seconds = int(duration_seconds % 60)
+            
+            if hours > 0:
+                duration_text = f"{hours}ч {minutes}м {seconds}с"
+            elif minutes > 0:
+                duration_text = f"{minutes}м {seconds}с"
+            else:
+                duration_text = f"{seconds}с"
+        
+        # Создаем диалог
+        msg_box = QMessageBox()
+        msg_box.setWindowTitle("Измерение остановлено")
+        msg_box.setIcon(QMessageBox.Warning)
+        msg_box.setText("Измерение было остановлено пользователем.")
+        msg_box.setInformativeText(f"Время выполнения до остановки: {duration_text}")
+        msg_box.setStandardButtons(QMessageBox.Ok)
+        msg_box.setDefaultButton(QMessageBox.Ok)
+        
+        # Показываем диалог
+        msg_box.exec_()
 
     @QtCore.pyqtSlot(bool)
     def set_buttons_enabled(self, enabled: bool):
@@ -630,6 +708,9 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.pna_settings['freq_stop'] = self.pna_stop_freq.value() * 10 ** 6
         self.pna_settings['freq_points'] = self.pna_number_of_points.currentText()
         self.pna_settings['settings_file'] = self.settings_file_edit.text()
+        self.pna_settings['pulse_mode'] = self.pulse_mode_combo.currentText()
+        self.pna_settings['pulse_period'] = self.pulse_period.value() / 10 ** 6
+        self.pna_settings['pulse_width'] = self.pulse_width.value() / 10 ** 6
 
         # Meas - критерии проверки
         self.check_criteria = {
@@ -663,6 +744,9 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         s.setValue('pna_stop_freq', int(self.pna_stop_freq.value()))
         s.setValue('pna_points', self.pna_number_of_points.currentText())
         s.setValue('pna_settings_file', self.settings_file_edit.text())
+        s.setValue('pulse_mode', self.pulse_mode_combo.currentText())
+        s.setValue('pulse_width', float(self.pulse_width.value()))
+        s.setValue('pulse_period', float(self.pulse_period.value()))
         # Criteria
         s.setValue('abs_amp_min_rx', float(self.abs_amp_min_rx.value()))
         s.setValue('abs_amp_min_tx', float(self.abs_amp_min_tx.value()))
@@ -691,11 +775,18 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         # PNA
         if (v := s.value('s_param')):
             idx = self.s_param_combo.findText(v)
-            if idx >= 0: self.s_param_combo.setCurrentIndex(idx)
+            if idx >= 0:
+                self.s_param_combo.setCurrentIndex(idx)
+        if (v := s.value('pulse_mode')):
+            idx = self.pulse_mode_combo.findText(v)
+            if idx > 0:
+                self.pulse_mode_combo.setCurrentIndex(idx)
         for key, widget in [
             ('pna_power', self.pna_power),
             ('pna_start_freq', self.pna_start_freq),
-            ('pna_stop_freq', self.pna_stop_freq)
+            ('pna_stop_freq', self.pna_stop_freq),
+            ('pulse_width', self.pulse_width),
+            ('pulse_period', self.pulse_period)
         ]:
             val = s.value(key)
             if val is not None:
@@ -720,7 +811,6 @@ class StendCheckMaWidget(BaseMeasurementWidget):
                 self.abs_amp_min_tx.setValue(float(v))
             except Exception: 
                 pass
-
 
         # Phase shifters
         for angle, controls in self.phase_shifter_tolerances.items():
@@ -779,6 +869,9 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.ppm_data.clear()
         self.check_completed = False
 
+        # Записываем время начала измерения
+        self.measurement_start_time = time.time()
+
         self.set_buttons_enabled(False)
         logger.info("Запуск проверки МА...")
         self.apply_params()
@@ -808,6 +901,9 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.pause_btn.setText('Пауза')
         self.set_buttons_enabled(True)
         logger.info('Проверка остановлена.')
+        
+        # Показываем диалог остановки с временем выполнения
+        self.show_stop_dialog()
 
     def _run_check(self):
         logger.info("Начало выполнения проверки в отдельном потоке")
@@ -833,6 +929,13 @@ class StendCheckMaWidget(BaseMeasurementWidget):
                     self.pna.set_freq_stop(self.pna_settings.get('freq_stop'))
                     self.pna.set_points(self.pna_settings.get('freq_points'))
                     self.pna.set_power(self.pna_settings.get('power'))
+                    self.pna.set_s_param(self.pna_settings.get('s_param'))
+                    if self.pna_settings.get('pulse_mode').lower() == 'STD'.lower():
+                        self.pna.set_standard_pulse()
+                    else:
+                        self.pna.set_pulse_mode_off()
+                    self.pna.set_period(self.pna_settings.get('pulse_period'))
+                    self.pna.set_pulse_width(self.pna_settings.get('pulse_width'))
                     self.pna.set_output(True)
                     meas = self.pna.get_selected_meas()
                     if not meas:
@@ -872,17 +975,12 @@ class StendCheckMaWidget(BaseMeasurementWidget):
                 parent_widget=self
             )
 
-            # Пробросим колбэк для пачки данных
-            try:
-                check.data_callback = self.update_data_signal
-            except Exception:
-                pass
             # Пробросим колбэк для поэлементных обновлений
             try:
                 check.realtime_callback = self.update_realtime_signal
             except Exception:
                 pass
-            # Колбэк с усреднёнными данными ЛЗ
+            # Колбэк для realtime обновления таблицы ЛЗ
             try:
                 check.delay_callback = self.update_lz_signal
             except Exception:
@@ -1064,6 +1162,22 @@ class StendCheckMaWidget(BaseMeasurementWidget):
                 index = self.pna_number_of_points.findText(str(int(points)))
                 if index >= 0:
                     self.pna_number_of_points.setCurrentIndex(index)
+
+            pulse_mode = self.pna.get_pulse_mode()
+            if pulse_mode:
+                index = self.pulse_mode_combo.findText(pulse_mode)
+                if index >= 0:
+                    self.pulse_mode_combo.setCurrentIndex(index)
+
+            pna_pulse_width = self.pna.get_pulse_width()
+            if pna_pulse_width:
+                self.pulse_width.setValue(float(pna_pulse_width) * 10 ** 6)
+
+            pna_pulse_period = self.pna.get_period()
+            if pna_pulse_period:
+                self.pulse_period.setValue(float(pna_pulse_period) * 10 ** 6)
+
+
 
         except Exception as e:
             logger.error(f'Ошибка при применении настроек к интерфейсу: {e}')

@@ -6,15 +6,11 @@ import os
 from loguru import logger
 import threading
 import numpy as np
-from core.devices.ma import MA
-from core.devices.pna import PNA
-from core.devices.psn import PSN
 from core.measurements.check.check_ma import CheckMA
 from core.common.enums import Channel, Direction
 from core.common.coordinate_system import CoordinateSystemManager
 
 from ui.dialogs.pna_file_dialog import PnaFileDialog
-from core.workers.device_connection_worker import DeviceConnectionWorker
 from ui.widgets.base_measurement_widget import BaseMeasurementWidget, QTextEditLogHandler
 
 
@@ -460,6 +456,26 @@ class CheckMaWidget(BaseMeasurementWidget):
         self.pna_number_of_points.addItems(['3', '11', '101', '201'])
         self.pna_number_of_points.setCurrentText('11')
         self.pna_tab_layout.addRow('Кол-во точек:', self.pna_number_of_points)
+
+        self.pulse_mode_combo = QtWidgets.QComboBox()
+        self.pulse_mode_combo.addItems(['Standard', 'Off'])
+        self.pna_tab_layout.addRow('Импульсный режим', self.pulse_mode_combo)
+
+        self.pulse_width = QtWidgets.QDoubleSpinBox()
+        self.pulse_width.setDecimals(3)
+        self.pulse_width.setRange(5, 50)
+        self.pulse_width.setSingleStep(1)
+        self.pulse_width.setValue(20)
+        self.pulse_width.setSuffix(' мкс')
+        self.pna_tab_layout.addRow('Ширина импульса', self.pulse_width)
+
+        self.pulse_period = QtWidgets.QDoubleSpinBox()
+        self.pulse_width.setDecimals(3)
+        self.pulse_period.setRange(20, 20000)
+        self.pulse_period.setValue(2000)
+        self.pulse_period.setSingleStep(10)
+        self.pulse_period.setSuffix(' мкс')
+        self.pna_tab_layout.addRow('Период импульса', self.pulse_period)
 
         settings_layout = QtWidgets.QHBoxLayout()
         settings_layout.setSpacing(4)
@@ -1193,6 +1209,9 @@ class CheckMaWidget(BaseMeasurementWidget):
         self.pna_settings['freq_stop'] = self.pna_stop_freq.value() * 10**6
         self.pna_settings['freq_points'] = self.pna_number_of_points.currentText()
         self.pna_settings['settings_file'] = self.settings_file_edit.text()
+        self.pna_settings['pulse_mode'] = self.pulse_mode_combo.currentText()
+        self.pna_settings['pulse_period'] = self.pulse_period.value() / 10 ** 6
+        self.pna_settings['pulse_width'] = self.pulse_width.value() / 10 ** 6
         
         # Meas - критерии проверки
         self.check_criteria = {
@@ -1241,6 +1260,9 @@ class CheckMaWidget(BaseMeasurementWidget):
         s.setValue('pna_stop_freq', int(self.pna_stop_freq.value()))
         s.setValue('pna_points', self.pna_number_of_points.currentText())
         s.setValue('pna_settings_file', self.settings_file_edit.text())
+        s.setValue('pulse_mode', self.pulse_mode_combo.currentText())
+        s.setValue('pulse_width', float(self.pulse_width.value()))
+        s.setValue('pulse_period', float(self.pulse_period.value()))
         # Coord system
         s.setValue('coord_system', self.coord_system_combo.currentText())
         # Criteria
@@ -1279,20 +1301,33 @@ class CheckMaWidget(BaseMeasurementWidget):
             idx = self.direction_combo.findText(val)
             if idx >= 0: self.direction_combo.setCurrentIndex(idx)
         # PNA
-        val = s.value('s_param');  idx = self.s_param_combo.findText(val) if val else -1
-        if idx >= 0: self.s_param_combo.setCurrentIndex(idx)
-        if (v := s.value('pna_power')) is not None:
-            try: self.pna_power.setValue(float(v))
-            except Exception: pass
-        if (v := s.value('pna_start_freq')) is not None:
-            try: self.pna_start_freq.setValue(int(float(v)))
-            except Exception: pass
-        if (v := s.value('pna_stop_freq')) is not None:
-            try: self.pna_stop_freq.setValue(int(float(v)))
-            except Exception: pass
-        val = s.value('pna_points');  idx = self.pna_number_of_points.findText(val) if val else -1
-        if idx >= 0: self.pna_number_of_points.setCurrentIndex(idx)
-        if (v := s.value('pna_settings_file')): self.settings_file_edit.setText(v)
+        if (v := s.value('s_param')):
+            idx = self.s_param_combo.findText(v)
+            if idx >= 0:
+                self.s_param_combo.setCurrentIndex(idx)
+        if (v := s.value('pulse_mode')):
+            idx = self.pulse_mode_combo.findText(v)
+            if idx > 0:
+                self.pulse_mode_combo.setCurrentIndex(idx)
+        for key, widget in [
+            ('pna_power', self.pna_power),
+            ('pna_start_freq', self.pna_start_freq),
+            ('pna_stop_freq', self.pna_stop_freq),
+            ('pulse_width', self.pulse_width),
+            ('pulse_period', self.pulse_period)
+        ]:
+            val = s.value(key)
+            if val is not None:
+                try:
+                    if hasattr(widget, 'setValue'):
+                        widget.setValue(float(val))
+                except Exception:
+                    pass
+        if (v := s.value('pna_points')):
+            idx = self.pna_number_of_points.findText(v)
+            if idx >= 0: self.pna_number_of_points.setCurrentIndex(idx)
+        if (v := s.value('pna_settings_file')):
+            self.settings_file_edit.setText(v)
         # Coord system
         if (v := s.value('coord_system')):
             idx = self.coord_system_combo.findText(v)
@@ -1713,6 +1748,20 @@ class CheckMaWidget(BaseMeasurementWidget):
                 index = self.pna_number_of_points.findText(str(int(points)))
                 if index >= 0:
                     self.pna_number_of_points.setCurrentIndex(index)
+
+            pulse_mode = self.pna.get_pulse_mode()
+            if pulse_mode:
+                index = self.pulse_mode_combo.findText(pulse_mode)
+                if index >= 0:
+                    self.pulse_mode_combo.setCurrentIndex(index)
+
+            pna_pulse_width = self.pna.get_pulse_width()
+            if pna_pulse_width:
+                self.pulse_width.setValue(float(pna_pulse_width) * 10 ** 6)
+
+            pna_pulse_period = self.pna.get_period()
+            if pna_pulse_period:
+                self.pulse_period.setValue(float(pna_pulse_period) * 10 ** 6)
 
         except Exception as e:
             logger.error(f'Ошибка при применении настроек к интерфейсу: {e}')

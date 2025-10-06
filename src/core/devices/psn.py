@@ -1,7 +1,6 @@
 import time
 import pyvisa
 from loguru import logger
-from core.common.enums import Channel, Direction
 from core.common.exceptions import WrongInstrumentError, PlanarScannerError
 from utils.logger import format_device_log
 

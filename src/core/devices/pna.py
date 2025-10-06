@@ -28,7 +28,7 @@ class PNA:
             if self.mode == 0:  # Реальный режим
                 self.connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.connection.connect((self.ip, self.port))
-                #self.connection.settimeout(1)
+                self.connection.settimeout(1)
                 logger.debug(f"PNA подключен к {self.ip}:{self.port}")
                 logger.info('Произведено подлючение к PNA')
             else:  # Тестовый режим
@@ -127,6 +127,48 @@ class PNA:
         result = response.split(',')[1]
         return result
 
+    def set_s_param(self, s_param):
+        self._send_data(f"CALC:PAR:MOD:EXT '{s_param}'")
+        logger.info(f'Установлен {s_param} на текущем измерении')
+
+    def set_pulse_width(self, width: float):
+        """Установить ширину импульса в секундах"""
+        self._send_data(f"SENS:PULS:WIDT {width}")
+        logger.info(f'Установлена ширина импульса {width} секунд')
+
+    def get_pulse_width(self) -> float:
+        """Запросить текущую ширину импульса"""
+        self._send_data("SENS:PULS:WIDT?")
+        logger.info('Запрошена текущая ширина импульса')
+        response = float(self._read_data())
+        return response
+
+    def set_standard_pulse(self):
+        self._send_data("SENS:SWE:PULS:MODE STD")
+        logger.info("Установлен стандартный режим импульсов с PNA")
+
+    def set_pulse_mode_off(self):
+        self._send_data("SENS:SWE:PULS:MODE OFF")
+        logger.info("Выключено импульсное измерение на PNA")
+
+    def get_pulse_mode(self) -> str:
+        self._send_data('SENS:SWE:PULS:MODE?')
+        logger.info('Запрошен текущий режим импульсных измерений')
+        response = self._read_data()
+        return response
+
+    def set_period(self, value):
+        """Установить период импульса в секундах"""
+        self._send_data(f"SENS:PULSE:PER {value}")
+        logger.info(f"Установлен период {value} секунд")
+
+    def get_period(self) -> float:
+        self._send_data("SENS:PULSE:PER?")
+        logger.info("Запрошен текущий период")
+        response = float(self._read_data())
+        return response
+
+
     def get_selected_meas(self):
         self._send_data("CALC:PAR:SEL?")
         response = self._read_data()
@@ -186,6 +228,24 @@ class PNA:
             phases = [random.uniform(-180, 180) for _ in range(self.count_freqs_point)]
             return amps, phases
 
+    def get_fdata(self):
+        if self.mode == 0:
+            self._send_data(f"CALC:DATA? FDATA")
+            response = self._read_data()
+            response_list = response.split(',')
+
+            return [float(x) for x in response_list]
+
+        else:
+            return [random.uniform(-20, 30) for _ in range(self.count_freqs_point)]
+
+    def get_mean_value_from_fdata(self):
+        data = self.get_fdata()
+        mean = sum(data) / len(data)
+        logger.debug(f'Получено среднее значение FDATA с PNA: {mean} ')
+        return mean
+
+
     def get_mean_value_from_sdata(self):
         if self.mode == 0:
             self._send_data(f'CALC:DATA? SDATA')
@@ -208,7 +268,7 @@ class PNA:
         amps, phases = self.get_data()
         amount_freq = len(amps)
         amp, phase = amps[amount_freq//2], phases[amount_freq//2]
-        logger.debug(format_device_log('PNA', '<<', f'Получена фаза и амплитуда на центральной частоте: {amp}дБ, {phase}'))
+        logger.debug(f'Получена фаза и амплитуда на центральной частоте: {amp}дБ, {phase}')
         if phase < 0:
             phase += 360
         return amp, phase
@@ -278,8 +338,16 @@ class PNA:
         command = f'MMEM:CAT? \"{folder}\"'
         self._send_data(command)
         response = self._read_data()
-        result_list = response[2:len(response)-1].split(',')
-        logger.debug(f'Запрошены файлы pna в folder={folder}')
+        
+        # Убираем кавычки если они есть в начале и конце
+        if response.startswith('"') and response.endswith('"'):
+            response = response[1:-1]
+        
+        # Разделяем по запятым и очищаем каждый элемент
+        result_list = [item.strip() for item in response.split(',') if item.strip()]
+        
+        logger.debug(f'Запрошены файлы pna в folder={folder}, найдено: {len(result_list)} файлов')
+        logger.debug(f'Список файлов: {result_list}')
         return result_list
 
     def normal_current_trace(self):

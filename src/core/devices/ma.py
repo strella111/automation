@@ -193,17 +193,29 @@ class MA:
         self.write(command)
         response = self.read()
         if response:
-            if response[6] == 0x00:
-                logger.info('Команда успешно принята БУ')
-                self.retry_counter = 0
-            else:
-                logger.error(f'Код ошибки при выполнения последней КУ: {int(response[6])}')
+            if is_check and len(response) < 7:
+                logger.error(f'Недостаточная длина ответа команды: {len(response)} байт (ожидается минимум 7)')
                 if self.retry_counter > 3:
                     logger.error(f'После 3 попыток не удалось отправить команду {command.hex(" ")} на БУ')
                     return
-                    #raise MaCommandNotDelivered(f'После 3 попыток не удалось отправить команду {command.hex(" ")} на БУ')
                 self.retry_counter += 1
                 self._send_command(command, is_check=True)
+                return
+            
+            if is_check:
+                if response[6] == 0x00:
+                    logger.info('Команда успешно принята БУ')
+                    self.retry_counter = 0
+                else:
+                    logger.error(f'Код ошибки при выполнения последней КУ: {int(response[6])}')
+                    if self.retry_counter > 3:
+                        logger.error(f'После 3 попыток не удалось отправить команду {command.hex(" ")} на БУ')
+                        return
+                    self.retry_counter += 1
+                    self._send_command(command, is_check=True)
+            else:
+                logger.debug(f'Получен ответ на команду без проверки: {response.hex(" ")}')
+                self.retry_counter = 0
 
 
     def set_ppm_att(self, chanel: Channel, direction: Direction, ppm_num:int, value: int):
@@ -444,32 +456,41 @@ class MA:
         response = self.read()
         if not response:
             logger.error(f"Не поступило ответа на команду КУ-ТМ от БУ№{self.bu_addr}")
+            return None
+
+        if len(response) < 107:
+            logger.error(f"Недостаточная длина ответа телеметрии: {len(response)} байт (ожидается минимум 107)")
+            return None
 
         data = dict()
-        data['addr']= int(response[1] & 0x3f)
-        data['command_code'] = response[2]
-        data['command_id'] = response[3:5]
-        data['crc'] = response[-2:]
-        for j in range(32):
-            data[f'ppm{j+1}'] = response[5+j:5+j+2]
+        try:
+            data['addr']= int(response[1] & 0x3f)
+            data['command_code'] = response[2]
+            data['command_id'] = response[3:5]
+            data['crc'] = response[-2:]
+            for j in range(32):
+                data[f'ppm{j+1}'] = response[5+j:5+j+2]
 
-        data['mdo'] = response[69:72]
-        data['bu'] = response[72]
-        data['vip1'] = response[73:75]
-        data['vip2'] = response[75:77]
-        data['table_beam_number'] = int.from_bytes(response[77:79], byteorder='big')
-        data['crc_of_table_beam_number'] = response[79:83]
-        data['crc_calb_table'] = response[83:87]
-        data['strobs_prd'] = int.from_bytes(response[87:91], byteorder='big')
-        data['strobs_prm'] = int.from_bytes(response[91:95], byteorder='big')
-        data['amount_beams'] = int.from_bytes(response[95:97], byteorder='big')
-        data['beam_number_prd'] = int.from_bytes(response[97:99], byteorder='big')
-        data['beam_number_prm'] = int.from_bytes(response[99:101], byteorder='big')
-        data['configuration_ports'] = response[101]
-        data['crc_voltage_table'] = response[102:106]
-        data['state_bu'] = response[106]
+            data['mdo'] = response[69:72]
+            data['bu'] = response[72]
+            data['vip1'] = response[73:75]
+            data['vip2'] = response[75:77]
+            data['table_beam_number'] = int.from_bytes(response[77:79], byteorder='big')
+            data['crc_of_table_beam_number'] = response[79:83]
+            data['crc_calb_table'] = response[83:87]
+            data['strobs_prd'] = int.from_bytes(response[87:91], byteorder='big')
+            data['strobs_prm'] = int.from_bytes(response[91:95], byteorder='big')
+            data['amount_beams'] = int.from_bytes(response[95:97], byteorder='big')
+            data['beam_number_prd'] = int.from_bytes(response[97:99], byteorder='big')
+            data['beam_number_prm'] = int.from_bytes(response[99:101], byteorder='big')
+            data['configuration_ports'] = response[101]
+            data['crc_voltage_table'] = response[102:106]
+            data['state_bu'] = response[106]
 
-        return data
+            return data
+        except Exception as e:
+            logger.error(f"Ошибка при парсинге телеметрии: {e}")
+            return None
 
 
 

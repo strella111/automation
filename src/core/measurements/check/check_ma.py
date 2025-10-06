@@ -1,4 +1,3 @@
-import time
 from typing import Tuple, List
 from loguru import logger
 from ...devices.ma import MA

@@ -23,7 +23,6 @@ Minimal E5818A controller class
 """
 
 from __future__ import annotations
-import time
 from dataclasses import dataclass
 from typing import Optional, Callable, Dict
 from utils.logger import format_device_log
@@ -301,7 +300,6 @@ class E5818:
             raise ValueError("period_s слишком мал (минимум 10 мкс)")
         if count < 1 or count > 5000:
             raise ValueError("count вне диапазона (1..5000)")
-        print('Я тут (314 строка)')
         now_sec, now_frac = self._get_tai()
         start_total = now_sec + now_frac + start_in_s
         start_sec = int(start_total)
