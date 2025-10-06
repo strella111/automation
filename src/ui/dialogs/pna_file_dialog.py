@@ -2,7 +2,7 @@
 Диалог выбора файлов настроек PNA
 """
 
-from PyQt5 import QtWidgets, QtCore
+from PyQt5 import QtWidgets
 from loguru import logger
 from typing import Optional
 

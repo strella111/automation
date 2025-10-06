@@ -1,5 +1,4 @@
-from PyQt5 import QtWidgets, QtCore, QtGui
-from PyQt5.QtGui import QTextCursor
+from PyQt5 import QtWidgets, QtCore
 from PyQt5.QtWidgets import QMessageBox, QStyle
 from PyQt5.QtCore import QSize
 from loguru import logger
@@ -7,16 +6,9 @@ import os
 import threading
 import numpy as np
 import pyqtgraph as pg
-import serial.tools.list_ports
-from core.devices.ma import MA
-from core.devices.pna import PNA
-from core.devices.psn import PSN
-from utils.logger import setup_logging
 from core.measurements.phase.phase_ma import PhaseMaMeas
 from core.common.enums import Channel, Direction
 from core.common.coordinate_system import CoordinateSystemManager
-from pyqtgraph.Qt import QtGui
-import pyqtgraph.opengl as gl
 from pyqtgraph.colormap import ColorMap
 
 from ui.dialogs.pna_file_dialog import PnaFileDialog
@@ -314,18 +306,6 @@ class PhaseMaWidget(BaseMeasurementWidget):
         self.load_ui_settings()
 
 
-    def update_pna_settings_files(self):
-        """Обновляет список файлов настроек PNA в ComboBox"""
-        if not self.pna or not self.pna.connection:
-            return
-        try:
-            files = self.pna.get_files_in_dir(folder='C:\\Users\\Public\\Documents\\Network Analyzer\\')
-            csa_files = [f for f in files if f.lower().endswith('.csa')]
-            self.settings_file_combo.clear()
-            self.settings_file_combo.addItems(csa_files)
-            logger.info(f'Список файлов настроек PNA обновлен: {len(csa_files)} файлов')
-        except Exception as e:
-            logger.error(f'Ошибка при получении списка файлов настроек PNA: {e}')
 
     def set_buttons_enabled(self, enabled: bool):
         self.ma_connect_btn.setEnabled(enabled)
