@@ -439,7 +439,7 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.right_layout.addWidget(self.console, stretch=1)
 
         self.log_handler = QTextEditLogHandler(self.console)
-        logger.add(self.log_handler, format="{time:HH:mm:ss.SSS} | {level} | {message}")
+        logger.add(self.log_handler, format="{time:HH:mm:ss.SSS} | {level} | {name}:{function}:{line} | {message}")
 
         self._check_thread = None
 

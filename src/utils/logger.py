@@ -2,12 +2,13 @@ import sys
 from pathlib import Path
 from loguru import logger
 
-def setup_logging(log_file: str = "logs/app.log"):
+def setup_logging(log_file: str = "logs/app.log", rotation_size: str = "10 MB"):
     """
     Настройка логирования
     
     Args:
         log_file (str): Путь к файлу логов относительно корня проекта
+        rotation_size (str): Размер файла для ротации (например, "10 MB", "1 GB")
     """
     log_path = Path(log_file)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -15,17 +16,19 @@ def setup_logging(log_file: str = "logs/app.log"):
     logger.remove()
 
     logger.add(
-        sys.stderr,
-        format="{time:YYYY-MM-DD HH:mm:ss.SSS}\t{level}\t{message}",
+        sys.stdout,
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level} | {name}:{function}:{line} | {message}",
         level="DEBUG"
     )
 
     logger.add(
         log_file,
-        format="{time:YYYY-MM-DD HH:mm:ss.SSS}\t{level}\t{message}",
+        format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level} | {name}:{function}:{line} | {message}",
         level="DEBUG",
-        retention="7 days",
-        compression="zip"
+        rotation=rotation_size,
+        retention="7 days", 
+        compression="zip", 
+        encoding="utf-8"
     )
     
     logger.info("Логирование успешно настроено")
