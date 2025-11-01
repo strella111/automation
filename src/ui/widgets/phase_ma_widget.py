@@ -10,9 +10,10 @@ from core.measurements.phase.phase_ma import PhaseMaMeas
 from core.common.enums import Channel, Direction
 from core.common.coordinate_system import CoordinateSystemManager
 from pyqtgraph.colormap import ColorMap
+from config.settings_manager import get_ui_settings
 
 from ui.dialogs.pna_file_dialog import PnaFileDialog
-from ui.widgets.base_measurement_widget import BaseMeasurementWidget, QTextEditLogHandler
+from ui.widgets.base_measurement_widget import BaseMeasurementWidget
 from ui.dialogs.add_coord_syst_dialog import AddCoordinateSystemDialog
 
 
@@ -266,13 +267,8 @@ class PhaseMaWidget(BaseMeasurementWidget):
         self.plot_tabs.addTab(self.phase_plot, "Фаза")
         self.right_layout.addWidget(self.plot_tabs, stretch=5)
 
-        self.console = QtWidgets.QTextEdit()
-        self.console.setReadOnly(True)
-
-        self.console.setFixedHeight(200)
-        self.right_layout.addWidget(self.console, stretch=1)
-
-        self.log_handler = QTextEditLogHandler(self.console)
+        # Создаем консоль с выбором уровня логов
+        self.console, self.log_handler, self.log_level_combo = self.create_console_with_log_level(self.right_layout, console_height=180)
         logger.add(self.log_handler, format="{time:HH:mm:ss.SSS} | {level} | {name}:{function}:{line} | {message}")
 
         self._meas_thread = None
@@ -302,8 +298,11 @@ class PhaseMaWidget(BaseMeasurementWidget):
         self.set_button_connection_state(self.ma_connect_btn, False)
 
         # Персистентные настройки UI
-        self._ui_settings = QtCore.QSettings('PULSAR', 'PhaseMA_UI')
+        self._ui_settings = get_ui_settings('phase_ma')
         self.load_ui_settings()
+        
+        # Подключаем автосохранение уровня логирования
+        self.log_level_combo.currentTextChanged.connect(lambda: self._ui_settings.setValue('log_level', self.log_level_combo.currentText()))
 
 
 
@@ -638,6 +637,8 @@ class PhaseMaWidget(BaseMeasurementWidget):
         s.setValue('pulse_period', float(self.pulse_period.value()))
         # Coord system
         s.setValue('coord_system', self.coord_system_combo.currentText())
+        # Log level
+        s.setValue('log_level', self.log_level_combo.currentText())
         s.sync()
 
     def load_ui_settings(self):
@@ -685,6 +686,11 @@ class PhaseMaWidget(BaseMeasurementWidget):
             idx = self.coord_system_combo.findText(v)
             if idx >= 0:
                 self.coord_system_combo.setCurrentIndex(idx)
+        # Log level
+        if (v := s.value('log_level')):
+            idx = self.log_level_combo.findText(v)
+            if idx >= 0:
+                self.log_level_combo.setCurrentIndex(idx)
     @QtCore.pyqtSlot()
     def update_heatmaps(self):
         x_positions = np.asarray(self.x_cords, dtype=float)

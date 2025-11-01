@@ -7,8 +7,6 @@ from core.common.exceptions import WrongInstrumentError, PlanarScannerError
 from utils.excel_module import CalibrationCSV
 from PyQt5.QtCore import QThread
 
-import time
-
 class PhaseMaMeas:
     """Класс для измерения и настройки фаз в антенном модуле"""
     
@@ -90,8 +88,6 @@ class PhaseMaMeas:
                                     value=value)
             _, phase_first = self.pna.get_center_freq_data()
             phase_first -= self.norm_phase
-            if phase_first < 0:
-                phase_first += 360
             if self.point_callback:
                 self.point_callback(i, j, self.x_cords[i], self.y_cords[j], amp, phase_first)
 
@@ -110,8 +106,6 @@ class PhaseMaMeas:
                                         chanel=chanel,
                                         value=new_value)
                 _, phase_iter = self.pna.get_center_freq_data()
-                if phase_iter < 0:
-                    phase_first += 360
                 phase_iter -= self.norm_phase
                 phase_list.append(phase_iter)
                 if self.point_callback:

@@ -7,7 +7,7 @@ Minimal E5818A controller class
   • пачка импульсов с заданным периодом
   • обработка внешнего триггера с EXT1 (SW-handshake: проверка подлинности + дебаунс)
   • обработка ошибок (очередь ошибок SCPI), безопасное планирование ALARM «в будущее»
-  • очистка логов EXT/TTL
+  • очистка логов EXT/TTL (ручная и автоматическая)
   • disarm (снятие активных ALARM)
 
 Зависимость:
@@ -20,6 +20,8 @@ Minimal E5818A controller class
 - Лог EXT читается через LOG:STAMp:DATA? — это FIFO: каждая запись читается и удаляется.
 - Для устойчивости к различным версиям прошивки предусмотрены небольшие «алиасы»
   команд (COUN?/COUNt?, LXI:TIME?/LXI:TIME:VAL?).
+- Логи автоматически очищаются каждые N операций (по умолчанию 100), чтобы предотвратить
+  переполнение и таймауты. Интервал настраивается через E5818Config.log_clear_interval.
 """
 
 from __future__ import annotations
@@ -60,6 +62,7 @@ class E5818Config:
     pulse_period_s: float = 0.0005       # >= 100e-6
     min_alarm_guard_s: float = 0.0015    # «микро-буфер» если рассчитанное время старта уже прошло
     ext_debounce_s: float = 0.0010       # софт-дебаунс EXT (минимальный интервал между валидными событиями)
+    log_clear_interval: int = 100        # Очищать логи каждые N операций (для предотвращения переполнения)
     logger: Optional[Callable[[str], None]] = None  # опциональный логгер (print-совместимый коллбек)
 
 
@@ -76,6 +79,7 @@ class E5818:
         self.connection: Optional["pyvisa.resources.MessageBasedResource"] = None
         self._last_ext_ts: Optional[float] = None   # для SW-дебаунса EXT
         self._idn: Optional[str] = None
+        self._operation_counter: int = 0  # Счетчик операций для периодической очистки логов
 
     # -------- infra --------
     def connect(self) -> str:
@@ -232,7 +236,19 @@ class E5818:
         """Очистить логи EXT/TTL (начать «с чистого листа»)."""
         self._enable_and_clear_logs()
         self._last_ext_ts = None
+        self._operation_counter = 0  # Сбрасываем счетчик при ручной очистке
         self._log("Logs cleared")
+    
+    def _auto_clear_logs_if_needed(self):
+        """Автоматическая очистка логов при достижении порога операций."""
+        self._operation_counter += 1
+        if self._operation_counter >= self.cfg.log_clear_interval:
+            try:
+                self._enable_and_clear_logs()
+                self._operation_counter = 0
+                self._log(f"Auto-cleared logs after {self.cfg.log_clear_interval} operations")
+            except Exception as e:
+                logger.warning(f"Не удалось автоматически очистить логи LXI: {e}")
 
     def disarm(self):
         """Остановить активные будильники/режимы — безопасная остановка."""
@@ -248,6 +264,7 @@ class E5818:
         lead = self.cfg.start_lead_s if lead_s is None else float(lead_s)
         self._schedule_alarm_burst_guarded(lead, period_s=0.001, count=1)
         self._log(f"Single pulse scheduled in {lead*1e3:.1f} ms")
+        self._auto_clear_logs_if_needed()  # Периодическая очистка логов
 
 
     def burst(self, count: Optional[int] = None, period_s: Optional[float] = None, lead_s: Optional[float] = None):
@@ -255,6 +272,7 @@ class E5818:
         per = self.cfg.pulse_period_s if period_s is None else float(period_s)
         lead = self.cfg.start_lead_s if lead_s is None else float(lead_s)
         self._schedule_alarm_burst(start_in_s=lead, period_s=per, count=n)
+        self._auto_clear_logs_if_needed()  # Периодическая очистка логов
 
 
     # -------- SW-handshake helpers --------
@@ -268,6 +286,7 @@ class E5818:
             return None
         parts = [p.strip() for p in raw.split(",")]
         # Формат: log_sec,log_frac,ts_sec,ts_frac,source(0/1),slope
+        self._auto_clear_logs_if_needed()  # Периодическая очистка логов при чтении событий
         return {
             "log_sec": int(float(parts[0])),
             "log_frac": float(parts[1]),

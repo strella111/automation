@@ -1,12 +1,12 @@
 from enum import Enum
 
 class Channel(Enum):
-    """Каналы работы устройства"""
+    """Канал"""
     Receiver = "Receiver"
     Transmitter = "Transmitter"
 
 class Direction(Enum):
-    """Направления поляризации"""
+    """Поляризация"""
     Horizontal = "Horizontal"
     Vertical = "Vertical"
 

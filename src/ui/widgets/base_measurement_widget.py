@@ -26,12 +26,14 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
         self.pna = None
         self.psn = None
         self.trigger = None
+        self.afar = None
         
         # Потоки для асинхронного подключения к устройствам
         self._ma_connection_thread = None
         self._pna_connection_thread = None
         self._psn_connection_thread = None
         self._trigger_connection_thread = None
+        self._afar_connection_thread = None
         
         # Общие переменные для измерений
         self._stop_flag = threading.Event()
@@ -264,6 +266,8 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
 
         # Таймаут берем из общих настроек устройств
         visa_timeout_ms = int(self.device_settings.get('trigger_visa_timeout_ms', 2000))
+        # Интервал очистки логов (для предотвращения таймаутов)
+        log_clear_interval = int(self.device_settings.get('trigger_log_clear_interval', 30))
 
         # Проверяем, не идет ли уже подключение
         if self._trigger_connection_thread and self._trigger_connection_thread.isRunning():
@@ -281,6 +285,7 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
                 pulse_period_s=pulse_period_s,
                 min_alarm_guard_s=min_alarm_guard_s,
                 ext_debounce_s=ext_debounce_s,
+                log_clear_interval=log_clear_interval,
                 logger=lambda m: logger.debug(f"E5818 | {m}")
             )
         }
@@ -289,6 +294,64 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
         self._trigger_connection_thread.connection_finished.connect(self._on_trigger_connection_finished)
         self.device_connection_started.emit('Trigger')
         self._trigger_connection_thread.start()
+    
+    def connect_afar(self):
+        """Подключает/отключает АФАР"""
+        if self.afar and self.afar.connection:
+            try:
+                self.afar.disconnect()
+                self.afar = None
+                self.set_button_connection_state(self.afar_connect_btn, False)
+                logger.info('АФАР успешно отключен')
+                return
+            except Exception as e:
+                self.show_error_message("Ошибка отключения АФАР", f"Не удалось отключить АФАР: {str(e)}")
+                return
+
+        # Проверяем, не идет ли уже подключение
+        if self._afar_connection_thread and self._afar_connection_thread.isRunning():
+            logger.info("Подключение к АФАР уже выполняется...")
+            return
+
+        connection_type = self.device_settings.get('afar_connection_type', 'udp')
+        mode = self.device_settings.get('afar_mode', 0)
+        
+        if connection_type == 'udp':
+            ip = self.device_settings.get('afar_ip', '')
+            port = int(self.device_settings.get('afar_port', ''))
+            
+            if mode == 0 and (not ip or not port):
+                self.show_error_message("Ошибка настроек", "IP/Порт АФАР не заданы. Откройте настройки и заполните поля.")
+                return
+                
+            connection_params = {
+                'connection_type': connection_type,
+                'com_port': None,  # Для UDP не нужен COM-порт
+                'ip': ip,
+                'port': port,
+                'mode': mode
+            }
+        else:  # com
+            com_port = self.device_settings.get('afar_com_port', '')
+            
+            if mode == 0 and (not com_port or com_port == 'Тестовый'):
+                self.show_error_message("Ошибка настроек", "COM-порт АФАР не выбран. Откройте настройки и выберите COM-порт.")
+                return
+                
+            connection_params = {
+                'connection_type': connection_type,
+                'com_port': com_port,
+                'ip': None,  # Для COM не нужен IP
+                'port': None,  # Для COM не нужен порт
+                'mode': mode
+            }
+        
+        logger.info(f'Попытка подключения к АФАР через {connection_type}, режим: {"реальный" if mode == 0 else "тестовый"}')
+        
+        self._afar_connection_thread = DeviceConnectionWorker('AFAR', connection_params)
+        self._afar_connection_thread.connection_finished.connect(self._on_afar_connection_finished)
+        self.device_connection_started.emit('AFAR')
+        self._afar_connection_thread.start()
     
     # Обработчики завершения подключения к конкретным устройствам
     @QtCore.pyqtSlot(str, bool, str, object)
@@ -355,6 +418,21 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
         
         # Очищаем ссылку на поток
         self._trigger_connection_thread = None
+
+    @QtCore.pyqtSlot(str, bool, str, object)
+    def _on_afar_connection_finished(self, device_name: str, success: bool, message: str, device_instance):
+        """Обработчик завершения подключения к АФАР"""
+        if success:
+            self.afar = device_instance
+            self.set_button_connection_state(self.afar_connect_btn, True)
+            logger.info(f'АФАР успешно подключен: {message}')
+        else:
+            self.afar = None
+            self.set_button_connection_state(self.afar_connect_btn, False)
+            self.show_error_message("Ошибка подключения АФАР", f"Не удалось подключиться к АФАР: {message}")
+        
+        # Очищаем ссылку на поток
+        self._afar_connection_thread = None
     
     def create_centered_table_item(self, text: str) -> QtWidgets.QTableWidgetItem:
         """Создает элемент таблицы с центрированным текстом"""
@@ -480,6 +558,156 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
                 logger.info('PNA выключен')
         except Exception as e:
             logger.error(f"Ошибка при выключении PNA: {e}")
+    
+    def create_console_with_log_level(self, parent_layout, console_height=180):
+        """
+        Создает консоль с выбором уровня логов и добавляет в указанный layout.
+        Возвращает (console_widget, log_handler) для дальнейшего использования.
+        
+        Args:
+            parent_layout: Layout куда добавить консоль
+            console_height: Высота консоли в пикселях (по умолчанию 200)
+        """
+        # Создаем контейнер для консоли и контролов
+        console_container = QtWidgets.QWidget()
+        console_layout = QtWidgets.QVBoxLayout(console_container)
+        console_layout.setContentsMargins(0, 0, 0, 0)
+        console_layout.setSpacing(3)
+        
+        # Панель с выбором уровня логов
+        log_control_panel = QtWidgets.QWidget()
+        log_control_layout = QtWidgets.QHBoxLayout(log_control_panel)
+        log_control_layout.setContentsMargins(0, 0, 0, 0)
+        log_control_layout.setSpacing(8)
+        
+        log_level_label = QtWidgets.QLabel("Уровень логов:")
+        log_control_layout.addWidget(log_level_label)
+        
+        log_level_combo = QtWidgets.QComboBox()
+        log_level_combo.addItems(['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'])
+        log_level_combo.setCurrentText('DEBUG')
+        log_level_combo.setToolTip('Выберите минимальный уровень логов для отображения в консоли')
+        log_control_layout.addWidget(log_level_combo)
+        
+        # Кнопка очистки консоли
+        clear_console_btn = QtWidgets.QPushButton('Очистить консоль')
+        clear_console_btn.setMaximumWidth(150)
+        log_control_layout.addWidget(clear_console_btn)
+        
+        log_control_layout.addStretch()
+        
+        console_layout.addWidget(log_control_panel)
+        
+        # Сама консоль
+        console = QtWidgets.QTextEdit()
+        console.setReadOnly(True)
+        console.setFixedHeight(console_height)
+        
+        # Улучшенный читаемый шрифт для консоли
+        console_font = QtGui.QFont("Consolas")
+        console_font.setPointSize(10)
+        console_font.setStyleHint(QtGui.QFont.Monospace)
+        console.setFont(console_font)
+        
+        # Стиль консоли - светлый фон, читаемый текст
+        console.setStyleSheet("""
+            QTextEdit {
+                background-color: #FFFFFF;
+                color: #2C2C2C;
+                border: 1px solid #CCCCCC;
+                border-radius: 3px;
+                padding: 6px;
+                font-family: 'Consolas', 'Courier New', 'Monaco', monospace;
+                font-size: 10pt;
+                line-height: 1.5;
+            }
+        """)
+        
+        console_layout.addWidget(console)
+        
+        # Добавляем контейнер в родительский layout (без stretch для фиксированной высоты)
+        parent_layout.addWidget(console_container)
+        
+        # Создаем обработчик логов
+        from ui.components.log_handler import QTextEditLogHandler
+        log_handler = QTextEditLogHandler(console)
+        
+        # Подключаем изменение уровня логов
+        def on_log_level_changed(level):
+            log_handler.set_min_level(level)
+            logger.info(f'Уровень логов консоли изменен на: {level}')
+        
+        log_level_combo.currentTextChanged.connect(on_log_level_changed)
+        
+        # Подключаем очистку консоли
+        clear_console_btn.clicked.connect(console.clear)
+        
+        return console, log_handler, log_level_combo
+
+    def disconnect_all_devices(self):
+        """Отключает все подключенные устройства"""
+        devices_to_disconnect = []
+        
+        # Проверяем и отключаем MA
+        if self.ma and self.ma.connection:
+            try:
+                self.ma.disconnect()
+                self.ma = None
+                if hasattr(self, 'ma_connect_btn'):
+                    self.set_button_connection_state(self.ma_connect_btn, False)
+                    self.ma_connect_btn.setText('МА')
+                devices_to_disconnect.append('МА')
+            except Exception as e:
+                logger.error(f"Ошибка отключения МА: {e}")
+        
+        # Проверяем и отключаем PNA
+        if self.pna and self.pna.connection:
+            try:
+                self.pna.disconnect()
+                self.pna = None
+                if hasattr(self, 'pna_connect_btn'):
+                    self.set_button_connection_state(self.pna_connect_btn, False)
+                devices_to_disconnect.append('PNA')
+            except Exception as e:
+                logger.error(f"Ошибка отключения PNA: {e}")
+        
+        # Проверяем и отключаем PSN
+        if self.psn and self.psn.connection:
+            try:
+                self.psn.disconnect()
+                self.psn = None
+                if hasattr(self, 'psn_connect_btn'):
+                    self.set_button_connection_state(self.psn_connect_btn, False)
+                devices_to_disconnect.append('PSN')
+            except Exception as e:
+                logger.error(f"Ошибка отключения PSN: {e}")
+        
+        # Проверяем и отключаем Trigger
+        if self.trigger is not None and getattr(self.trigger, 'connection', None) is not None:
+            try:
+                self.trigger.close()
+                self.trigger = None
+                if hasattr(self, 'gen_connect_btn'):
+                    self.set_button_connection_state(self.gen_connect_btn, False)
+                devices_to_disconnect.append('Устройство синхронизации')
+            except Exception as e:
+                logger.error(f"Ошибка отключения устройства синхронизации: {e}")
+        
+        # Проверяем и отключаем AFAR
+        if self.afar and self.afar.connection:
+            try:
+                self.afar.disconnect()
+                self.afar = None
+                if hasattr(self, 'afar_connect_btn'):
+                    self.set_button_connection_state(self.afar_connect_btn, False)
+                devices_to_disconnect.append('АФАР')
+            except Exception as e:
+                logger.error(f"Ошибка отключения АФАР: {e}")
+        
+        if devices_to_disconnect:
+            logger.info(f"Отключены устройства: {', '.join(devices_to_disconnect)}")
+        else:
+            logger.debug("Нет подключенных устройств для отключения")
 
     def update_scanner_offset(self):
         """Обновление смещений сканера (для перемера)"""

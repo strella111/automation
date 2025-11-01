@@ -25,10 +25,10 @@ Keysight E5818A trigger helper (v2, handshake-ready)
     python e5818a_trigger_tool.py --gui
 
 CLI:
-    python e5818a_trigger_tool.py --test single  --ip 192.168.1.50
-    python e5818a_trigger_tool.py --test burst   --ip 192.168.1.50 --period-us 500 --count 11
-    python e5818a_trigger_tool.py --test extloop --ip 192.168.1.50 --runtime 60
-    python e5818a_trigger_tool.py --test handshake --ip 192.168.1.50 --period-us 500 --count 11 --batches 20
+    python e5818a_trigger_tool.py --test single  --ip 192.168.0.101
+    python e5818a_trigger_tool.py --test burst   --ip 192.168.0.101 --period-us 500 --count 11
+    python e5818a_trigger_tool.py --test extloop --ip 192.168.0.101 --runtime 60
+    python e5818a_trigger_tool.py --test handshake --ip 192.168.0.101 --period-us 500 --count 11 --batches 20
 """
 from __future__ import annotations
 import argparse
@@ -47,7 +47,7 @@ except Exception as e:  # pragma: no cover
 # -------------------------- Конфигурация --------------------------
 @dataclass
 class E5818Config:
-    resource: str                  # e.g. "TCPIP0::10.10.61.71::inst0::INSTR"
+    resource: str                  # e.g. "TCPIP0::192.168.0.101::inst0::INSTR"
     ttl_channel: int = 1           # 1..2
     ext_channel: int = 1           # 1..2 (слушаем EXTn)
     start_lead_s: float = 0.02     # задержка старта серии после детекта, сек
@@ -112,15 +112,11 @@ class KeysightE5818A:
     # ---------- SCPI helpers ----------
     def write(self, cmd: str):
         assert self.inst is not None, "Не подключено"
-        print(f'write:::{cmd}')
         self.inst.write(cmd)
 
     def query(self, cmd: str) -> str:
         assert self.inst is not None, "Не подключено"
-        result = self.inst.query(cmd).strip()
-        print(f'write:::{cmd}')
-        print(f'read:::{result}')
-        return result
+        return self.inst.query(cmd).strip()
 
     # ---------- базовые операции ----------
     def ensure_ttl_source(self):
@@ -141,8 +137,8 @@ class KeysightE5818A:
         """Настраивает ALARM1 на серию импульсов начиная с (now + start_in_s)."""
         if period_s < 0.0001:
             raise ValueError("period_s слишком мал (минимум 100 мкс)")
-        if count < 1 or count > 5000:
-            raise ValueError("count вне диапазона (1..5000)")
+        if count < 1 or count > 50000:
+            raise ValueError("count вне диапазона (1..50000)")
         now_sec, now_frac = self._get_tai()
         start_total = now_sec + now_frac + start_in_s
         start_sec = int(start_total)
@@ -157,6 +153,7 @@ class KeysightE5818A:
 
     def pop_ext_event(self) -> Optional[Dict]:
         raw = self.query("LOG:STAMp:DATA?")
+
         if raw.upper().startswith("NO EVENT"):
             return None
         parts = [p.strip() for p in raw.split(",")]
@@ -380,13 +377,13 @@ class E5818App(tk.Tk):
         self.dev: Optional[KeysightE5818A] = None
 
         # Vars
-        self.var_ip = tk.StringVar(value="10.10.61.71")
+        self.var_ip = tk.StringVar(value="192.168.0.101")
         self.var_ttl = tk.IntVar(value=1)
         self.var_ext = tk.IntVar(value=1)
         self.var_lead_ms = tk.DoubleVar(value=20.0)
-        self.var_period_us = tk.DoubleVar(value=500.0)
+        self.var_period_us = tk.DoubleVar(value=200.0)
         self.var_count = tk.IntVar(value=11)
-        self.var_batches = tk.IntVar(value=10)
+        self.var_batches = tk.IntVar(value=100)
         self.var_debounce_ms = tk.DoubleVar(value=2.0)
         self.var_status = tk.StringVar(value="Готов")
 
@@ -574,7 +571,7 @@ class E5818App(tk.Tk):
 def main():
     parser = argparse.ArgumentParser(description="Keysight E5818A trigger helper (v2)")
     parser.add_argument("--gui", action="store_true", help="Запустить графический интерфейс")
-    parser.add_argument("--ip", type=str, default="10.10.61.71", help="IP адрес E5818A")
+    parser.add_argument("--ip", type=str, default="192.168.0.101", help="IP адрес E5818A")
     parser.add_argument("--test", choices=["single", "burst", "extloop", "handshake"], help="Выполнить тест")
     parser.add_argument("--period-us", type=float, default=500.0, help="Период, мкс")
     parser.add_argument("--count", type=int, default=11, help="Число импульсов в пачке")
@@ -583,6 +580,12 @@ def main():
     parser.add_argument("--runtime", type=float, default=30.0, help="Длительность теста extloop, с")
     args = parser.parse_args()
 
+
+    app = E5818App()
+    app.var_ip.set(args.ip)
+    app.mainloop()
+
+'''
     if args.gui:
         app = E5818App()
         app.var_ip.set(args.ip)
@@ -599,7 +602,7 @@ def main():
         test_handshake(args.ip, period_us=args.period_us, count=args.count, batches=args.batches, lead_ms=args.lead_ms)
     else:
         print("Ничего не выбрано. Запустите с --gui или --test …")
-
+'''
 
 if __name__ == "__main__":
     main()

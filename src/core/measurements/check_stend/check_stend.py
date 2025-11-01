@@ -4,6 +4,7 @@ from PyQt5 import QtCore
 from loguru import logger
 
 from utils.excel_module import get_or_create_excel_for_check
+from config.settings_manager import get_main_settings
 from ...devices.ma import MA
 from ...devices.pna import PNA
 from core.devices.trigger_box import E5818
@@ -339,7 +340,7 @@ class CheckMAStend:
             WrongInstrumentError: При ошибке работы с устройствами
         """
         worksheet, workbook, file_path = get_or_create_excel_for_check(
-            base_dir=QtCore.QSettings('PULSAR', 'PhaseMA').value('base_save_dir', ''),
+            base_dir=get_main_settings().value('base_save_dir', ''),
             dir_name='stend',
             file_name=f'{self.ma.bu_addr}.xlsx',
             mode='stend',

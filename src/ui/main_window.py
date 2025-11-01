@@ -2,23 +2,76 @@ from PyQt5 import QtWidgets, QtCore
 from ui.widgets.phase_ma_widget import PhaseMaWidget
 from ui.widgets.check_ma_widget import CheckMaWidget
 from ui.widgets.check_stend_ma_widget import StendCheckMaWidget
+from ui.widgets.phase_afar_widget import PhaseAfarWidget
 from ui.widgets.manual_control_widget import ManualControlWindow
+from ui.widgets.manual_control_afar_widget import ManualControlAfarWindow
 from ui.dialogs.settings_dialog import SettingsDialog
+from config.settings_manager import get_main_settings
 from loguru import logger
 
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('DEV')
-        self.resize(1400, 800)
-
-        self.settings = QtCore.QSettings('PULSAR', 'PhaseMA')
+        self.setWindowTitle('Automation Tool')
+        
+        # Инициализируем настройки сразу
+        self.settings = get_main_settings()
+        
+        # Восстанавливаем размер и положение окна
+        geometry = self.settings.value('window_geometry')
+        if geometry:
+            self.restoreGeometry(geometry)
+        else:
+            self.resize(1400, 800)
+        
+        # Восстанавливаем состояние окна (сплиттеры, toolbar и т.д.)
+        state = self.settings.value('window_state')
+        if state:
+            self.restoreState(state)
+        
+        # Устанавливаем иконку приложения
+        from PyQt5.QtGui import QIcon
+        import sys
+        import os
+        if getattr(sys, 'frozen', False):
+            # Если запущено из EXE
+            base_path = sys._MEIPASS
+        else:
+            # Если запущено из исходников
+            base_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        
+        # Пробуем загрузить PNG, если нет - ICO
+        icon_path_png = os.path.join(base_path, 'icon', 'Logo.png')
+        icon_path_ico = os.path.join(base_path, 'icon', 'Logo.ico')
+        
+        if os.path.exists(icon_path_png):
+            self.setWindowIcon(QIcon(icon_path_png))
+        elif os.path.exists(icon_path_ico):
+            self.setWindowIcon(QIcon(icon_path_ico))
 
         self.menu_bar = QtWidgets.QMenuBar(self)
         self.setMenuBar(self.menu_bar)
         self.menu_mode = self.menu_bar.addMenu('Режим')
         self.menu_utils = self.menu_bar.addMenu('Утилиты')
         self.menu_params = self.menu_bar.addMenu('Параметры')
+        
+        # Индикатор текущего режима в правом углу меню
+        self.mode_indicator = QtWidgets.QLabel('Проверка МА (БЭК)')
+        self.mode_indicator.setStyleSheet("""
+            QLabel {
+                background-color: #4CAF50;
+                color: white;
+                padding: 6px 15px;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 13px;
+                margin-right: 5px;
+            }
+        """)
+        self.mode_indicator.setMinimumWidth(160)
+        self.mode_indicator.setMaximumWidth(280)
+        self.mode_indicator.setAlignment(QtCore.Qt.AlignCenter)
+        self.menu_bar.setCornerWidget(self.mode_indicator, QtCore.Qt.TopRightCorner)
 
         # --- Центральная область (режимы) ---
         self.central_widget = QtWidgets.QStackedWidget()
@@ -28,28 +81,41 @@ class MainWindow(QtWidgets.QMainWindow):
         self.phase_ma_widget = PhaseMaWidget()
         self.check_ma_widget = CheckMaWidget()
         self.check_stend_ma_widget = StendCheckMaWidget()
+        self.phase_afar_widget = PhaseAfarWidget()
         self.central_widget.addWidget(self.phase_ma_widget)
         self.central_widget.addWidget(self.check_ma_widget)
         self.central_widget.addWidget(self.check_stend_ma_widget)
+        self.central_widget.addWidget(self.phase_afar_widget)
 
         # --- Привязка меню ---
-        self.phase_action = self.menu_mode.addAction('Фазировка МА в БЭК')
+        # Создаем подменю для МА
+        self.ma_submenu = self.menu_mode.addMenu('МА')
+        
+        self.phase_action = self.ma_submenu.addAction('Фазировка МА в БЭК')
         self.phase_action.setCheckable(True)
         self.phase_action.triggered.connect(self.show_phase_ma)
 
-        self.check_bek_action = self.menu_mode.addAction('Проверка МА в БЭК')
+        self.check_bek_action = self.ma_submenu.addAction('Проверка МА в БЭК')
         self.check_bek_action.setCheckable(True)
         self.check_bek_action.triggered.connect(self.show_check_ma)
 
-        self.check_stend_action = self.menu_mode.addAction('Проверка МА на стенде')
+        self.check_stend_action = self.ma_submenu.addAction('Проверка МА на стенде')
         self.check_stend_action.setCheckable(True)
         self.check_stend_action.triggered.connect(self.show_check_stend_ma)
+
+        # Создаем подменю для АФАР
+        self.afar_submenu = self.menu_mode.addMenu('АФАР')
+        
+        self.phase_afar_action = self.afar_submenu.addAction('Фазировка АФАР')
+        self.phase_afar_action.setCheckable(True)
+        self.phase_afar_action.triggered.connect(self.show_phase_afar)
 
         # Группа для взаимоисключающих действий
         mode_group = QtWidgets.QActionGroup(self)
         mode_group.addAction(self.phase_action)
         mode_group.addAction(self.check_bek_action)
         mode_group.addAction(self.check_stend_action)
+        mode_group.addAction(self.phase_afar_action)
         mode_group.setExclusive(True)
         
         self.menu_params.addAction('Настройки устройств', self.open_settings_dialog)
@@ -63,8 +129,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # Загружаем настройки устройств
         self.load_settings()
 
-        # Ссылка на окно ручного управления, чтобы не собирался GC
-        self._manual_control_window = None
+        # Ссылки на окна ручного управления, чтобы не собирались GC
+        self._manual_control_ma_window = None
+        self._manual_control_afar_window = None
 
     def restore_ui_state(self):
         """Восстанавливает состояние интерфейса"""
@@ -78,6 +145,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.show_phase_ma()
         elif last_mode == 'check_stend':
             self.show_check_stend_ma()
+        elif last_mode == 'phase_afar':
+            self.show_phase_afar()
         else:
             self.show_check_ma()
 
@@ -91,23 +160,91 @@ class MainWindow(QtWidgets.QMainWindow):
             self.settings.setValue('last_mode', 'phase')
         elif self.central_widget.currentWidget() == self.check_stend_ma_widget:
             self.settings.setValue('last_mode', 'check_stend')
+        elif self.central_widget.currentWidget() == self.phase_afar_widget:
+            self.settings.setValue('last_mode', 'phase_afar')
         else:
             self.settings.setValue('last_mode', 'check')
             
         self.settings.sync()
         super().closeEvent(event)
         
+    def _disconnect_current_widget_devices(self):
+        """Отключает все устройства у текущего активного виджета"""
+        current_widget = self.central_widget.currentWidget()
+        if current_widget and hasattr(current_widget, 'disconnect_all_devices'):
+            try:
+                current_widget.disconnect_all_devices()
+            except Exception as e:
+                logger.error(f"Ошибка при отключении устройств: {e}")
+
     def show_phase_ma(self):
+        self._disconnect_current_widget_devices()
         self.central_widget.setCurrentWidget(self.phase_ma_widget)
         self.phase_action.setChecked(True)
+        self.mode_indicator.setText('Фазировка МА (БЭК)')
+        self.mode_indicator.setStyleSheet("""
+            QLabel {
+                background-color: #2196F3;
+                color: white;
+                padding: 6px 15px;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 13px;
+                margin-right: 5px;
+            }
+        """)
 
     def show_check_ma(self):
+        self._disconnect_current_widget_devices()
         self.central_widget.setCurrentWidget(self.check_ma_widget)
         self.check_bek_action.setChecked(True)
+        self.mode_indicator.setText('Проверка МА (БЭК)')
+        self.mode_indicator.setStyleSheet("""
+            QLabel {
+                background-color: #4CAF50;
+                color: white;
+                padding: 6px 15px;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 13px;
+                margin-right: 5px;
+            }
+        """)
 
     def show_check_stend_ma(self):
+        self._disconnect_current_widget_devices()
         self.central_widget.setCurrentWidget(self.check_stend_ma_widget)
         self.check_stend_action.setChecked(True)
+        self.mode_indicator.setText('Проверка МА (Стенд)')
+        self.mode_indicator.setStyleSheet("""
+            QLabel {
+                background-color: #FF9800;
+                color: white;
+                padding: 6px 15px;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 13px;
+                margin-right: 5px;
+            }
+        """)
+
+    def show_phase_afar(self):
+        self._disconnect_current_widget_devices()
+        self.central_widget.setCurrentWidget(self.phase_afar_widget)
+        self.phase_afar_action.setChecked(True)
+        self.mode_indicator.setText('Фазировка АФАР')
+        self.mode_indicator.setStyleSheet("""
+            QLabel {
+                background-color: #9C27B0;
+                color: white;
+                padding: 6px 15px;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 13px;
+                margin-right: 5px;
+            }
+        """)
+
 
     def open_settings_dialog(self):
         dlg = SettingsDialog(self)
@@ -134,6 +271,17 @@ class MainWindow(QtWidgets.QMainWindow):
         dlg.ma_com_combo.setCurrentText(self.settings.value('ma_com_port', ''))
         dlg.ma_mode_combo.setCurrentIndex(int(self.settings.value('ma_mode', 0)))
         
+        # Настройки АФАР
+        afar_connection_type = self.settings.value('afar_connection_type', 'udp')
+        if afar_connection_type == 'udp':
+            dlg.afar_connection_type.setCurrentIndex(0)
+        else:
+            dlg.afar_connection_type.setCurrentIndex(1)
+        dlg.afar_ip_edit.setText(self.settings.value('afar_ip', ''))
+        dlg.afar_port_edit.setText(self.settings.value('afar_port', ''))
+        dlg.afar_com_combo.setCurrentText(self.settings.value('afar_com_port', ''))
+        dlg.afar_mode_combo.setCurrentIndex(int(self.settings.value('afar_mode', 0)))
+        
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
             settings = dlg.get_settings()
             # Сохраняем все настройки
@@ -144,17 +292,18 @@ class MainWindow(QtWidgets.QMainWindow):
             logger.info('Настройки сохранены')
             logger.debug(f'Сохраненные настройки: {settings}')
             
-            # Передаём параметры в оба виджета
+            # Передаём параметры во все виджеты
             self.phase_ma_widget.set_device_settings(settings)
             self.check_ma_widget.set_device_settings(settings)
             self.check_stend_ma_widget.set_device_settings(settings)
+            self.phase_afar_widget.set_device_settings(settings)
         else:
             # При отмене — не сохраняем, но всё равно пробросим актуальные настройки (на случай, если были активные)
             settings = self._collect_current_settings()
-            settings['base_save_dir'] = self.settings.value('base_save_dir', '')
             self.phase_ma_widget.set_device_settings(settings)
             self.check_ma_widget.set_device_settings(settings)
             self.check_stend_ma_widget.set_device_settings(settings)
+            self.phase_afar_widget.set_device_settings(settings)
 
     def _collect_current_settings(self):
         """Собирает текущие настройки из QSettings в dict, как в load_settings."""
@@ -175,18 +324,40 @@ class MainWindow(QtWidgets.QMainWindow):
         settings['trigger_mode'] = int(self.settings.value('trigger_mode', 0))
         settings['ma_com_port'] = self.settings.value('ma_com_port', '')
         settings['ma_mode'] = int(self.settings.value('ma_mode', 0))
+        settings['afar_connection_type'] = self.settings.value('afar_connection_type', 'udp')
+        settings['afar_ip'] = self.settings.value('afar_ip', '')
+        settings['afar_port'] = self.settings.value('afar_port', '')
+        settings['afar_com_port'] = self.settings.value('afar_com_port', '')
+        settings['afar_mode'] = int(self.settings.value('afar_mode', 0))
+        settings['base_save_dir'] = self.settings.value('base_save_dir', '')
         return settings
 
     def open_manual_control(self):
-        """Открывает окно ручного управления (утилиты)."""
+        """Открывает окно ручного управления в зависимости от текущего режима (МА или АФАР)."""
         try:
-            if self._manual_control_window is None or not self._manual_control_window.isVisible():
-                self._manual_control_window = ManualControlWindow(self)
-                # Передаём текущие настройки
-                self._manual_control_window.set_device_settings(self._collect_current_settings())
-            self._manual_control_window.show()
-            self._manual_control_window.raise_()
-            self._manual_control_window.activateWindow()
+            current_widget = self.central_widget.currentWidget()
+            
+            # Определяем, какой режим активен
+            is_afar_mode = (current_widget == self.phase_afar_widget)
+            
+            if is_afar_mode:
+                # Открываем ручное управление АФАР
+                if self._manual_control_afar_window is None or not self._manual_control_afar_window.isVisible():
+                    self._manual_control_afar_window = ManualControlAfarWindow(self)
+                    # Передаём текущие настройки
+                    self._manual_control_afar_window.set_device_settings(self._collect_current_settings())
+                self._manual_control_afar_window.show()
+                self._manual_control_afar_window.raise_()
+                self._manual_control_afar_window.activateWindow()
+            else:
+                # Открываем ручное управление МА
+                if self._manual_control_ma_window is None or not self._manual_control_ma_window.isVisible():
+                    self._manual_control_ma_window = ManualControlWindow(self)
+                    # Передаём текущие настройки
+                    self._manual_control_ma_window.set_device_settings(self._collect_current_settings())
+                self._manual_control_ma_window.show()
+                self._manual_control_ma_window.raise_()
+                self._manual_control_ma_window.activateWindow()
         except Exception as e:
             logger.error(f'Не удалось открыть окно ручного управления: {e}')
 
@@ -214,12 +385,22 @@ class MainWindow(QtWidgets.QMainWindow):
         settings['ma_com_port'] = self.settings.value('ma_com_port', '')
         settings['ma_mode'] = int(self.settings.value('ma_mode', 0))
         
-        logger.info('Настройки загружены из реестра')
+        settings['afar_connection_type'] = self.settings.value('afar_connection_type', 'udp')
+        settings['afar_ip'] = self.settings.value('afar_ip', '')
+        settings['afar_port'] = self.settings.value('afar_port', '')
+        settings['afar_com_port'] = self.settings.value('afar_com_port', '')
+        settings['afar_mode'] = int(self.settings.value('afar_mode', 0))
+        
+        # Путь к файлам измерений
+        settings['base_save_dir'] = self.settings.value('base_save_dir', '')
+        
+        logger.info('Настройки загружены из файла настроек')
         logger.debug(f'Загруженные настройки: {settings}')
         
         self.phase_ma_widget.set_device_settings(settings)
         self.check_ma_widget.set_device_settings(settings)
         self.check_stend_ma_widget.set_device_settings(settings)
+        self.phase_afar_widget.set_device_settings(settings)
 
 if __name__ == '__main__':
     import sys

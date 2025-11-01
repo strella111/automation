@@ -67,13 +67,20 @@ class PNA:
             raise ConnectionError("PNA не подключен")
         if self.mode == 0:
             try:
-                response = self.connection.recv(8192).decode('ascii').strip()
-                if response.startswith('"'):
-                    response = response[1:]
-                if response.endswith('"'):
-                    response = response[:-1]
-                logger.debug(format_device_log('PNA', '<<', response))
-                return response
+                final_response = str()
+                flag = True
+                while flag:
+                    response = self.connection.recv(65536).decode('ascii').strip()
+                    if response.startswith('"'):
+                        response = response[1:]
+                    if response.endswith('"'):
+                        response = response[:-1]
+                    logger.debug(format_device_log('PNA', '<<', response))
+                    final_response += response
+                    if not response.endswith(','):
+                        flag = False
+
+                return final_response
             except Exception as e:
                 logger.error(f"Ошибка чтения данных с PNA: {e}")
                 raise

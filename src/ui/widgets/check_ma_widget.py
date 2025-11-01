@@ -1,5 +1,4 @@
-from PyQt5 import QtWidgets, QtCore, QtGui
-from PyQt5.QtGui import QTextCursor
+from PyQt5 import QtWidgets, QtCore
 from PyQt5.QtWidgets import QMessageBox, QStyle
 from PyQt5.QtCore import QSize
 from loguru import logger
@@ -8,6 +7,7 @@ import numpy as np
 from core.measurements.check.check_ma import CheckMA
 from core.common.enums import Channel, Direction
 from core.common.coordinate_system import CoordinateSystemManager
+from config.settings_manager import get_ui_settings
 
 from ui.dialogs.pna_file_dialog import PnaFileDialog
 from ui.widgets.base_measurement_widget import BaseMeasurementWidget
@@ -538,14 +538,10 @@ class CheckMaWidget(BaseMeasurementWidget):
         self.view_tabs.addTab(self.results_table, "Таблица ППМ")
         self.view_tabs.addTab(self.delay_table, "Линии задержки")
         self.view_tabs.addTab(self.ppm_field_view, "2D поле")
-        self.right_layout.addWidget(self.view_tabs, stretch=2)
+        self.right_layout.addWidget(self.view_tabs, stretch=5)
 
-        self.console = QtWidgets.QTextEdit()
-        self.console.setReadOnly(True)
-        self.console.setFixedHeight(200)
-        self.right_layout.addWidget(self.console, stretch=1)
-
-        self.log_handler = QTextEditLogHandler(self.console)
+        # Создаем консоль с выбором уровня логов
+        self.console, self.log_handler, self.log_level_combo = self.create_console_with_log_level(self.right_layout, console_height=180)
         logger.add(self.log_handler, format="{time:HH:mm:ss.SSS} | {level} | {name}:{function}:{line} | {message}")
 
         self._check_thread = None
@@ -603,8 +599,11 @@ class CheckMaWidget(BaseMeasurementWidget):
         self.set_button_connection_state(self.ma_connect_btn, False)
 
         # Настройки UI (персистентность)
-        self._ui_settings = QtCore.QSettings('PULSAR', 'CheckMA')
+        self._ui_settings = get_ui_settings('check_ma')
         self.load_ui_settings()
+        
+        # Подключаем автосохранение уровня логирования
+        self.log_level_combo.currentTextChanged.connect(lambda: self._ui_settings.setValue('log_level', self.log_level_combo.currentText()))
 
     def show_ppm_details(self, button: QtWidgets.QPushButton, ppm_num: int):
         """Показывает детальную информацию о ППМ в контекстном меню"""
@@ -948,6 +947,8 @@ class CheckMaWidget(BaseMeasurementWidget):
         s.setValue('delay4_max', float(self.delay4_max.value()))
         s.setValue('delay8_min', float(self.delay8_min.value()))
         s.setValue('delay8_max', float(self.delay8_max.value()))
+        # Log level
+        s.setValue('log_level', self.log_level_combo.currentText())
         s.sync()
 
     def load_ui_settings(self):
@@ -1024,6 +1025,11 @@ class CheckMaWidget(BaseMeasurementWidget):
             if v is not None:
                 try: widget.setValue(float(v))
                 except Exception: pass
+        # Log level
+        if (v := s.value('log_level')):
+            idx = self.log_level_combo.findText(v)
+            if idx >= 0:
+                self.log_level_combo.setCurrentIndex(idx)
 
     def start_check(self):
         """Запускает процесс проверки"""

@@ -8,8 +8,10 @@ from pathlib import Path
 import os
 try:
     from PyQt5 import QtCore
+    from config.settings_manager import get_main_settings
 except Exception:
     QtCore = None
+    get_main_settings = None
 from typing import List, Optional
 from loguru import logger
 from core.common.enums import Channel, Direction
@@ -29,8 +31,8 @@ class CalibrationCSV:
         # Определяем базовую директорию сохранения для режима phase
         base_dir = None
         try:
-            if QtCore is not None:
-                qsettings = QtCore.QSettings('PULSAR', 'PhaseMA')
+            if get_main_settings is not None:
+                qsettings = get_main_settings()
                 v = qsettings.value('base_save_dir')
                 if v:
                     base_dir = str(v)
@@ -55,20 +57,28 @@ class CalibrationCSV:
         self._initialize_csv_if_needed()
 
     def _initialize_csv_if_needed(self):
-        """Создает CSV файл с нулевыми значениями если файл не существует"""
+        """Создает CSV файл с нулевыми значениями если файл не существует
+        
+        Структура файла:
+        - 17 блоков (ЛЗ 0-15 + резерв)
+        - Каждый блок: 32 ППМ × 4 столбца = 128 строк
+        - Итого: 17 × 128 = 2176 строк
+        """
         if not self.csv_file.exists():
             logger.info(f"Создание нового CSV файла: {self.csv_file}")
 
             data = []
-            for ppm in range(1, 34):
-                row = [0, 0, 0, 0]
-                data.append(row)
+            # 17 блоков × 32 ППМ = 544 строки, каждая с 4 столбцами
+            for block in range(17):  # ЛЗ 0-15 + резерв
+                for ppm in range(32):  # 32 ППМ в каждом блоке
+                    row = [0, 0, 0, 0]
+                    data.append(row)
 
             with open(self.csv_file, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f, delimiter=';')
                 writer.writerows(data)
 
-            logger.info(f"CSV файл инициализирован с {len(data)} строками")
+            logger.info(f"CSV файл инициализирован с {len(data)} строками (17 блоков × 32 ППМ)")
 
     def get_column_index(self, channel: Channel, direction: Direction) -> int:
         """
@@ -91,14 +101,22 @@ class CalibrationCSV:
             logger.error(f"Неизвестная комбинация канал/поляризация: {column_name}")
             return 0
 
-    def save_phase_results(self, channel: Channel, direction: Direction, phase_results: List[int]):
+    def save_phase_results(self, channel: Channel, direction: Direction, phase_results: List[int], 
+                           delay_line_discretes: Optional[List[int]] = None):
         """
         Сохраняет результаты фазировки в соответствующий столбец CSV файла
+        
+        Файл содержит 17 блоков:
+        - Блок 0 (ЛЗ=0): базовая калибровка ФВ
+        - Блоки 1-15 (ЛЗ=1-15): базовая калибровка + дискреты ЛЗ
+        - Блок 16: резерв (нули)
 
         Args:
             channel: Канал (передатчик/приемник)
             direction: Поляризация (вертикальная/горизонтальная)
-            phase_results: Список дискретов фазовращателей для 32 ППМ
+            phase_results: Список дискретов фазовращателей для 32 ППМ (базовая калибровка)
+            delay_line_discretes: Список из 16 значений дискретов для ЛЗ 0-15 
+                                 (если None - копируем базовую калибровку во все блоки)
         """
         if len(phase_results) != 32:
             logger.error(f"Ожидается 32 значения, получено {len(phase_results)}")
@@ -108,35 +126,63 @@ class CalibrationCSV:
         column_name = self.columns[column_index]
 
         logger.info(f"Сохранение результатов фазировки в столбец '{column_name}' файла {self.csv_file}")
+        if delay_line_discretes:
+            logger.info(f"Фазировка ЛЗ включена, сохранение 17 блоков с коррекцией ЛЗ")
+        else:
+            logger.info(f"Фазировка ЛЗ выключена, копирование базовой калибровки во все блоки")
 
         try:
+            # Читаем существующие данные (2176 строк)
             existing_data = []
-            with open(self.csv_file, 'r', newline='', encoding='utf-8') as f:
-                reader = csv.reader(f)
-                for row in reader:
-                    int_row = []
-                    for i in range(4):
-                        if i < len(row):
-                            try:
-                                int_row.append(int(row[i]))
-                            except ValueError:
+            try:
+                with open(self.csv_file, 'r', newline='', encoding='utf-8') as f:
+                    reader = csv.reader(f, delimiter=';')
+                    for row in reader:
+                        int_row = []
+                        for i in range(4):
+                            if i < len(row):
+                                try:
+                                    int_row.append(int(row[i]))
+                                except ValueError:
+                                    int_row.append(0)
+                            else:
                                 int_row.append(0)
-                        else:
-                            int_row.append(0)
-                    existing_data.append(int_row)
+                        existing_data.append(int_row)
+            except FileNotFoundError:
+                pass
 
-            while len(existing_data) < 32:
+            # Убеждаемся что есть 17 блоков × 32 ППМ = 544 строки
+            while len(existing_data) < 544:
                 existing_data.append([0, 0, 0, 0])
 
-            for ppm_index, phase_value in enumerate(phase_results):
-                if ppm_index < len(existing_data):
-                    existing_data[ppm_index][column_index] = phase_value
+            # Блок 0 (ЛЗ=0): ВСЕГДА обновляем базовую калибровку
+            for ppm_index in range(32):
+                row_index = ppm_index
+                existing_data[row_index][column_index] = phase_results[ppm_index]
+            
+            # Блоки 1-16: обновляем ТОЛЬКО если есть данные ЛЗ
+            if delay_line_discretes and len(delay_line_discretes) == 16:
+                for block in range(1, 17):
+                    for ppm_index in range(32):
+                        row_index = block * 32 + ppm_index
+                        
+                        if block <= 15:
+                            # Блоки 1-15 (ЛЗ=1-15): базовая калибровка + дискреты ЛЗ
+                            # block 1 -> ЛЗ=1 -> delay_line_discretes[1]
+                            value = phase_results[ppm_index] + delay_line_discretes[block]
+                            # Ограничиваем диапазон 0-63
+                            value = max(0, min(63, value))
+                            existing_data[row_index][column_index] = value
+                        else:
+                            # Блок 16: резерв - нули
+                            existing_data[row_index][column_index] = 0
 
+            # Записываем обратно в файл
             with open(self.csv_file, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f, delimiter=';')
                 writer.writerows(existing_data)
 
-            logger.info(f"Результаты фазировки успешно сохранены в столбец '{column_name}'")
+            logger.info(f"Результаты фазировки успешно сохранены в столбец '{column_name}' (17 блоков)")
 
         except Exception as e:
             logger.error(f"Ошибка при сохранении результатов фазировки: {e}")

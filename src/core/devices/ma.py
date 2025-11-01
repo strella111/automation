@@ -18,7 +18,7 @@ class MA:
             com_port: COM-порт для подключения
             mode: Режим работы (0 - реальный, 1 - тестовый)
         """
-        self.bu_addr = 0
+        self.bu_addr = 1
         self.com_port = com_port
         self.mode = mode
         self.connection = None
@@ -26,6 +26,7 @@ class MA:
         self.CRC_INIT = 0x1d0f
         self.ppm_data = bytearray(25)
         self.retry_counter = 0
+        self.number_of_command = 1
 
     def connect(self) -> None:
         """Подключение к модулю антенному"""
@@ -50,7 +51,7 @@ class MA:
                     raise WrongInstrumentError(f'Не удалось подключиться к {self.com_port}. Порт закрыт.')
                 
                 logger.info(f'COM-порт {self.com_port} успешно открыт, ищем БУ...')
-                
+
                 bu_num = self.search_bu_num()
                 if bu_num == 0:
                     self.connection.close()
@@ -58,6 +59,7 @@ class MA:
                 else:
                     self.bu_addr = bu_num
                     logger.info(f'Произведено подключение к БУ№{self.bu_addr}')
+
             else:
                 time.sleep(0.2)
                 self.connection = True
@@ -83,7 +85,8 @@ class MA:
     def _generate_command(self, bu_num: int, command_code: bytes, data: bytes=b'') -> bytes:
         separator = b'\xaa'
         addr = bu_num.to_bytes(length=1, byteorder='big')
-        command_id = b'\x00\x00'
+        command_id = self.number_of_command.to_bytes(2, byteorder='big')
+        self.number_of_command += 1
         command = b''.join([separator, addr, command_code, command_id, data])
         crc = self._crc16(command).to_bytes(2, 'big')
         return b''.join([command, crc])
@@ -177,6 +180,7 @@ class MA:
                     self.write(command)
                     time.sleep(0.1)
                     response = self.read()
+
                     if response and len(response) >= 2:
                         logger.info(f'Найден БУ с адресом: {int(response[1] & 0x3f)}')
                         return int(response[1] & 0x3f)
@@ -190,6 +194,7 @@ class MA:
         return 0
 
     def _send_command(self, command: bytes, is_check: bool = True):
+        time.sleep(0.5)
         self.write(command)
         response = self.read()
         if response:

@@ -5,6 +5,7 @@ from ...devices.pna import PNA
 from ...devices.psn import PSN
 from core.common.enums import Channel, Direction, PpmState
 from utils.excel_module import get_or_create_excel_for_check
+from config.settings_manager import get_main_settings
 from ...common.exceptions import WrongInstrumentError, PlanarScannerError
 from PyQt5.QtCore import QThread
 import threading
@@ -244,7 +245,7 @@ class CheckMA:
         delay_results = []
         try:
 
-            worksheet, workbook, file_path = get_or_create_excel_for_check(base_dir=QtCore.QSettings('PULSAR', 'PhaseMA').value('base_save_dir', ''),
+            worksheet, workbook, file_path = get_or_create_excel_for_check(base_dir=get_main_settings().value('base_save_dir', ''),
                                                                  dir_name='check',
                                                                  file_name=f'{self.ma.bu_addr}.xlsx',
                                                                  mode='check',

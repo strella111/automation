@@ -3,6 +3,7 @@
 .idea/
 .venv/
 logs/
+settings/
 
 __pycache__/
 *.py[cod]
@@ -11,7 +12,10 @@ venv/
 .env
 
 dist/
+build/
+Output/
 *.egg-info/
+*.spec~
 
 .coverage
 *.py,cover

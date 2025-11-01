@@ -8,9 +8,10 @@ import time
 import numpy as np
 from core.measurements.check_stend.check_stend import CheckMAStend
 from core.common.enums import Channel, Direction
+from config.settings_manager import get_ui_settings
 
 from ui.dialogs.pna_file_dialog import PnaFileDialog
-from ui.widgets.base_measurement_widget import BaseMeasurementWidget, QTextEditLogHandler
+from ui.widgets.base_measurement_widget import BaseMeasurementWidget
 
 
 
@@ -113,7 +114,7 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.pna_tab_layout.addRow('Кон. частота:', self.pna_stop_freq)
 
         self.pna_number_of_points = QtWidgets.QComboBox()
-        self.pna_number_of_points.addItems(['3', '11', '101', '201'])
+        self.pna_number_of_points.addItems(['3', '11', '21','33', '51', '101', '201'])
         self.pna_number_of_points.setCurrentText('11')
         self.pna_tab_layout.addRow('Кол-во точек:', self.pna_number_of_points)
 
@@ -186,7 +187,7 @@ class StendCheckMaWidget(BaseMeasurementWidget):
 
         self.trig_pulse_period = QtWidgets.QDoubleSpinBox()
         self.trig_pulse_period.setDecimals(3)
-        self.trig_pulse_period.setRange(0, 10000)
+        self.trig_pulse_period.setRange(0, 100000)
         self.trig_pulse_period.setSingleStep(10)
         self.trig_pulse_period.setSuffix(' мкс')
         self.trig_pulse_period.setValue(500.000)
@@ -431,14 +432,10 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.view_tabs = QtWidgets.QTabWidget()
         self.view_tabs.addTab(self.results_table, "Таблица ППМ")
         self.view_tabs.addTab(self.delay_table, "Линии задержки")
-        self.right_layout.addWidget(self.view_tabs, stretch=2)
+        self.right_layout.addWidget(self.view_tabs, stretch=5)
 
-        self.console = QtWidgets.QTextEdit()
-        self.console.setReadOnly(True)
-        self.console.setFixedHeight(200)
-        self.right_layout.addWidget(self.console, stretch=1)
-
-        self.log_handler = QTextEditLogHandler(self.console)
+        # Создаем консоль с выбором уровня логов
+        self.console, self.log_handler, self.log_level_combo = self.create_console_with_log_level(self.right_layout, console_height=180)
         logger.add(self.log_handler, format="{time:HH:mm:ss.SSS} | {level} | {name}:{function}:{line} | {message}")
 
         self._check_thread = None
@@ -481,8 +478,11 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.set_button_connection_state(self.ma_connect_btn, False)
 
         # Настройки UI (персистентность)
-        self._ui_settings = QtCore.QSettings('PULSAR', 'CheckStendMA')
+        self._ui_settings = get_ui_settings('check_stend_ma')
         self.load_ui_settings()
+        
+        # Подключаем автосохранение уровня логирования
+        self.log_level_combo.currentTextChanged.connect(lambda: self._ui_settings.setValue('log_level', self.log_level_combo.currentText()))
 
 
 
@@ -564,8 +564,6 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.start_btn.setEnabled(enabled)
         self.stop_btn.setEnabled(not enabled)
         self.pause_btn.setEnabled(not enabled)
-
-
 
 
     @QtCore.pyqtSlot(dict)
@@ -761,6 +759,8 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         s.setValue('trig_pulse_period', float(self.trig_pulse_period.value()))
         s.setValue('trig_min_alarm_guard', float(self.trig_min_alarm_guard.value()))
         s.setValue('trig_ext_debounce', float(self.trig_ext_debounce.value()))
+        # Log level
+        s.setValue('log_level', self.log_level_combo.currentText())
         s.sync()
 
     def load_ui_settings(self):
@@ -838,6 +838,11 @@ class StendCheckMaWidget(BaseMeasurementWidget):
             if val is not None:
                 try: widget.setValue(float(val))
                 except Exception: pass
+        # Log level
+        if (v := s.value('log_level')):
+            idx = self.log_level_combo.findText(v)
+            if idx >= 0:
+                self.log_level_combo.setCurrentIndex(idx)
 
 
     def start_check(self):
@@ -860,8 +865,9 @@ class StendCheckMaWidget(BaseMeasurementWidget):
 
         # Очистка таблицы линий задержки
         self.delay_table.clearContents()
-        for row in range(4):
-            self.delay_table.setItem(row, 0, self.create_centered_table_item(f"ЛЗ{row}"))
+        delay_discretes = [1, 2, 4, 8]
+        for row, discrete in enumerate(delay_discretes):
+            self.delay_table.setItem(row, 0, self.create_centered_table_item(f"ЛЗ{discrete}"))
             for col in range(1, 5):
                 self.delay_table.setItem(row, col, QtWidgets.QTableWidgetItem(""))
 

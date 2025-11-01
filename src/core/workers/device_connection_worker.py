@@ -4,6 +4,7 @@ from core.devices.ma import MA
 from core.devices.pna import PNA
 from core.devices.psn import PSN
 from core.devices.trigger_box import E5818
+from core.devices.afar import Afar
 
 
 class DeviceConnectionWorker(QThread):
@@ -44,6 +45,12 @@ class DeviceConnectionWorker(QThread):
                 idn = device.connect()
                 message = f"Устройство синхронизации подключено: {idn if idn else 'OK'}"
                 self.connection_finished.emit('Trigger', True, message, device)
+                
+            elif self.device_type == 'AFAR':
+                device = Afar(**self.connection_params)
+                device.connect()
+                message = "АФАР подключен"
+                self.connection_finished.emit('AFAR', True, message, device)
                 
         except Exception as e:
             error_msg = str(e)
