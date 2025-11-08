@@ -401,8 +401,11 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             current_widget = self.central_widget.currentWidget()
             
-            # Определяем, какой режим активен
-            is_afar_mode = (current_widget == self.phase_afar_widget)
+            # Определяем, какой режим активен (АФАР или МА)
+            # АФАР режимы: фазировка АФАР, измерение лучей АФАР и измерение через калибровку
+            is_afar_mode = (current_widget == self.phase_afar_widget or 
+                          current_widget == self.beam_pattern_widget or
+                          current_widget == self.check_stend_afar_widget)
             
             if is_afar_mode:
                 # Открываем ручное управление АФАР

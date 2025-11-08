@@ -229,7 +229,7 @@ class ManualControlAfarWindow(QtWidgets.QMainWindow):
 
         # ФВ дискрет
         self.fv_spin = QtWidgets.QSpinBox()
-        self.fv_spin.setRange(0, 31)
+        self.fv_spin.setRange(0, 63)
         self.fv_spin.setValue(0)
         self.set_fv_btn = QtWidgets.QPushButton("Установить ФВ")
         self.set_fv_btn.clicked.connect(self.set_phase_shifter)
