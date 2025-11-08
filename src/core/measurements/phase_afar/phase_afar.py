@@ -237,7 +237,6 @@ class PhaseAfar:
             PlanarScannerError: При ошибке перемещения
         """
         try:
-            # Определяем список БУ для фазировки
             if selected_bu_numbers is None:
                 bu_numbers = list(range(1, 41))
             else:
@@ -293,7 +292,7 @@ class PhaseAfar:
             
             for bu_number in bu_numbers:
                 logger.info(f"Начинаем фазировку БУ №{bu_number}")
-                self.phase_results = []  # Сбрасываем результаты для каждого БУ
+                self.phase_results = []
                 
                 # Создаем CalibrationCSV для текущего БУ
                 self.calibration_csv = CalibrationCSV(bu_number)
@@ -360,41 +359,33 @@ class PhaseAfar:
                                                   chanel=chanel,
                                                   direction=direction,
                                                   value=best_value)
-                        
-                        # Измерение линий задержки сразу после фазировки 12-го ППМ (пока сканер уже там и ППМ включен)
+
                         if self.enable_delay_line_calibration and ppm_num == self.ppm_norm_number:
                             logger.info(f"Фазировка линий задержки для БУ №{bu_number}, ППМ №{ppm_num}")
                             try:
-                                # Сканер уже на месте, ППМ включен, фазовращатель установлен
-                                # Сразу измеряем ЛЗ 0-15
                                 lz_discretes = self._measure_delay_lines(
                                     bu_num=bu_number,
                                     ppm_num=self.ppm_norm_number,
                                     chanel=chanel,
                                     direction=direction
                                 )
-                                
-                                # Сохраняем результаты для этого БУ
+
                                 self.delay_line_discretes[bu_number] = lz_discretes
                                 
                                 logger.info(f"Фазировка ЛЗ для БУ №{bu_number} завершена успешно")
                                 
                             except Exception as e:
                                 logger.error(f"Ошибка при фазировке ЛЗ для БУ №{bu_number}: {e}")
-                                # Прерываем всю фазировку при ошибке измерения ЛЗ
                                 raise WrongInstrumentError(f"Ошибка фазировки ЛЗ: {e}")
 
-                        # Выключаем ППМ после всех измерений
                         self.afar.switch_ppm(bu_num=bu_number,
                                              ppm_num=ppm_num,
                                              chanel=chanel,
                                              direction=direction,
                                              state=PpmState.OFF)
-                
-                # Сохраняем результаты для текущего БУ
+
                 if self.calibration_csv and len(self.phase_results) == 32:
                     try:
-                        # Получаем дискреты ЛЗ для этого БУ (если были измерены)
                         lz_discretes = self.delay_line_discretes.get(bu_number, None)
                         
                         self.calibration_csv.save_phase_results(
@@ -410,7 +401,7 @@ class PhaseAfar:
                     logger.warning(f"БУ №{bu_number}: ожидалось 32 результата, получено {len(self.phase_results)}. CSV не сохранен.")
                 
                 logger.info(f"Фазировка БУ №{bu_number} завершена")
-            
+
             # Выключение PNA
             try:
                 self.pna.set_output(False)
@@ -435,8 +426,7 @@ class PhaseAfar:
                 self.pna.set_output(False)
             except Exception as e:
                 logger.error(f"Ошибка при аварийном выключении PNA: {e}")
-            
-            # Выключение ВИПов при ошибке (если включена опция)
+
             if self.turn_off_vips:
                 logger.info("Аварийное выключение ВИПов")
                 try:
@@ -446,7 +436,7 @@ class PhaseAfar:
                         except Exception as vip_e:
                             logger.error(f"Ошибка при аварийном выключении ВИПов БУ №{bu_num}: {vip_e}")
                 except Exception:
-                    pass  # vip_bu_numbers может быть не определен
+                    pass
             raise
 
 

@@ -315,6 +315,7 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
 
         connection_type = self.device_settings.get('afar_connection_type', 'udp')
         mode = self.device_settings.get('afar_mode', 0)
+        write_delay_ms = int(self.device_settings.get('afar_write_delay', 100))  # Задержка в миллисекундах
         
         if connection_type == 'udp':
             ip = self.device_settings.get('afar_ip', '')
@@ -329,7 +330,8 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
                 'com_port': None,  # Для UDP не нужен COM-порт
                 'ip': ip,
                 'port': port,
-                'mode': mode
+                'mode': mode,
+                'write_delay_ms': write_delay_ms
             }
         else:  # com
             com_port = self.device_settings.get('afar_com_port', '')
@@ -343,7 +345,8 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
                 'com_port': com_port,
                 'ip': None,  # Для COM не нужен IP
                 'port': None,  # Для COM не нужен порт
-                'mode': mode
+                'mode': mode,
+                'write_delay_ms': write_delay_ms
             }
         
         logger.info(f'Попытка подключения к АФАР через {connection_type}, режим: {"реальный" if mode == 0 else "тестовый"}')
@@ -467,11 +470,10 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
         """Общая настройка PNA для всех измерений"""
         if not self.pna or not self.pna_settings:
             return
-            
         try:
+            self.pna.fpreset()
             self.pna.preset()
-            
-            # Загрузка файла настроек или создание измерения
+
             if self.pna_settings.get('settings_file'):
                 settings_file = self.pna_settings.get('settings_file')
                 base_path = self.device_settings.get('pna_files_path', '')

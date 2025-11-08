@@ -90,10 +90,14 @@ class PNA:
             return response
 
 
-    def preset(self) -> None:
+    def fpreset(self) -> None:
         """Сброс PNA в начальное состояние"""
         self._send_data("SYST:FPRESET")
-        logger.info("PNA сброшен в начальное состояние")
+        logger.info("fpreset pna")
+
+    def preset(self) -> None:
+        self._send_data("SYST:PRESET")
+        logger.info("preset pna")
 
     def create_measure(self, s_param: str):
         """Создание измерения"""

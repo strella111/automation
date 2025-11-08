@@ -98,7 +98,7 @@ class CheckMaWidget(BaseMeasurementWidget):
         self.pna_power.setSingleStep(1)
         self.pna_power.setDecimals(0)
         self.pna_power.setValue(0)
-        self.pna_tab_layout.addRow('Входная мощность (дБм):', self.pna_power)
+        self.pna_tab_layout.addRow('Выходная мощность (дБм):', self.pna_power)
 
         self.pna_start_freq = QtWidgets.QSpinBox()
         self.pna_start_freq.setRange(1, 50000)

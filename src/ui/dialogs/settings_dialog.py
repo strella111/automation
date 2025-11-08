@@ -114,6 +114,14 @@ class SettingsDialog(QtWidgets.QDialog):
         self.afar_mode_combo.addItems(['Реальный', 'Тестовый'])
         afar_layout.addRow('Режим:', self.afar_mode_combo)
         
+        # Задержка при отправке команд (миллисекунды)
+        self.afar_write_delay = QtWidgets.QSpinBox()
+        self.afar_write_delay.setRange(0, 10000)
+        self.afar_write_delay.setValue(100)  # Значение по умолчанию 100 мс (0.1 сек)
+        self.afar_write_delay.setSuffix(' мс')
+        self.afar_write_delay.setToolTip('Задержка перед отправкой команды на АФАР (для COM и UDP)')
+        afar_layout.addRow('Задержка отправки команд:', self.afar_write_delay)
+        
         devices_layout.addWidget(afar_group)
         tabs.addTab(devices_tab, 'Устройства')
 
@@ -212,6 +220,7 @@ class SettingsDialog(QtWidgets.QDialog):
             'afar_port': self.afar_port_edit.text(),
             'afar_com_port': self.afar_com_combo.currentText(),
             'afar_mode': self.afar_mode_combo.currentIndex(),
+            'afar_write_delay': self.afar_write_delay.value(),  # Задержка в миллисекундах
             'pna_mode': self.pna_mode_combo.currentIndex(),
             'psn_mode': self.psn_mode_combo.currentIndex(),
             'pna_files_path': self.pna_files_path.text(),
@@ -249,6 +258,7 @@ class SettingsDialog(QtWidgets.QDialog):
         self.afar_port_edit.setText(settings.get('afar_port', ''))
         self.afar_com_combo.setCurrentText(settings.get('afar_com_port', ''))
         self.afar_mode_combo.setCurrentIndex(int(settings.get('afar_mode', 0)))
+        self.afar_write_delay.setValue(int(settings.get('afar_write_delay', 100)))  # По умолчанию 100 мс
         
         self.pna_files_path.setText(settings.get('pna_files_path', 'C:\\Users\\Public\\Documents\\Network Analyzer\\'))
         self.base_save_dir_edit.setText(settings.get('base_save_dir', ''))

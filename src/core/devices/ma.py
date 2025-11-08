@@ -178,7 +178,7 @@ class MA:
                 try:
                     command = self._generate_command(i, command_code=b'\xfa')
                     self.write(command)
-                    time.sleep(0.1)
+                    time.sleep(0.005)
                     response = self.read()
 
                     if response and len(response) >= 2:
@@ -458,6 +458,7 @@ class MA:
         command_code = b'\xfa'
         command = self._generate_command(bu_num=self.bu_addr, command_code=command_code)
         self.write(command)
+        time.sleep(0.005)
         response = self.read()
         if not response:
             logger.error(f"Не поступило ответа на команду КУ-ТМ от БУ№{self.bu_addr}")

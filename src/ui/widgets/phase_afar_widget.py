@@ -84,7 +84,7 @@ class PhaseAfarWidget(BaseMeasurementWidget):
         self.direction_combo.addItems(['Горизонтальная', 'Вертикальная'])
         self.ma_tab_layout.addRow('Поляризация:', self.direction_combo)
         
-        self.param_tabs.addTab(self.ma_tab, 'Модуль антенный')
+        self.param_tabs.addTab(self.ma_tab, 'АФАР')
         
         self.pna_tab = QtWidgets.QWidget()
         self.pna_tab_layout = QtWidgets.QFormLayout(self.pna_tab)
@@ -98,7 +98,7 @@ class PhaseAfarWidget(BaseMeasurementWidget):
         self.pna_power.setSingleStep(1)
         self.pna_power.setDecimals(0)
         self.pna_power.setValue(0)
-        self.pna_tab_layout.addRow('Входная мощность (дБм):', self.pna_power)
+        self.pna_tab_layout.addRow('Выходная мощность (дБм):', self.pna_power)
 
         self.pna_start_freq = QtWidgets.QSpinBox()
         self.pna_start_freq.setRange(1, 50000)

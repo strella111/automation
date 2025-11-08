@@ -54,7 +54,7 @@ class E5818Timeout(E5818Error):
 
 @dataclass
 class E5818Config:
-    resource: str                        # "TCPIP0::<ip>::inst0::INSTR"
+    resource: str                        # "TCPIP0::<ip>::inst0::INSTR" или "TEST" для тестового режима
     ttl_channel: int = 1                 # TTL1..2
     ext_channel: int = 1                 # EXT1..2 (0=EXT1, 1=EXT2 внутри лога)
     visa_timeout_ms: int = 2000
@@ -80,10 +80,18 @@ class E5818:
         self._last_ext_ts: Optional[float] = None   # для SW-дебаунса EXT
         self._idn: Optional[str] = None
         self._operation_counter: int = 0  # Счетчик операций для периодической очистки логов
+        self.test_mode = (cfg.resource == "TEST")  # Флаг тестового режима
 
     # -------- infra --------
     def connect(self) -> str:
         """Открыть VISA ресурс, базовая инициализация, включение логов, TTL→ALARM1."""
+        if self.test_mode:
+            # Тестовый режим
+            self._idn = "TEST MODE: E5818A Simulation"
+            self.connection = True  # Заглушка для проверки подключения
+            self._log(f"[ЗАГЛУШКА] Подключение к устройству синхронизации E5818")
+            return self._idn
+        
         if pyvisa is None:
             raise E5818Error("PyVISA не установлен. Установите: pip install pyvisa")
 
@@ -134,6 +142,9 @@ class E5818:
         if self.connection is None:
             logger.error('Не обнаружено подключение к LXI при попытке отправки данных')
             raise E5818NotConnected("Нет активного подключения")
+        if self.test_mode:
+            logger.debug(format_device_log('LXI [TEST]', '>>', cmd))
+            return
         logger.debug(format_device_log('LXI', '>>', cmd))
         self.connection.write(cmd)
 
@@ -141,6 +152,19 @@ class E5818:
         if self.connection is None:
             logger.error('Не обнаружено подключение к LXI при попытке отправки данных')
             raise E5818NotConnected("Нет активного подключения")
+        if self.test_mode:
+            logger.debug(format_device_log('LXI [TEST]', '>>', cmd))
+            # Возвращаем заглушки для разных команд
+            if "*IDN?" in cmd:
+                result = "TEST MODE: E5818A Simulation"
+            elif "SYST:ERR" in cmd:
+                result = "0,No Error"
+            elif "LOG:STAMp:DATA?" in cmd:
+                result = "NO EVENTS"
+            else:
+                result = "OK"
+            logger.debug(format_device_log('LXI [TEST]', '<<', result))
+            return result
         logger.debug(format_device_log('LXI', '>>', cmd))
         result = self.connection.query(cmd).strip()
         logger.debug(format_device_log('LXI', '<<', result))
@@ -267,20 +291,35 @@ class E5818:
         self._auto_clear_logs_if_needed()  # Периодическая очистка логов
 
 
-    def burst(self, count: Optional[int] = None, period_s: Optional[float] = None, lead_s: Optional[float] = None):
-        n = self.cfg.pulse_count if count is None else int(count)
+    def burst(self, count: int, period_s: Optional[float] = None, lead_s: Optional[float] = None):
+        """
+        Генерация пачки импульсов
+        Args:
+            count: количество импульсов в серии (обязательный параметр)
+            period_s: период между импульсами (если None, берется из конфига)
+            lead_s: задержка старта (если None, берется из конфига)
+        """
+        n = int(count)
         per = self.cfg.pulse_period_s if period_s is None else float(period_s)
         lead = self.cfg.start_lead_s if lead_s is None else float(lead_s)
+        
+        if self.test_mode:
+            self._log(f"[ЗАГЛУШКА] Генерация пачки импульсов: count={n}, period={per*1e6:.1f} мкс, lead={lead*1e3:.1f} мс")
+            return
+        
         self._schedule_alarm_burst(start_in_s=lead, period_s=per, count=n)
         self._auto_clear_logs_if_needed()  # Периодическая очистка логов
 
 
     # -------- SW-handshake helpers --------
 
-    def pop_ext_event(self) -> Optional[Dict]:
+    def pop_ext_event(self) -> Optional[Dict, str]:
         """
         Считать одну запись из лога EXT (или None, если пусто).
         """
+        if self.test_mode:
+            return 'evt'
+
         raw = self.query("LOG:STAMp:DATA?")
         if raw.upper().startswith("NO EVENT"):
             return None

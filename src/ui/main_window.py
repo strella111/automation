@@ -3,6 +3,8 @@ from ui.widgets.phase_ma_widget import PhaseMaWidget
 from ui.widgets.check_ma_widget import CheckMaWidget
 from ui.widgets.check_stend_ma_widget import StendCheckMaWidget
 from ui.widgets.phase_afar_widget import PhaseAfarWidget
+from ui.widgets.beam_pattern_widget import BeamPatternWidget
+from ui.widgets.check_stend_afar_widget import StendCheckAfarWidget
 from ui.widgets.manual_control_widget import ManualControlWindow
 from ui.widgets.manual_control_afar_widget import ManualControlAfarWindow
 from ui.dialogs.settings_dialog import SettingsDialog
@@ -82,10 +84,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.check_ma_widget = CheckMaWidget()
         self.check_stend_ma_widget = StendCheckMaWidget()
         self.phase_afar_widget = PhaseAfarWidget()
+        self.beam_pattern_widget = BeamPatternWidget()
+        self.check_stend_afar_widget = StendCheckAfarWidget()
         self.central_widget.addWidget(self.phase_ma_widget)
         self.central_widget.addWidget(self.check_ma_widget)
         self.central_widget.addWidget(self.check_stend_ma_widget)
         self.central_widget.addWidget(self.phase_afar_widget)
+        self.central_widget.addWidget(self.beam_pattern_widget)
+        self.central_widget.addWidget(self.check_stend_afar_widget)
 
         # --- Привязка меню ---
         # Создаем подменю для МА
@@ -109,6 +115,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.phase_afar_action = self.afar_submenu.addAction('Фазировка АФАР')
         self.phase_afar_action.setCheckable(True)
         self.phase_afar_action.triggered.connect(self.show_phase_afar)
+        
+        self.beam_pattern_action = self.afar_submenu.addAction('Измерение лучей АФАР')
+        self.beam_pattern_action.setCheckable(True)
+        self.beam_pattern_action.triggered.connect(self.show_beam_pattern)
+        
+        self.check_stend_afar_action = self.afar_submenu.addAction('Измерение через калибровку')
+        self.check_stend_afar_action.setCheckable(True)
+        self.check_stend_afar_action.triggered.connect(self.show_check_stend_afar)
 
         # Группа для взаимоисключающих действий
         mode_group = QtWidgets.QActionGroup(self)
@@ -116,6 +130,8 @@ class MainWindow(QtWidgets.QMainWindow):
         mode_group.addAction(self.check_bek_action)
         mode_group.addAction(self.check_stend_action)
         mode_group.addAction(self.phase_afar_action)
+        mode_group.addAction(self.beam_pattern_action)
+        mode_group.addAction(self.check_stend_afar_action)
         mode_group.setExclusive(True)
         
         self.menu_params.addAction('Настройки устройств', self.open_settings_dialog)
@@ -147,6 +163,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.show_check_stend_ma()
         elif last_mode == 'phase_afar':
             self.show_phase_afar()
+        elif last_mode == 'beam_pattern':
+            self.show_beam_pattern()
+        elif last_mode == 'check_stend_afar':
+            self.show_check_stend_afar()
         else:
             self.show_check_ma()
 
@@ -162,6 +182,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.settings.setValue('last_mode', 'check_stend')
         elif self.central_widget.currentWidget() == self.phase_afar_widget:
             self.settings.setValue('last_mode', 'phase_afar')
+        elif self.central_widget.currentWidget() == self.beam_pattern_widget:
+            self.settings.setValue('last_mode', 'beam_pattern')
+        elif self.central_widget.currentWidget() == self.check_stend_afar_widget:
+            self.settings.setValue('last_mode', 'check_stend_afar')
         else:
             self.settings.setValue('last_mode', 'check')
             
@@ -244,6 +268,40 @@ class MainWindow(QtWidgets.QMainWindow):
                 margin-right: 5px;
             }
         """)
+    
+    def show_beam_pattern(self):
+        self._disconnect_current_widget_devices()
+        self.central_widget.setCurrentWidget(self.beam_pattern_widget)
+        self.beam_pattern_action.setChecked(True)
+        self.mode_indicator.setText('Измерение лучей')
+        self.mode_indicator.setStyleSheet("""
+            QLabel {
+                background-color: #E91E63;
+                color: white;
+                padding: 6px 15px;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 13px;
+                margin-right: 5px;
+            }
+        """)
+
+    def show_check_stend_afar(self):
+        self._disconnect_current_widget_devices()
+        self.central_widget.setCurrentWidget(self.check_stend_afar_widget)
+        self.check_stend_afar_action.setChecked(True)
+        self.mode_indicator.setText('Измерение через калибровку')
+        self.mode_indicator.setStyleSheet("""
+            QLabel {
+                background-color: #FF9800;
+                color: white;
+                padding: 6px 15px;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 13px;
+                margin-right: 5px;
+            }
+        """)
 
 
     def open_settings_dialog(self):
@@ -281,6 +339,7 @@ class MainWindow(QtWidgets.QMainWindow):
         dlg.afar_port_edit.setText(self.settings.value('afar_port', ''))
         dlg.afar_com_combo.setCurrentText(self.settings.value('afar_com_port', ''))
         dlg.afar_mode_combo.setCurrentIndex(int(self.settings.value('afar_mode', 0)))
+        dlg.afar_write_delay.setValue(int(self.settings.value('afar_write_delay', 100)))  # По умолчанию 100 мс
         
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
             settings = dlg.get_settings()
@@ -297,6 +356,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.check_ma_widget.set_device_settings(settings)
             self.check_stend_ma_widget.set_device_settings(settings)
             self.phase_afar_widget.set_device_settings(settings)
+            self.beam_pattern_widget.set_device_settings(settings)
+            self.check_stend_afar_widget.set_device_settings(settings)
         else:
             # При отмене — не сохраняем, но всё равно пробросим актуальные настройки (на случай, если были активные)
             settings = self._collect_current_settings()
@@ -304,6 +365,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.check_ma_widget.set_device_settings(settings)
             self.check_stend_ma_widget.set_device_settings(settings)
             self.phase_afar_widget.set_device_settings(settings)
+            self.beam_pattern_widget.set_device_settings(settings)
+            self.check_stend_afar_widget.set_device_settings(settings)
 
     def _collect_current_settings(self):
         """Собирает текущие настройки из QSettings в dict, как в load_settings."""
@@ -329,6 +392,7 @@ class MainWindow(QtWidgets.QMainWindow):
         settings['afar_port'] = self.settings.value('afar_port', '')
         settings['afar_com_port'] = self.settings.value('afar_com_port', '')
         settings['afar_mode'] = int(self.settings.value('afar_mode', 0))
+        settings['afar_write_delay'] = int(self.settings.value('afar_write_delay', 100))  # По умолчанию 100 мс
         settings['base_save_dir'] = self.settings.value('base_save_dir', '')
         return settings
 
@@ -390,6 +454,7 @@ class MainWindow(QtWidgets.QMainWindow):
         settings['afar_port'] = self.settings.value('afar_port', '')
         settings['afar_com_port'] = self.settings.value('afar_com_port', '')
         settings['afar_mode'] = int(self.settings.value('afar_mode', 0))
+        settings['afar_write_delay'] = int(self.settings.value('afar_write_delay', 100))  # По умолчанию 100 мс
         
         # Путь к файлам измерений
         settings['base_save_dir'] = self.settings.value('base_save_dir', '')
@@ -401,6 +466,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.check_ma_widget.set_device_settings(settings)
         self.check_stend_ma_widget.set_device_settings(settings)
         self.phase_afar_widget.set_device_settings(settings)
+        self.beam_pattern_widget.set_device_settings(settings)
+        self.check_stend_afar_widget.set_device_settings(settings)
 
 if __name__ == '__main__':
     import sys

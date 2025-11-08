@@ -488,6 +488,7 @@ class ManualControlAfarWindow(QtWidgets.QMainWindow):
         try:
             connection_type = self.device_settings.get('afar_connection_type', 'udp')
             mode = int(self.device_settings.get('afar_mode', 0))
+            write_delay_ms = int(self.device_settings.get('afar_write_delay', 100))  # Задержка в миллисекундах
             
             if connection_type == 'udp':
                 ip = self.device_settings.get('afar_ip', '')
@@ -495,13 +496,13 @@ class ManualControlAfarWindow(QtWidgets.QMainWindow):
                 if mode == 0 and (not ip or not port):
                     QtWidgets.QMessageBox.warning(self, "Ошибка", "IP/Порт для АФАР не указаны")
                     return
-                self.afar = Afar(connection_type=connection_type, ip=ip, port=port, mode=mode)
+                self.afar = Afar(connection_type=connection_type, ip=ip, port=port, mode=mode, write_delay_ms=write_delay_ms)
             else:  # com
                 com_port = self.device_settings.get('afar_com_port', '')
                 if mode == 0 and (not com_port or com_port == 'Тестовый'):
                     QtWidgets.QMessageBox.warning(self, "Ошибка", "COM-порт для АФАР не выбран")
                     return
-                self.afar = Afar(connection_type=connection_type, com_port=com_port, mode=mode)
+                self.afar = Afar(connection_type=connection_type, com_port=com_port, mode=mode, write_delay_ms=write_delay_ms)
                 
             self.afar.connect()
             self.afar_status_label.setText("Подключен")

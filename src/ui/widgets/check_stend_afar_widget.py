@@ -6,7 +6,7 @@ from loguru import logger
 import threading
 import time
 import numpy as np
-from core.measurements.check_stend.check_stend import CheckMAStend
+from core.measurements.check_stend_afar.check_stend_afar import CheckAfarStend
 from core.common.enums import Channel, Direction
 from config.settings_manager import get_ui_settings
 
@@ -15,10 +15,12 @@ from ui.widgets.base_measurement_widget import BaseMeasurementWidget
 
 
 
-class StendCheckMaWidget(BaseMeasurementWidget):
-    update_data_signal = QtCore.pyqtSignal(dict)   # словарь {fv_angle: [A1,P1,...,A32,P32] с относительными фазами}
-    update_realtime_signal = QtCore.pyqtSignal(float, int, float, float)  # angle, ppm_index(1..32), amp_abs, phase_rel
-    update_lz_signal = QtCore.pyqtSignal(dict)  # {lz: (mean_amp_delta, mean_delay_delta)}
+class StendCheckAfarWidget(BaseMeasurementWidget):
+    update_data_signal = QtCore.pyqtSignal(dict, int)   # словарь {fv_angle: [A1,P1,...,A32,P32] с относительными фазами}, bu_num
+    update_amp_data_signal = QtCore.pyqtSignal(list, int)  # список амплитуд [A1, A2, ..., A32], bu_num
+    update_realtime_signal = QtCore.pyqtSignal(float, int, float, float, int)  # angle, ppm_index(1..32), amp_abs, phase_rel, bu_num
+    update_lz_signal = QtCore.pyqtSignal(dict, int)  # {lz: (mean_amp_delta, mean_delay_delta)}, bu_num
+    bu_completed_signal = QtCore.pyqtSignal(int)  # номер БУ, для которого завершено измерение
     check_finished_signal = QtCore.pyqtSignal()  # когда проверка завершена
 
     def __init__(self):
@@ -58,32 +60,32 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         gen_layout.addWidget(self.gen_connect_btn)
         self.connect_layout.addWidget(gen_widget)
 
-        ma_widget = QtWidgets.QWidget()
-        ma_layout = QtWidgets.QHBoxLayout(ma_widget)
-        ma_layout.setContentsMargins(0, 0, 0, 0)
-        self.ma_connect_btn = QtWidgets.QPushButton('МА')
-        self.ma_connect_btn.setMinimumHeight(40)
-        self.set_button_connection_state(self.ma_connect_btn, False)
-        ma_layout.addWidget(self.ma_connect_btn)
-        self.connect_layout.addWidget(ma_widget)
+        afar_widget = QtWidgets.QWidget()
+        afar_layout = QtWidgets.QHBoxLayout(afar_widget)
+        afar_layout.setContentsMargins(0, 0, 0, 0)
+        self.afar_connect_btn = QtWidgets.QPushButton('АФАР')
+        self.afar_connect_btn.setMinimumHeight(40)
+        self.set_button_connection_state(self.afar_connect_btn, False)
+        afar_layout.addWidget(self.afar_connect_btn)
+        self.connect_layout.addWidget(afar_widget)
 
         self.left_layout.addWidget(self.connect_group)
 
         self.param_tabs = QtWidgets.QTabWidget()
 
-        self.ma_tab = QtWidgets.QWidget()
-        self.ma_tab_layout = QtWidgets.QFormLayout(self.ma_tab)
+        self.afar_tab = QtWidgets.QWidget()
+        self.afar_tab_layout = QtWidgets.QFormLayout(self.afar_tab)
 
         self.channel_combo = QtWidgets.QComboBox()
         self.channel_combo.addItems(['Приемник', 'Передатчик'])
-        self.ma_tab_layout.addRow('Канал:', self.channel_combo)
+        self.afar_tab_layout.addRow('Канал:', self.channel_combo)
 
         self.direction_combo = QtWidgets.QComboBox()
         self.direction_combo.addItems(['Горизонтальная', 'Вертикальная'])
-        self.ma_tab_layout.addRow('Поляризация:', self.direction_combo)
+        self.afar_tab_layout.addRow('Поляризация:', self.direction_combo)
 
 
-        self.param_tabs.addTab(self.ma_tab, 'Модуль антенный')
+        self.param_tabs.addTab(self.afar_tab, 'АФАР')
 
         self.pna_tab = QtWidgets.QWidget()
         self.pna_tab_layout = QtWidgets.QFormLayout(self.pna_tab)
@@ -252,10 +254,125 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         criteria_layout.addWidget(self.abs_amp_min_tx, 1, 2)
 
 
-
         self.meas_tab_layout.addWidget(criteria_group)
 
-        # Допуски линий задержки (по каждой ЛЗ отдельно)
+        # Группа режимов проверки
+        check_mode_group = QtWidgets.QGroupBox('Режимы проверки')
+        check_mode_layout = QtWidgets.QVBoxLayout(check_mode_group)
+        check_mode_layout.setContentsMargins(15, 15, 15, 15)
+        
+        self.check_fv_checkbox = QtWidgets.QCheckBox('Проверять ФВ')
+        self.check_fv_checkbox.setChecked(True)  # По умолчанию включено
+        check_mode_layout.addWidget(self.check_fv_checkbox)
+        
+        self.check_lz_checkbox = QtWidgets.QCheckBox('Проверять ЛЗ')
+        self.check_lz_checkbox.setChecked(True)  # По умолчанию включено
+        check_mode_layout.addWidget(self.check_lz_checkbox)
+        
+        self.meas_tab_layout.addWidget(check_mode_group)
+
+        # Группа выбора БУ для проверки
+        bu_selection_group = QtWidgets.QGroupBox('Выбор БУ для проверки')
+        bu_selection_layout = QtWidgets.QVBoxLayout(bu_selection_group)
+        bu_selection_layout.setContentsMargins(15, 15, 15, 15)
+
+        # Радиокнопки для выбора режима
+        self.bu_selection_mode = QtWidgets.QButtonGroup()
+        
+        self.all_bu_radio = QtWidgets.QRadioButton('Все БУ (1-40)')
+        self.all_bu_radio.setChecked(True)
+        self.bu_selection_mode.addButton(self.all_bu_radio, 0)
+        bu_selection_layout.addWidget(self.all_bu_radio)
+
+        self.range_bu_radio = QtWidgets.QRadioButton('Диапазон БУ')
+        self.bu_selection_mode.addButton(self.range_bu_radio, 1)
+        bu_selection_layout.addWidget(self.range_bu_radio)
+
+        # Настройки диапазона
+        range_layout = QtWidgets.QHBoxLayout()
+        range_layout.addWidget(QtWidgets.QLabel('От:'))
+        self.bu_start_spin = QtWidgets.QSpinBox()
+        self.bu_start_spin.setRange(1, 40)
+        self.bu_start_spin.setValue(1)
+        self.bu_start_spin.setEnabled(False)
+        range_layout.addWidget(self.bu_start_spin)
+        
+        range_layout.addWidget(QtWidgets.QLabel('До:'))
+        self.bu_end_spin = QtWidgets.QSpinBox()
+        self.bu_end_spin.setRange(1, 40)
+        self.bu_end_spin.setValue(40)
+        self.bu_end_spin.setEnabled(False)
+        range_layout.addWidget(self.bu_end_spin)
+        
+        bu_selection_layout.addLayout(range_layout)
+
+        self.custom_bu_radio = QtWidgets.QRadioButton('Выборочно')
+        self.bu_selection_mode.addButton(self.custom_bu_radio, 2)
+        bu_selection_layout.addWidget(self.custom_bu_radio)
+
+        self.section_x_radio = QtWidgets.QRadioButton('Секция по X')
+        self.bu_selection_mode.addButton(self.section_x_radio, 3)
+        bu_selection_layout.addWidget(self.section_x_radio)
+
+        self.section_y_radio = QtWidgets.QRadioButton('Секция по Y')
+        self.bu_selection_mode.addButton(self.section_y_radio, 4)
+        bu_selection_layout.addWidget(self.section_y_radio)
+
+        # Настройки секций
+        section_layout = QtWidgets.QHBoxLayout()
+        section_layout.addWidget(QtWidgets.QLabel('Секция:'))
+        self.section_spin = QtWidgets.QSpinBox()
+        self.section_spin.setRange(1, 8)
+        self.section_spin.setValue(1)
+        self.section_spin.setEnabled(False)
+        section_layout.addWidget(self.section_spin)
+        
+        self.section_type_label = QtWidgets.QLabel('(X)')
+        self.section_type_label.setEnabled(False)
+        section_layout.addWidget(self.section_type_label)
+        
+        bu_selection_layout.addLayout(section_layout)
+
+        # Список выбора БУ
+        self.bu_list_widget = QtWidgets.QListWidget()
+        self.bu_list_widget.setMinimumHeight(200)
+        self.bu_list_widget.setMaximumHeight(300)
+        self.bu_list_widget.setEnabled(False)
+        for i in range(1, 41):
+            item = QtWidgets.QListWidgetItem(f'БУ №{i}')
+            item.setData(QtCore.Qt.UserRole, i)
+            item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
+            item.setCheckState(QtCore.Qt.Unchecked)
+            self.bu_list_widget.addItem(item)
+        bu_selection_layout.addWidget(self.bu_list_widget)
+
+        quick_select_layout = QtWidgets.QHBoxLayout()
+        self.select_all_bu_btn = QtWidgets.QPushButton('Выбрать все')
+        self.select_all_bu_btn.setEnabled(False)
+        self.select_all_bu_btn.clicked.connect(self.select_all_bu)
+        quick_select_layout.addWidget(self.select_all_bu_btn)
+        
+        self.clear_all_bu_btn = QtWidgets.QPushButton('Очистить все')
+        self.clear_all_bu_btn.setEnabled(False)
+        self.clear_all_bu_btn.clicked.connect(self.clear_all_bu)
+        quick_select_layout.addWidget(self.clear_all_bu_btn)
+        
+        bu_selection_layout.addLayout(quick_select_layout)
+
+        self.bu_selection_mode.buttonClicked.connect(self.on_bu_selection_mode_changed)
+        self.bu_selection_mode.buttonClicked.connect(lambda: self.save_ui_settings())
+        self.bu_start_spin.valueChanged.connect(self.on_range_changed)
+        self.bu_start_spin.valueChanged.connect(lambda: self.save_ui_settings())
+        self.bu_end_spin.valueChanged.connect(self.on_range_changed)
+        self.bu_end_spin.valueChanged.connect(lambda: self.save_ui_settings())
+        self.section_spin.valueChanged.connect(lambda: self.save_ui_settings())
+        self.check_fv_checkbox.stateChanged.connect(lambda: self.save_ui_settings())
+        self.check_lz_checkbox.stateChanged.connect(lambda: self.save_ui_settings())
+        self.bu_list_widget.itemChanged.connect(lambda: self.save_ui_settings())
+
+        self.meas_tab_layout.addWidget(bu_selection_group)
+
+
         lz_group = QtWidgets.QGroupBox('Допуски линий задержки')
         lz_grid = QtWidgets.QGridLayout(lz_group)
         lz_grid.setContentsMargins(15, 15, 15, 15)
@@ -291,14 +408,7 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         ps_main_layout = QtWidgets.QVBoxLayout(ps_group)
         ps_main_layout.setContentsMargins(15, 15, 15, 15)
 
-        scroll_area = QtWidgets.QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setMaximumHeight(200)
-        scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
-        scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-
-        scroll_widget = QtWidgets.QWidget()
-        scroll_layout = QtWidgets.QGridLayout(scroll_widget)
+        scroll_layout = QtWidgets.QGridLayout()
         scroll_layout.setSpacing(8)
 
         scroll_layout.addWidget(QtWidgets.QLabel(""), 0, 0)
@@ -343,15 +453,20 @@ class StendCheckMaWidget(BaseMeasurementWidget):
                 'max': max_spinbox
             }
 
-        scroll_area.setWidget(scroll_widget)
-        ps_main_layout.addWidget(scroll_area)
+        ps_main_layout.addLayout(scroll_layout)
 
         self.meas_tab_layout.addWidget(ps_group)
 
 
         self.meas_tab_layout.addStretch()
 
-        self.param_tabs.addTab(self.meas_tab, 'Настройки измерения')
+        meas_scroll = QtWidgets.QScrollArea()
+        meas_scroll.setWidgetResizable(True)
+        meas_scroll.setWidget(self.meas_tab)
+        meas_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        meas_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        
+        self.param_tabs.addTab(meas_scroll, 'Настройки измерения')
         self.left_layout.addWidget(self.param_tabs, 1)
 
         self.apply_btn = QtWidgets.QPushButton('Применить параметры')
@@ -366,6 +481,42 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.btns_layout.addWidget(self.start_btn)
         self.left_layout.addLayout(self.btns_layout)
         self.left_layout.addStretch()
+
+        bu_selector_widget = QtWidgets.QWidget()
+        bu_selector_layout = QtWidgets.QHBoxLayout(bu_selector_widget)
+        bu_selector_layout.setContentsMargins(5, 5, 5, 5)
+        bu_selector_layout.setSpacing(5)
+        bu_selector_layout.addStretch()
+        
+        self.bu_prev_btn = QtWidgets.QPushButton('◄')
+        self.bu_prev_btn.setFixedWidth(30)
+        self.bu_prev_btn.setToolTip('Предыдущий БУ')
+        bu_selector_layout.addWidget(self.bu_prev_btn)
+        
+        bu_label = QtWidgets.QLabel('БУ:')
+        bu_label.setAlignment(QtCore.Qt.AlignCenter)
+        bu_selector_layout.addWidget(bu_label)
+        
+        self.bu_combo = QtWidgets.QComboBox()
+        for i in range(1, 41):
+            self.bu_combo.addItem(f'БУ №{i}', i)
+        self.bu_combo.setCurrentIndex(0)
+        self.bu_combo.setMaximumWidth(200)
+        bu_selector_layout.addWidget(self.bu_combo, 0)
+        
+        self.bu_next_btn = QtWidgets.QPushButton('►')
+        self.bu_next_btn.setFixedWidth(30)
+        self.bu_next_btn.setToolTip('Следующий БУ')
+        bu_selector_layout.addWidget(self.bu_next_btn)
+        
+        bu_selector_layout.addStretch()
+        
+        self.right_layout.addWidget(bu_selector_widget)
+
+        self.bu_prev_btn.clicked.connect(self.select_prev_bu)
+        self.bu_next_btn.clicked.connect(self.select_next_bu)
+        self.bu_combo.currentIndexChanged.connect(self.on_bu_selected)
+        self.bu_combo.currentIndexChanged.connect(lambda: self.save_ui_settings())
 
         self.results_table = QtWidgets.QTableWidget()
         self.results_table.setColumnCount(15)
@@ -434,13 +585,12 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.view_tabs.addTab(self.delay_table, "Линии задержки")
         self.right_layout.addWidget(self.view_tabs, stretch=5)
 
-        # Создаем консоль с выбором уровня логов
         self.console, self.log_handler, self.log_level_combo = self.create_console_with_log_level(self.right_layout, console_height=180)
         logger.add(self.log_handler, format="{time:HH:mm:ss.SSS} | {level} | {name}:{function}:{line} | {message}")
 
         self._check_thread = None
 
-        self.ma_connect_btn.clicked.connect(self.connect_ma)
+        self.afar_connect_btn.clicked.connect(self.connect_afar)
         self.pna_connect_btn.clicked.connect(self.connect_pna)
         self.gen_connect_btn.clicked.connect(self.connect_trigger)
         self.apply_btn.clicked.connect(self.apply_params)
@@ -449,11 +599,11 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.pause_btn.clicked.connect(self.pause_check)
 
         self.update_data_signal.connect(self.update_table_from_data)
+        self.update_amp_data_signal.connect(self.update_table_from_amp_data_with_bu)
         self.update_realtime_signal.connect(self.update_table_realtime)
-
-        self.update_data_signal.connect(lambda d: setattr(self, '_stend_fv_data', d))
         self.update_lz_signal.connect(self._accumulate_lz_data)
         self.update_lz_signal.connect(self.update_delay_table_from_lz)
+        self.bu_completed_signal.connect(self.on_bu_completed)
         self.check_finished_signal.connect(self.on_check_finished)
 
         self.set_buttons_enabled(True)
@@ -473,28 +623,35 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.ppm_data = {}
         self.check_completed = False  # Флаг завершения основной проверки
         self.measurement_start_time = None  # Время начала измерения
+        self._stend_lz_data = {}  # Инициализация данных ЛЗ
+        self._stend_fv_data = {}  # Инициализация данных ФВ
+        self.bu_data = {}  # Словарь для хранения данных по БУ: {bu_num: {'amp_data': [...], 'fv_data': {...}, 'lz_data': {...}}}
+        
+        # Хранение данных по БУ: {bu_num: {'fv_data': {...}, 'lz_data': {...}, 'amp_data': [...]}}
+        self.bu_data = {}
 
         self.set_button_connection_state(self.pna_connect_btn, False)
-        self.set_button_connection_state(self.ma_connect_btn, False)
+        self.set_button_connection_state(self.afar_connect_btn, False)
 
-        # Настройки UI (персистентность)
-        self._ui_settings = get_ui_settings('check_stend_ma')
+        self._ui_settings = get_ui_settings('check_stend_afar')
+        self.check_fv_checkbox.blockSignals(True)
+        self.check_lz_checkbox.blockSignals(True)
         self.load_ui_settings()
-        
-        # Подключаем автосохранение уровня логирования
+        self.check_fv_checkbox.blockSignals(False)
+        self.check_lz_checkbox.blockSignals(False)
+
         self.log_level_combo.currentTextChanged.connect(lambda: self._ui_settings.setValue('log_level', self.log_level_combo.currentText()))
 
 
 
     @QtCore.pyqtSlot()
     def on_check_finished(self):
-        """Слот для завершения проверки - выполняется в главном потоке GUI"""
+        """Слот для завершения проверки"""
         self.set_buttons_enabled(True)
         self.pause_btn.setText('Пауза')
         self.check_completed = True
         logger.info('Проверка завершена, интерфейс восстановлен')
-        
-        # Показываем диалог завершения с временем выполнения
+
         self.show_completion_dialog()
 
     def show_completion_dialog(self):
@@ -513,8 +670,7 @@ class StendCheckMaWidget(BaseMeasurementWidget):
                 duration_text = f"{minutes}м {seconds}с"
             else:
                 duration_text = f"{seconds}с"
-        
-        # Создаем диалог
+
         msg_box = QMessageBox()
         msg_box.setWindowTitle("Измерение завершено")
         msg_box.setIcon(QMessageBox.Information)
@@ -522,8 +678,7 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         msg_box.setInformativeText(f"Время выполнения: {duration_text}")
         msg_box.setStandardButtons(QMessageBox.Ok)
         msg_box.setDefaultButton(QMessageBox.Ok)
-        
-        # Показываем диалог
+
         msg_box.exec_()
 
     def show_stop_dialog(self):
@@ -542,8 +697,7 @@ class StendCheckMaWidget(BaseMeasurementWidget):
                 duration_text = f"{minutes}м {seconds}с"
             else:
                 duration_text = f"{seconds}с"
-        
-        # Создаем диалог
+
         msg_box = QMessageBox()
         msg_box.setWindowTitle("Измерение остановлено")
         msg_box.setIcon(QMessageBox.Warning)
@@ -551,14 +705,13 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         msg_box.setInformativeText(f"Время выполнения до остановки: {duration_text}")
         msg_box.setStandardButtons(QMessageBox.Ok)
         msg_box.setDefaultButton(QMessageBox.Ok)
-        
-        # Показываем диалог
+
         msg_box.exec_()
 
     @QtCore.pyqtSlot(bool)
     def set_buttons_enabled(self, enabled: bool):
         """Управляет доступностью кнопок"""
-        self.ma_connect_btn.setEnabled(enabled)
+        self.afar_connect_btn.setEnabled(enabled)
         self.pna_connect_btn.setEnabled(enabled)
         self.apply_btn.setEnabled(enabled)
         self.start_btn.setEnabled(enabled)
@@ -566,10 +719,59 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.pause_btn.setEnabled(not enabled)
 
 
-    @QtCore.pyqtSlot(dict)
-    def update_delay_table_from_lz(self, lz_results: dict):
+    @QtCore.pyqtSlot(dict, int)
+    def update_delay_table_from_lz(self, lz_results: dict, bu_num: int):
         """Отрисовывает усреднённые значения ЛЗ и статусы по допускам.
-        Ожидается формат {lz:int: (amp_delta_db:float, delay_delta_ps:float)}"""
+        Ожидается формат {lz:int: (amp_delta_db:float, delay_delta_ps:float)}, bu_num:int
+        Сохраняет данные в bu_data и отрисовывает только для текущего выбранного БУ"""
+        try:
+            if bu_num is not None:
+                if bu_num not in self.bu_data:
+                    self.bu_data[bu_num] = {}
+                if 'lz_data' not in self.bu_data[bu_num]:
+                    self.bu_data[bu_num]['lz_data'] = {}
+                self.bu_data[bu_num]['lz_data'].update(lz_results)
+
+            current_bu = self.bu_combo.currentData()
+            if bu_num is not None and current_bu != bu_num:
+                return
+
+            order = [1, 2, 4, 8]
+            for lz, (amp_delta, delay_delta) in lz_results.items():
+                if lz not in order:
+                    continue 
+                    
+                row = order.index(lz)
+                self.delay_table.setItem(row, 1, self.create_centered_table_item("" if np.isnan(amp_delta) else f"{amp_delta:.2f}"))
+                self.delay_table.setItem(row, 2, self.create_centered_table_item("" if np.isnan(delay_delta) else f"{delay_delta:.1f}"))
+
+                if np.isnan(amp_delta):
+                    amp_item = self.create_neutral_status_item("-")
+                else:
+                    amp_tol = float(self.lz_amp_tolerances_db.get(lz).value()) if self.lz_amp_tolerances_db.get(lz) else 1.0
+                    amp_ok = (-amp_tol <= amp_delta <= amp_tol)
+                    amp_item = self.create_status_table_item("OK" if amp_ok else "FAIL", amp_ok)
+                self.delay_table.setItem(row, 3, amp_item)
+
+                if np.isnan(delay_delta):
+                    delay_item = self.create_neutral_status_item("-")
+                else:
+                    tol = self.lz_delay_tolerances.get(lz)
+                    dmin = float(tol['min'].value()) if tol else -float('inf')
+                    dmax = float(tol['max'].value()) if tol else float('inf')
+                    delay_ok = (dmin <= delay_delta <= dmax)
+                    delay_item = self.create_status_table_item("OK" if delay_ok else "FAIL", delay_ok)
+                self.delay_table.setItem(row, 4, delay_item)
+
+            try:
+                self.delay_table.viewport().update()
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"Ошибка обновления таблицы ЛЗ: {e}")
+
+    def _update_delay_table_from_lz_data(self, lz_results: dict):
+        """Внутренний метод для отрисовки данных ЛЗ без сохранения (используется при переключении БУ)"""
         try:
             order = [1, 2, 4, 8]
             for lz, (amp_delta, delay_delta) in lz_results.items():
@@ -582,34 +784,84 @@ class StendCheckMaWidget(BaseMeasurementWidget):
 
                 if np.isnan(amp_delta):
                     amp_item = self.create_neutral_status_item("-")
-            else:
-                amp_tol = float(self.lz_amp_tolerances_db.get(lz).value()) if self.lz_amp_tolerances_db.get(lz) else 1.0
-                amp_ok = (-amp_tol <= amp_delta <= amp_tol)
-                amp_item = self.create_status_table_item("OK" if amp_ok else "FAIL", amp_ok)
-            self.delay_table.setItem(row, 3, amp_item)
+                else:
+                    amp_tol = float(self.lz_amp_tolerances_db.get(lz).value()) if self.lz_amp_tolerances_db.get(lz) else 1.0
+                    amp_ok = (-amp_tol <= amp_delta <= amp_tol)
+                    amp_item = self.create_status_table_item("OK" if amp_ok else "FAIL", amp_ok)
+                self.delay_table.setItem(row, 3, amp_item)
 
-            if np.isnan(delay_delta):
-                delay_item = self.create_neutral_status_item("-")
-            else:
-                tol = self.lz_delay_tolerances.get(lz)
-                dmin = float(tol['min'].value()) if tol else -float('inf')
-                dmax = float(tol['max'].value()) if tol else float('inf')
-                delay_ok = (dmin <= delay_delta <= dmax)
-                delay_item = self.create_status_table_item("OK" if delay_ok else "FAIL", delay_ok)
-            self.delay_table.setItem(row, 4, delay_item)
+                if np.isnan(delay_delta):
+                    delay_item = self.create_neutral_status_item("-")
+                else:
+                    tol = self.lz_delay_tolerances.get(lz)
+                    dmin = float(tol['min'].value()) if tol else -float('inf')
+                    dmax = float(tol['max'].value()) if tol else float('inf')
+                    delay_ok = (dmin <= delay_delta <= dmax)
+                    delay_item = self.create_status_table_item("OK" if delay_ok else "FAIL", delay_ok)
+                self.delay_table.setItem(row, 4, delay_item)
 
             try:
                 self.delay_table.viewport().update()
             except Exception:
                 pass
         except Exception as e:
-            logger.error(f"Ошибка обновления таблицы ЛЗ: {e}")
+            logger.error(f"Ошибка отрисовки данных ЛЗ: {e}")
 
-    @QtCore.pyqtSlot(dict)
-    def update_table_from_data(self, data: dict):
+    def update_table_from_amp_data(self, amp_data: list):
+        """Заполняет таблицу только амплитудой.
+        amp_data: список из 32 значений амплитуды для каждого ППМ
+        """
+        try:
+            def get_abs_amp_min():
+                return float(self.abs_amp_min_rx.value()) if self.channel_combo.currentText() == 'Приемник' else float(self.abs_amp_min_tx.value())
+
+            for row in range(32):
+                self.results_table.setItem(row, 0, self.create_centered_table_item(str(row + 1)))
+                for col in range(1, 15):
+                    self.results_table.setItem(row, col, self.create_centered_table_item(""))
+
+            abs_min = get_abs_amp_min()
+            for ppm_idx in range(min(32, len(amp_data))):
+                row = ppm_idx
+                amp_val = amp_data[ppm_idx]
+                amp_ok = (amp_val >= abs_min)
+                self.results_table.setItem(row, 1, self.create_status_table_item(f"{amp_val:.2f}", amp_ok))
+
+            self.results_table.viewport().update()
+        except Exception as e:
+            logger.error(f"Ошибка заполнения таблицы данными амплитуды: {e}")
+
+    @QtCore.pyqtSlot(dict, int)
+    def update_table_from_data(self, data: dict, bu_num: int):
         """Заполняет таблицу по словарю {fv_angle: [A1,P1,...,A32,P32]}.
         Фазы считаются относительными (для 0° – всегда 0). Статусы считаем только по фазе.
+        Если передан bu_num, сохраняет данные для этого БУ.
         """
+        try:
+            if bu_num is not None:
+                if bu_num not in self.bu_data:
+                    self.bu_data[bu_num] = {}
+                existing_keys = list(self.bu_data[bu_num].keys()) if bu_num in self.bu_data else []
+                if 'fv_data' not in self.bu_data[bu_num]:
+                    self.bu_data[bu_num]['fv_data'] = {}
+                self.bu_data[bu_num]['fv_data'] = data
+                logger.debug(f"Сохранены данные ФВ для БУ №{bu_num}. Существующие ключи до: {existing_keys}, после: {list(self.bu_data[bu_num].keys())}")
+
+                current_bu = self.bu_combo.currentData()
+
+                if current_bu == bu_num:
+                    self._update_table_from_fv_data(data)
+                else:
+                    index = self.bu_combo.findData(bu_num)
+                    if index >= 0:
+                        QtCore.QTimer.singleShot(0, lambda bu=bu_num: self._switch_to_bu(bu))
+            else:
+                self._update_table_from_fv_data(data)
+        except Exception as e:
+            logger.error(f"Ошибка заполнения таблицы из словаря данных: {e}")
+
+    def _update_table_from_fv_data(self, data: dict):
+        """Внутренний метод для обновления таблицы данными ФВ (без сохранения и переключения)"""
         try:
             fv_order = [0.0, 5.625, 11.25, 22.5, 45.0, 90.0, 180.0]
 
@@ -622,7 +874,6 @@ class StendCheckMaWidget(BaseMeasurementWidget):
             def get_abs_amp_min():
                 return float(self.abs_amp_min_rx.value()) if self.channel_combo.currentText() == 'Приемник' else float(self.abs_amp_min_tx.value())
 
-
             for ppm_idx in range(32):
                 row = ppm_idx
                 self.results_table.setItem(row, 0, self.create_centered_table_item(str(ppm_idx + 1)))
@@ -630,15 +881,15 @@ class StendCheckMaWidget(BaseMeasurementWidget):
                 col = 1
                 for angle in fv_order:
                     values = data.get(angle)
-                    if not values or len(values) < (ppm_idx * 2 + 2):
-                        # Пустые ячейки
+                    idx = ppm_idx * 2
+                    if not values or len(values) <= idx + 1:
                         self.results_table.setItem(row, col, self.create_centered_table_item(""))
                         self.results_table.setItem(row, col + 1, self.create_centered_table_item(""))
                         col += 2
                         continue
 
-                    amp_val = values[ppm_idx * 2]
-                    phase_rel = values[ppm_idx * 2 + 1]
+                    amp_val = values[idx] if idx < len(values) else 0.0
+                    phase_rel = values[idx + 1] if idx + 1 < len(values) else 0.0
 
                     abs_min = get_abs_amp_min()
                     amp_ok = (amp_val >= abs_min)
@@ -658,12 +909,46 @@ class StendCheckMaWidget(BaseMeasurementWidget):
 
             self.results_table.viewport().update()
         except Exception as e:
-            logger.error(f"Ошибка заполнения таблицы из словаря данных: {e}")
+            logger.error(f"Ошибка обновления таблицы данными ФВ: {e}")
 
-    @QtCore.pyqtSlot(float, int, float, float)
-    def update_table_realtime(self, angle: float, ppm_index: int, amp_abs: float, phase_rel: float):
-        """Точечное обновление таблицы по мере поступления данных."""
+    def update_table_from_amp_data_with_bu(self, amp_data: list, bu_num: int):
+        """Обновляет таблицу данными амплитуды для конкретного БУ"""
+        if bu_num not in self.bu_data:
+            self.bu_data[bu_num] = {}
+        self.bu_data[bu_num]['amp_data'] = amp_data.copy()
+        logger.debug(f"Сохранены данные амплитуды для БУ №{bu_num}: {len(amp_data)} значений. Ключи в bu_data[{bu_num}]: {list(self.bu_data[bu_num].keys())}")
+
+        current_bu = self.bu_combo.currentData()
+
+        if current_bu == bu_num:
+            self.update_table_from_amp_data(amp_data)
+        else:
+            index = self.bu_combo.findData(bu_num)
+            if index >= 0:
+                QtCore.QTimer.singleShot(0, lambda bu=bu_num: self._switch_to_bu(bu))
+
+    @QtCore.pyqtSlot(float, int, float, float, int)
+    def update_table_realtime(self, angle: float, ppm_index: int, amp_abs: float, phase_rel: float, bu_num: int):
+        """Точечное обновление таблицы по мере поступления данных. Сохраняет данные в bu_data."""
         try:
+            if bu_num not in self.bu_data:
+                self.bu_data[bu_num] = {}
+            if 'fv_data' not in self.bu_data[bu_num]:
+                self.bu_data[bu_num]['fv_data'] = {}
+
+            if angle not in self.bu_data[bu_num]['fv_data']:
+                self.bu_data[bu_num]['fv_data'][angle] = [0.0] * 64
+
+            idx = (ppm_index - 1) * 2
+            if idx < len(self.bu_data[bu_num]['fv_data'][angle]):
+                self.bu_data[bu_num]['fv_data'][angle][idx] = amp_abs
+                phase_normalized = self._normalize_phase(phase_rel)
+                self.bu_data[bu_num]['fv_data'][angle][idx + 1] = phase_normalized
+
+            current_bu = self.bu_combo.currentData()
+            if current_bu != bu_num:
+                return
+
             fv_order = [0.0, 5.625, 11.25, 22.5, 45.0, 90.0, 180.0]
             if angle not in fv_order:
                 return
@@ -676,15 +961,15 @@ class StendCheckMaWidget(BaseMeasurementWidget):
             abs_min = float(self.abs_amp_min_rx.value()) if self.channel_combo.currentText() == 'Приемник' else float(self.abs_amp_min_tx.value())
             amp_ok = (amp_abs >= abs_min)
             self.results_table.setItem(row, base_col, self.create_status_table_item(f"{amp_abs:.2f}", amp_ok))
-            # Фаза (+ статус кроме 0°)
+            phase_normalized = self._normalize_phase(phase_rel)
             if angle == 0.0:
-                self.results_table.setItem(row, base_col + 1, self.create_centered_table_item(f"{phase_rel:.1f}"))
+                self.results_table.setItem(row, base_col + 1, self.create_centered_table_item(f"{phase_normalized:.1f}"))
             else:
                 tol = self.check_criteria.get('phase_shifter_tolerances', {}).get(angle)
                 if tol is None:
                     tol = self.check_criteria.get('phase_shifter_tolerances', {}).get(float(angle))
-                ok = (tol['min'] <= phase_rel - angle <= tol['max']) if tol else (-2.0 <= phase_rel - angle <= 2.0)
-                self.results_table.setItem(row, base_col + 1, self.create_status_table_item(f"{phase_rel:.1f}", ok))
+                ok = (tol['min'] <= phase_normalized - angle <= tol['max']) if tol else (-2.0 <= phase_normalized - angle <= 2.0)
+                self.results_table.setItem(row, base_col + 1, self.create_status_table_item(f"{phase_normalized:.1f}", ok))
 
             try:
                 self.results_table.viewport().update()
@@ -695,7 +980,7 @@ class StendCheckMaWidget(BaseMeasurementWidget):
 
     def apply_params(self):
         """Сохраняет параметры из вкладок"""
-        # MA
+        # АФАР
         self.channel = self.channel_combo.currentText()
         self.direction = self.direction_combo.currentText()
 
@@ -723,7 +1008,6 @@ class StendCheckMaWidget(BaseMeasurementWidget):
 
 
 
-
         logger.info('Параметры успешно применены')
         try:
             self.save_ui_settings()
@@ -732,7 +1016,7 @@ class StendCheckMaWidget(BaseMeasurementWidget):
 
     def save_ui_settings(self):
         s = self._ui_settings
-        # MA
+        # АФАР
         s.setValue('channel', self.channel_combo.currentText())
         s.setValue('direction', self.direction_combo.currentText())
         # PNA
@@ -761,18 +1045,38 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         s.setValue('trig_ext_debounce', float(self.trig_ext_debounce.value()))
         # Log level
         s.setValue('log_level', self.log_level_combo.currentText())
+        # Режимы проверки
+        check_fv_value = self.check_fv_checkbox.isChecked()
+        check_lz_value = self.check_lz_checkbox.isChecked()
+        s.setValue('check_fv', check_fv_value)
+        s.setValue('check_lz', check_lz_value)
+        logger.debug(f"Сохранены режимы проверки: check_fv={check_fv_value}, check_lz={check_lz_value}")
+        # Режим выбора БУ
+        s.setValue('bu_selection_mode', self.bu_selection_mode.checkedId())
+        # Диапазон БУ
+        s.setValue('bu_start', self.bu_start_spin.value())
+        s.setValue('bu_end', self.bu_end_spin.value())
+        # Секция
+        s.setValue('section', self.section_spin.value())
+        # Выбранные БУ в режиме "Выборочно"
+        selected_bu_list = []
+        for i in range(self.bu_list_widget.count()):
+            item = self.bu_list_widget.item(i)
+            if item.checkState() == QtCore.Qt.Checked:
+                selected_bu_list.append(item.data(QtCore.Qt.UserRole))
+        s.setValue('selected_bu_list', selected_bu_list)
+        # Текущий выбранный БУ в комбобоксе
+        s.setValue('current_bu', self.bu_combo.currentData())
         s.sync()
 
     def load_ui_settings(self):
         s = self._ui_settings
-        # MA
         if (v := s.value('channel')):
             idx = self.channel_combo.findText(v)
             if idx >= 0: self.channel_combo.setCurrentIndex(idx)
         if (v := s.value('direction')):
             idx = self.direction_combo.findText(v)
             if idx >= 0: self.direction_combo.setCurrentIndex(idx)
-        # PNA
         if (v := s.value('s_param')):
             idx = self.s_param_combo.findText(v)
             if idx >= 0:
@@ -800,7 +1104,6 @@ class StendCheckMaWidget(BaseMeasurementWidget):
             if idx >= 0: self.pna_number_of_points.setCurrentIndex(idx)
         if (v := s.value('pna_settings_file')):
             self.settings_file_edit.setText(v)
-        # Criteria
         if (v := s.value('abs_amp_min_rx')) is not None:
             try: 
                 self.abs_amp_min_rx.setValue(float(v))
@@ -812,7 +1115,6 @@ class StendCheckMaWidget(BaseMeasurementWidget):
             except Exception: 
                 pass
 
-        # Phase shifters
         for angle, controls in self.phase_shifter_tolerances.items():
             if (v := s.value(f'ps_tol_{angle}_min')) is not None:
                 try: controls['min'].setValue(float(v))
@@ -821,7 +1123,6 @@ class StendCheckMaWidget(BaseMeasurementWidget):
                 try: controls['max'].setValue(float(v))
                 except Exception: pass
 
-        # Synchronization parameters
         if (v := s.value('trig_ttl_channel')):
             idx = self.trig_ttl_channel.findText(v)
             if idx >= 0: self.trig_ttl_channel.setCurrentIndex(idx)
@@ -838,32 +1139,85 @@ class StendCheckMaWidget(BaseMeasurementWidget):
             if val is not None:
                 try: widget.setValue(float(val))
                 except Exception: pass
-        # Log level
         if (v := s.value('log_level')):
             idx = self.log_level_combo.findText(v)
             if idx >= 0:
                 self.log_level_combo.setCurrentIndex(idx)
+        v = s.value('check_fv')
+        if v is not None:
+            if isinstance(v, bool):
+                check_fv_loaded = v
+            elif isinstance(v, str):
+                check_fv_loaded = v.lower() in ('true', '1', 'yes')
+            else:
+                check_fv_loaded = bool(v)
+            self.check_fv_checkbox.setChecked(check_fv_loaded)
+            logger.debug(f"Загружен режим проверки ФВ: {check_fv_loaded} (исходное значение: {v}, тип: {type(v)})")
+        v = s.value('check_lz')
+        if v is not None:
+            if isinstance(v, bool):
+                check_lz_loaded = v
+            elif isinstance(v, str):
+                check_lz_loaded = v.lower() in ('true', '1', 'yes')
+            else:
+                check_lz_loaded = bool(v)
+            self.check_lz_checkbox.setChecked(check_lz_loaded)
+            logger.debug(f"Загружен режим проверки ЛЗ: {check_lz_loaded} (исходное значение: {v}, тип: {type(v)})")
+        if (v := s.value('bu_selection_mode')) is not None:
+            mode_id = int(v)
+            button = self.bu_selection_mode.button(mode_id)
+            if button:
+                button.setChecked(True)
+                self.on_bu_selection_mode_changed(button)
+        if (v := s.value('bu_start')) is not None:
+            self.bu_start_spin.setValue(int(v))
+        if (v := s.value('bu_end')) is not None:
+            self.bu_end_spin.setValue(int(v))
+        if (v := s.value('section')) is not None:
+            self.section_spin.setValue(int(v))
+        if (v := s.value('selected_bu_list')):
+            try:
+                selected_list = v if isinstance(v, list) else []
+                for i in range(self.bu_list_widget.count()):
+                    item = self.bu_list_widget.item(i)
+                    bu_num = item.data(QtCore.Qt.UserRole)
+                    if bu_num in selected_list:
+                        item.setCheckState(QtCore.Qt.Checked)
+                    else:
+                        item.setCheckState(QtCore.Qt.Unchecked)
+            except Exception:
+                pass
+        if (v := s.value('current_bu')) is not None:
+            try:
+                bu_num = int(v)
+                index = self.bu_combo.findData(bu_num)
+                if index >= 0:
+                    self.bu_combo.setCurrentIndex(index)
+            except Exception:
+                pass
 
 
     def start_check(self):
         """Запускает процесс проверки"""
-        # Проверяем подключение всех устройств: MA, PNA и устройства синхронизации
-        if not (self.ma and self.pna and self.trigger and getattr(self.trigger, 'connection', None)):
+        if not (self.afar and self.pna and self.trigger and getattr(self.trigger, 'connection', None)):
             self.show_error_message("Ошибка", "Сначала подключите все устройства!")
+            return
+
+        selected_bu = self.get_selected_bu_numbers()
+        if not selected_bu:
+            self.show_error_message("Ошибка", "Выберите хотя бы один БУ для проверки!")
             return
 
         self._stop_flag.clear()
         self._pause_flag.clear()
         self.pause_btn.setText('Пауза')
 
-        # Очистка таблицы результатов ППМ
         self.results_table.clearContents()
         for row in range(32):
             self.results_table.setItem(row, 0, self.create_centered_table_item(str(row + 1)))
             for col in range(1, 15):
                 self.results_table.setItem(row, col, QtWidgets.QTableWidgetItem(""))
 
-        # Очистка таблицы линий задержки
         self.delay_table.clearContents()
         delay_discretes = [1, 2, 4, 8]
         for row, discrete in enumerate(delay_discretes):
@@ -871,15 +1225,18 @@ class StendCheckMaWidget(BaseMeasurementWidget):
             for col in range(1, 5):
                 self.delay_table.setItem(row, col, QtWidgets.QTableWidgetItem(""))
 
-        # Очистка оперативных данных
         self.ppm_data.clear()
         self.check_completed = False
+        self._stend_lz_data = {}
+        self._stend_fv_data = {}
 
-        # Записываем время начала измерения
+        check_fv = self.check_fv_checkbox.isChecked()
+        self.update_table_headers_for_bu(has_fv=check_fv)
+
         self.measurement_start_time = time.time()
 
         self.set_buttons_enabled(False)
-        logger.info("Запуск проверки МА...")
+        logger.info(f"Запуск проверки АФАР для БУ: {selected_bu}...")
         self.apply_params()
         self._check_thread = threading.Thread(target=self._run_check, daemon=True)
         self._check_thread.start()
@@ -907,8 +1264,7 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.pause_btn.setText('Пауза')
         self.set_buttons_enabled(True)
         logger.info('Проверка остановлена.')
-        
-        # Показываем диалог остановки с временем выполнения
+
         self.show_stop_dialog()
 
     def _run_check(self):
@@ -918,53 +1274,66 @@ class StendCheckMaWidget(BaseMeasurementWidget):
             direction = Direction.Horizontal if self.direction_combo.currentText() == 'Горизонтальная' else Direction.Vertical
             logger.info(f'Используем канал: {channel.value}, поляризация: {direction.value}')
 
-            # Настройка PNA
             self.setup_pna_common()
 
-            class CheckMAWithCallback(CheckMAStend):
-                def __init__(self, ma, pna, stop_event, pause_event, criteria=None,
-                             parent_widget=None):
-                    # Сначала сохраним parent_widget, чтобы получить gen до super().__init__
-                    self.parent_widget = parent_widget
-                    gen_device = getattr(parent_widget, 'trigger', None) if parent_widget else None
-                    super().__init__(ma, pna, gen_device, stop_event, pause_event)
+            selected_bu = self.get_selected_bu_numbers()
+            logger.info(f'Проверка будет выполнена для БУ: {selected_bu}')
+
+            self._current_measurement_bu_list = selected_bu
+
+            class CheckAfarWithCallback(CheckAfarStend):
+                def __init__(self, afar, pna, gen, bu_numbers, stop_event, pause_event, check_fv=True, check_lz=True,
+                             criteria=None, parent_widget=None):
+                    super().__init__(afar, pna, gen, bu_numbers, stop_event, pause_event, check_fv=check_fv, check_lz=check_lz)
 
                     if criteria:
                         self.phase_shifter_tolerances = criteria.get('phase_shifter_tolerances', None)
 
                 def start(self, chanel: Channel, direction: Direction):
                     """Переопределяем метод start для очистки оперативных данных"""
-                    # Очищаем оперативные данные перед началом нового измерения
                     self.data_relative = None
                     
                     results = super().start(chanel, direction)
                     return results
 
-                # Поэлементные методы колбэка не нужны: обновление идёт через realtime/paket
+            check_fv = self.check_fv_checkbox.isChecked()
+            check_lz = self.check_lz_checkbox.isChecked()
 
-            check = CheckMAWithCallback(
-                ma=self.ma,
+            check = CheckAfarWithCallback(
+                afar=self.afar,
                 pna=self.pna,
+                gen=self.trigger,
+                bu_numbers=selected_bu,
                 stop_event=self._stop_flag,
                 pause_event=self._pause_flag,
+                check_fv=check_fv,
+                check_lz=check_lz,
                 criteria=self.check_criteria,
                 parent_widget=self
             )
 
-            # Пробросим колбэк для поэлементных обновлений
             try:
                 check.realtime_callback = self.update_realtime_signal
             except Exception:
                 pass
-            # Колбэк для realtime обновления таблицы ЛЗ
             try:
                 check.delay_callback = self.update_lz_signal
             except Exception:
                 pass
-
-            # Установим тайминги триггера из UI перед стартом
             try:
-                # Период в UI в мкс → секунды; lead в мс → секунды; post_trigger_delay в мс → секунды
+                check.amp_data_callback = self.update_amp_data_signal
+            except Exception:
+                pass
+            try:
+                check.data_callback = self.update_data_signal
+            except Exception:
+                pass
+            try:
+                check.bu_completed_callback = self.bu_completed_signal
+            except Exception:
+                pass
+
+            try:
                 check.period = float(self.trig_pulse_period.value()) * 1e-6
                 check.lead = float(self.trig_start_lead.value()) * 1e-3
             except Exception:
@@ -973,116 +1342,189 @@ class StendCheckMaWidget(BaseMeasurementWidget):
             check.start(chanel=channel, direction=direction)
 
             if not self._stop_flag.is_set():
-                logger.info('Проверка завершена успешно.')
+                logger.info('Проверка всех БУ завершена успешно.')
 
         except Exception as e:
             self.error_signal.emit("Ошибка проверки", f"Произошла ошибка при выполнении проверки: {str(e)}")
             logger.error(f"Ошибка при выполнении проверки: {e}")
-            # Выключение PNA
             self.turn_off_pna()
         finally:
             self.check_finished_signal.emit()
 
+    def on_bu_selection_mode_changed(self, button):
+        """Обработчик изменения режима выбора БУ"""
+        if button == self.all_bu_radio:
+            self.bu_start_spin.setEnabled(False)
+            self.bu_end_spin.setEnabled(False)
+            self.bu_list_widget.setEnabled(False)
+            self.select_all_bu_btn.setEnabled(False)
+            self.clear_all_bu_btn.setEnabled(False)
+            self.section_spin.setEnabled(False)
+            self.section_type_label.setEnabled(False)
+        elif button == self.range_bu_radio:
+            self.bu_start_spin.setEnabled(True)
+            self.bu_end_spin.setEnabled(True)
+            self.bu_list_widget.setEnabled(False)
+            self.select_all_bu_btn.setEnabled(False)
+            self.clear_all_bu_btn.setEnabled(False)
+            self.section_spin.setEnabled(False)
+            self.section_type_label.setEnabled(False)
+        elif button == self.custom_bu_radio:
+            self.bu_start_spin.setEnabled(False)
+            self.bu_end_spin.setEnabled(False)
+            self.bu_list_widget.setEnabled(True)
+            self.select_all_bu_btn.setEnabled(True)
+            self.clear_all_bu_btn.setEnabled(True)
+            self.section_spin.setEnabled(False)
+            self.section_type_label.setEnabled(False)
+        elif button == self.section_x_radio:
+            self.bu_start_spin.setEnabled(False)
+            self.bu_end_spin.setEnabled(False)
+            self.bu_list_widget.setEnabled(False)
+            self.select_all_bu_btn.setEnabled(False)
+            self.clear_all_bu_btn.setEnabled(False)
+            self.section_spin.setEnabled(True)
+            self.section_type_label.setEnabled(True)
+            self.section_type_label.setText('(X)')
+            self.section_spin.setRange(1, 8)
+        elif button == self.section_y_radio:
+            self.bu_start_spin.setEnabled(False)
+            self.bu_end_spin.setEnabled(False)
+            self.bu_list_widget.setEnabled(False)
+            self.select_all_bu_btn.setEnabled(False)
+            self.clear_all_bu_btn.setEnabled(False)
+            self.section_spin.setEnabled(True)
+            self.section_type_label.setEnabled(True)
+            self.section_type_label.setText('(Y)')
+            self.section_spin.setRange(1, 5)
 
+    def on_range_changed(self):
+        """Обработчик изменения диапазона БУ"""
+        start = self.bu_start_spin.value()
+        end = self.bu_end_spin.value()
+        if start > end:
+            self.bu_end_spin.setValue(start)
 
-    def show_ppm_details_graphics(self, ppm_num, global_pos):
-        menu = QtWidgets.QMenu()
+    def select_all_bu(self):
+        """Выбирает все БУ в списке"""
+        for i in range(self.bu_list_widget.count()):
+            item = self.bu_list_widget.item(i)
+            item.setCheckState(QtCore.Qt.Checked)
 
-        if ppm_num not in self.ppm_data:
-            header_action = menu.addAction(f"ППМ {ppm_num} - данные не готовы")
-            header_action.setEnabled(False)
+    def clear_all_bu(self):
+        """Очищает выбор всех БУ в списке"""
+        for i in range(self.bu_list_widget.count()):
+            item = self.bu_list_widget.item(i)
+            item.setCheckState(QtCore.Qt.Unchecked)
+
+    def get_selected_bu_numbers(self):
+        """Возвращает список номеров выбранных БУ"""
+        if self.all_bu_radio.isChecked():
+            return list(range(1, 41))
+        elif self.range_bu_radio.isChecked():
+            start = self.bu_start_spin.value()
+            end = self.bu_end_spin.value()
+            return list(range(start, end + 1))
+        elif self.custom_bu_radio.isChecked():
+            selected_bu = []
+            for i in range(self.bu_list_widget.count()):
+                item = self.bu_list_widget.item(i)
+                if item.checkState() == QtCore.Qt.Checked:
+                    selected_bu.append(item.data(QtCore.Qt.UserRole))
+            return selected_bu
+        elif self.section_x_radio.isChecked():
+            section = self.section_spin.value()
+            return self._get_bu_numbers_by_x_section(section)
+        elif self.section_y_radio.isChecked():
+            section = self.section_spin.value()
+            return self._get_bu_numbers_by_y_section(section)
+        return []
+
+    def _get_bu_numbers_by_x_section(self, section: int):
+        """Возвращает номера БУ для секции по X"""
+        bu_numbers = []
+        for y in range(5):
+            bu_num = (y * 8) + section
+            if 1 <= bu_num <= 40:
+                bu_numbers.append(bu_num)
+        return bu_numbers
+
+    def _get_bu_numbers_by_y_section(self, section: int):
+        """Возвращает номера БУ для секции по Y"""
+        bu_numbers = []
+        start_bu = (section - 1) * 8 + 1
+        end_bu = section * 8
+        for bu_num in range(start_bu, end_bu + 1):
+            if 1 <= bu_num <= 40:
+                bu_numbers.append(bu_num)
+        return bu_numbers
+
+    def select_prev_bu(self):
+        """Переключает на предыдущий БУ"""
+        current_index = self.bu_combo.currentIndex()
+        if current_index > 0:
+            self.bu_combo.setCurrentIndex(current_index - 1)
+
+    def select_next_bu(self):
+        """Переключает на следующий БУ"""
+        current_index = self.bu_combo.currentIndex()
+        if current_index < self.bu_combo.count() - 1:
+            self.bu_combo.setCurrentIndex(current_index + 1)
+
+    def on_bu_selected(self, index: int):
+        """Обработчик изменения выбранного БУ - обновляет таблицу данными из bu_data"""
+        if index < 0:
+            return
+        bu_num = self.bu_combo.itemData(index)
+        
+        if not bu_num:
+            return
+        
+        logger.debug(f"Переключение на БУ №{bu_num} через комбобокс")
+
+        if bu_num in self.bu_data:
+            data = self.bu_data[bu_num]
+            logger.debug(f"Найдены данные для БУ №{bu_num}: {list(data.keys())}")
+
+            has_amp = 'amp_data' in data
+            has_fv = 'fv_data' in data
+            has_lz = 'lz_data' in data
+
+            self.update_table_headers_for_bu(has_fv)
+
+            if has_fv:
+                logger.debug(f"Отрисовка данных ФВ для БУ №{bu_num}")
+                self._update_table_from_fv_data(data['fv_data'])
+            elif has_amp:
+                logger.debug(f"Отрисовка данных амплитуды для БУ №{bu_num}")
+                self.update_table_from_amp_data(data['amp_data'])
+            else:
+                logger.debug(f"Нет данных для БУ №{bu_num}, очищаем таблицу")
+                self._clear_results_table()
+
+            if has_lz:
+                logger.debug(f"Отрисовка данных ЛЗ для БУ №{bu_num} из bu_data")
+                self._update_delay_table_from_lz_data(data['lz_data'])
+            else:
+                self._clear_delay_table()
         else:
-            data = self.ppm_data[ppm_num]
-            status_text = "OK" if data['result'] else "FAIL"
-            status_color = "🟢" if data['result'] else "🔴"
-            header_action = menu.addAction(f"{status_color} ППМ {ppm_num} - {status_text}")
-            header_action.setEnabled(False)
-            menu.addSeparator()
+            logger.debug(f"Данные для БУ №{bu_num} не найдены в bu_data, очищаем таблицу")
+            self._clear_results_table()
+            self._clear_delay_table()
 
-            if not np.isnan(data['amp_zero']):
-                amp_action = menu.addAction(f"Амплитуда: {data['amp_zero']:.2f} дБ")
-            else:
-                amp_action = menu.addAction("Амплитуда: ---")
-            amp_action.setEnabled(False)
-
-            if not np.isnan(data['amp_diff']):
-                amp_action = menu.addAction(f"Амплитуда_дельта: {data['amp_diff']:.2f} дБ")
-            else:
-                amp_action = menu.addAction("Амплитуда_дельта: ---")
-            amp_action.setEnabled(False)
-
-
-            if not np.isnan(data['phase_zero']):
-                phase_action = menu.addAction(f"Фаза: {data['phase_zero']:.1f}°")
-            else:
-                phase_action = menu.addAction("Фаза: ---")
-            phase_action.setEnabled(False)
-
-            if not np.isnan(data['phase_diff']):
-                phase_action = menu.addAction(f"Фаза_дельта: {data['phase_diff']:.1f}°")
-            else:
-                phase_action = menu.addAction("Фаза_делта: ---")
-            phase_action.setEnabled(False)
-
-            if data['fv_data'] and len(data['fv_data']) > 0:
-                menu.addSeparator()
-                fv_header = menu.addAction("Значения ФВ:")
-                fv_header.setEnabled(False)
-
-                fv_names = ["Дельта ФВ", "5,625°", "11,25°", "22,5°", "45°", "90°", "180°"]
-                for i, value in enumerate(data['fv_data']):
-                    if i < len(fv_names):
-                        if not np.isnan(value):
-                            fv_action = menu.addAction(f"  {fv_names[i]}: {value:.1f}°")
-                        else:
-                            fv_action = menu.addAction(f"  {fv_names[i]}: ---")
-                        fv_action.setEnabled(False)
-                    else:
-                        if not np.isnan(value):
-                            fv_action = menu.addAction(f"  ФВ {i + 1}: {value:.1f}°")
-                        else:
-                            fv_action = menu.addAction(f"  ФВ {i + 1}: ---")
-                        fv_action.setEnabled(False)
-
-        if self.check_completed and self._can_remeasure():
-            menu.addSeparator()
-            remeasure_action = menu.addAction("🔄 Перемерить ППМ")
-            remeasure_action.triggered.connect(lambda: self.remeasure_ppm(ppm_num))
-
-        menu.exec_(global_pos)
-
-    def show_bottom_rect_details(self, global_pos):
-        """Показывает контекстное меню для нижнего прямоугольника (Линии задержки)"""
-        menu = QtWidgets.QMenu()
-
-        header_action = menu.addAction("Линии задержки")
-        header_action.setEnabled(False)
-        menu.addSeparator()
-
-        if self.bottom_rect_data:
-            for key, value in self.bottom_rect_data.items():
-                data_action = menu.addAction(f"{key}: {value}")
-                data_action.setEnabled(False)
-        else:
-            info_action = menu.addAction("Данные будут добавлены позже...")
-            info_action.setEnabled(False)
-
-        menu.exec_(global_pos)
-
-    def update_bottom_rect_data(self, data: dict):
-        """Обновляет данные для нижнего прямоугольника (Линии задержки)"""
-        self.bottom_rect_data = data
-
-
-
-    def _accumulate_lz_data(self, lz_chunk: dict):
+    def _accumulate_lz_data(self, lz_chunk: dict, bu_num: int):
+        """Накопление данных ЛЗ в bu_data (вызывается через сигнал)"""
         try:
+            if bu_num not in self.bu_data:
+                self.bu_data[bu_num] = {}
+            if 'lz_data' not in self.bu_data[bu_num]:
+                self.bu_data[bu_num]['lz_data'] = {}
+            self.bu_data[bu_num]['lz_data'].update(lz_chunk)
+
             for k, v in lz_chunk.items():
                 self._stend_lz_data[k] = v
-        except Exception:
-            pass
-
-
+        except Exception as e:
+            logger.error(f"Ошибка накопления данных ЛЗ: {e}")
 
     def open_file_dialog(self):
         """Открытие диалога выбора файла настроек PNA"""
@@ -1155,5 +1597,116 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         except Exception as e:
             logger.error(f'Ошибка при применении настроек к интерфейсу: {e}')
 
+    def update_table_headers(self):
+        """Обновляет заголовки таблицы в зависимости от режима проверки"""
+        check_fv = self.check_fv_checkbox.isChecked()
+        self.update_table_headers_for_bu(check_fv)
 
+    def update_table_headers_for_bu(self, has_fv: bool):
+        """Обновляет заголовки таблицы в зависимости от наличия данных ФВ"""
+        if has_fv:
+            # Если есть данные ФВ, показываем все колонки (амплитуда + фаза)
+            self.results_table.setHorizontalHeaderLabels([
+                'ППМ', '0° Амп.', '0° Фаза', '5.625° Амп.', '5.625° Фаза', '11.25° Амп.', '11.25° Фаза',
+                '22.5° Амп.', '22.5° Фаза', '45° Амп.', '45° Фаза', '90° Амп.', '90° Фаза', '180° Амп.', '180° Фаза'])
+        else:
+            # Если нет данных ФВ, показываем только амплитуду
+            self.results_table.setHorizontalHeaderLabels([
+                'ППМ', 'Амплитуда (дБ)', '', '', '', '', '', '', '', '', '', '', '', '', ''])
+
+    def _clear_results_table(self):
+        """Очищает таблицу результатов ППМ"""
+        for row in range(32):
+            self.results_table.setItem(row, 0, self.create_centered_table_item(str(row + 1)))
+            for col in range(1, 15):
+                self.results_table.setItem(row, col, self.create_centered_table_item(""))
+        try:
+            self.results_table.viewport().update()
+        except Exception:
+            pass
+
+    def _clear_delay_table(self):
+        """Очищает таблицу линий задержки"""
+        delay_discretes = [1, 2, 4, 8]
+        for row, discrete in enumerate(delay_discretes):
+            self.delay_table.setItem(row, 0, self.create_centered_table_item(f"ЛЗ{discrete}"))
+            for col in range(1, 5):
+                self.delay_table.setItem(row, col, self.create_centered_table_item(""))
+        try:
+            self.delay_table.viewport().update()
+        except Exception:
+            pass
+
+    def _normalize_phase(self, phase: float) -> float:
+        """Нормализует фазу в диапазон [-180, 180]"""
+        while phase > 180:
+            phase -= 360
+        while phase < -180:
+            phase += 360
+        return phase
+
+    def _switch_to_bu(self, bu_num: int):
+        """Переключает комбобокс на указанный БУ и обновляет таблицу данными из bu_data"""
+        index = self.bu_combo.findData(bu_num)
+        if index >= 0:
+            self.bu_combo.blockSignals(True)
+            self.bu_combo.setCurrentIndex(index)
+            self.bu_combo.blockSignals(False)
+            
+            logger.debug(f"Автоматическое переключение на БУ №{bu_num}")
+            logger.debug(f"Текущее состояние bu_data: {list(self.bu_data.keys())}")
+            for key, value in self.bu_data.items():
+                logger.debug(f"  БУ {key}: ключи = {list(value.keys())}")
+
+            if bu_num in self.bu_data:
+                data = self.bu_data[bu_num]
+                logger.debug(f"Найдены данные для БУ №{bu_num}: {list(data.keys())}")
+                
+                has_amp = 'amp_data' in data
+                has_fv = 'fv_data' in data
+                has_lz = 'lz_data' in data
+
+                self.update_table_headers_for_bu(has_fv)
+
+                if has_fv:
+                    logger.debug(f"Отрисовка данных ФВ для БУ №{bu_num} из bu_data")
+                    self._update_table_from_fv_data(data['fv_data'])
+                elif has_amp:
+                    logger.debug(f"Отрисовка данных амплитуды для БУ №{bu_num} из bu_data")
+                    self.update_table_from_amp_data(data['amp_data'])
+                else:
+                    logger.debug(f"Нет данных для БУ №{bu_num}, очищаем таблицу")
+                    self._clear_results_table()
+
+                if has_lz:
+                    logger.debug(f"Отрисовка данных ЛЗ для БУ №{bu_num} из bu_data")
+                    self._update_delay_table_from_lz_data(data['lz_data'])
+                else:
+                    self._clear_delay_table()
+            else:
+                logger.debug(f"Данные для БУ №{bu_num} не найдены в bu_data, очищаем таблицу")
+                self._clear_results_table()
+                self._clear_delay_table()
+
+    @QtCore.pyqtSlot(int)
+    def on_bu_completed(self, bu_num: int):
+        """Обработчик завершения измерения БУ - переключает на следующий БУ"""
+        try:
+            if not hasattr(self, '_current_measurement_bu_list') or not self._current_measurement_bu_list:
+                return
+
+            if bu_num not in self._current_measurement_bu_list:
+                return
+            
+            current_index = self._current_measurement_bu_list.index(bu_num)
+
+            if current_index < len(self._current_measurement_bu_list) - 1:
+                next_bu = self._current_measurement_bu_list[current_index + 1]
+                logger.debug(f"Измерение БУ №{bu_num} завершено, переключаемся на БУ №{next_bu}")
+
+                index = self.bu_combo.findData(next_bu)
+                if index >= 0:
+                    QtCore.QTimer.singleShot(0, lambda bu=next_bu: self._switch_to_bu(bu))
+        except Exception as e:
+            logger.error(f"Ошибка при переключении на следующий БУ: {e}")
 

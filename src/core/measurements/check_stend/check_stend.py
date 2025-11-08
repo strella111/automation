@@ -129,7 +129,7 @@ class CheckMAStend:
                         return
                     
                     amount_strobs = tm_data['strobs_prd'] if self.channel == Channel.Transmitter else tm_data['strobs_prm']
-                    expected_strobs = ppm_num * self.number_of_freqs
+                    expected_strobs = (ppm_num - 1) * self.number_of_freqs
                     if amount_strobs == expected_strobs:
                         self.gen.burst(period_s=self.period, count=self.number_of_freqs, lead_s=self.lead)
                         while True:
@@ -137,7 +137,7 @@ class CheckMAStend:
                             if evt:
                                 return
                     else:
-                        return
+                        raise 'Ошибка синхронизации. Несовпадение ожидаемых стробов с реальными'
                 except Exception as e:
                     logger.error(f"Ошибка при проверке телеметрии для ППМ {ppm_num}: {e}")
                     return

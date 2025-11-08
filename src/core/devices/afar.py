@@ -9,13 +9,14 @@ from utils.logger import format_device_log
 
 class Afar:
 
-    def __init__(self, connection_type, com_port=None, ip=None, port=None, mode=0):
+    def __init__(self, connection_type, com_port=None, ip=None, port=None, mode=0, write_delay_ms=100):
 
         self.connection_type = connection_type
         self.com_port = com_port
         self.ip = ip
         self.port = port
         self.mode = mode
+        self.write_delay_ms = write_delay_ms  # Задержка в миллисекундах перед отправкой команды
         self.connection = None
         self.CRC_POLY = 0x1021
         self.CRC_INIT = 0x1d0f
@@ -106,12 +107,15 @@ class Afar:
         Args:
             string: Данные
         """
+        # Применяем настраиваемую задержку (если больше 0)
+        if self.write_delay_ms > 0:
+            time.sleep(self.write_delay_ms / 1000.0)  # Конвертируем миллисекунды в секунды
+        
         if self.mode == 0:
             if self.connection_type == 'com':
                 if not self.connection or not self.connection.is_open:
                     logger.error('Не обнаружено подключение к MA при попытке отправки данных')
                     raise WrongInstrumentError('При попытке обращения к connection MA произошла ошибка')
-                time.sleep(0.1)
                 self.connection.write(string if isinstance(string, bytes) else string.encode())
                 logger.debug(format_device_log('АФАР', '>>', string))
             elif self.connection_type == 'udp':
@@ -169,7 +173,7 @@ class Afar:
         command_id = b'\x00\x00'
         command = b''.join([separator, addr, command_code, command_id, data])
         crc = self._crc16(command).to_bytes(2, 'big')
-        return b''.join([command, crc])
+        return b''.join([preamble, command, crc])
 
 
     def set_ppm_att(self, bu_num, chanel: Channel, direction: Direction, ppm_num:int, value: int):
@@ -404,12 +408,30 @@ class Afar:
         command = self._generate_command(bu_num=bu_num, command_code=command_code)
         self.write(command)
 
+    def set_task(self, bu_num: int, number_of_beam_prm: int, number_of_beam_prd: int, amount_strobs: int, is_cycle: bool):
+        logger.info(f'Добавление луча в массив задания. '
+                    f'НомерПрм - {number_of_beam_prm} '
+                    f'НомерПрд - {number_of_beam_prd} '
+                    f'Число стробов - {amount_strobs} '
+                    f'Признак цикла - {"да" if is_cycle else "нет"}')
+        command_code = b'\x65'
+        data = bytearray()
+        
+        data.extend(number_of_beam_prm.to_bytes(2, byteorder='little'))
+        data.extend(number_of_beam_prd.to_bytes(2, byteorder='little'))
+        data.extend(amount_strobs.to_bytes(4, byteorder='little'))
+        data.append(1 if is_cycle else 0)
+
+        command = self._generate_command(bu_num=bu_num, command_code=command_code, data=data)
+        self.write(command)
+
 
     def get_tm(self, bu_num: int):
         logger.info('БУ№{bu_num}. Запрошена телеметрия МА')
         command_code = b'\xfa'
         command = self._generate_command(bu_num=bu_num, command_code=command_code)
         self.write(command)
+        time.sleep(0.005)
         response = self.read()
         if not response:
             logger.error(f"Не поступило ответа на команду КУ-ТМ от БУ№{bu_num}")
