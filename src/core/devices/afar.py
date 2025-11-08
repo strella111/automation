@@ -157,21 +157,24 @@ class Afar:
 
 
     def _generate_command(self, bu_num: int, command_code: bytes, data: bytes=b'') -> bytes:
-        preamble = ''
+        preamble = b''
+        if bu_num == 0:
+            preamble = b'\x00\00\x00'
         if 1 <= bu_num <= 8:
             preamble = b'\x01\x10\xef'
-        if 9 <= bu_num <= 16:
+        elif 9 <= bu_num <= 16:
             preamble = b'\x01\x12\xed'
         elif 17 <= bu_num <= 24:
             preamble = b'\x01\x14\xeb'
         elif 25 <= bu_num <= 32:
             preamble = b'\x01\x16\xe9'
-        elif 23 <= bu_num <= 40:
+        elif 33 <= bu_num <= 40:
             preamble = b'\x01\x18\xe7'
         separator = b'\xaa'
         addr = bu_num.to_bytes(length=1, byteorder='big')
         command_id = b'\x00\x00'
-        command = b''.join([separator, addr, command_code, command_id, data])
+        data_bytes = bytes(data) if isinstance(data, bytearray) else data
+        command = b''.join([separator, addr, command_code, command_id, data_bytes])
         crc = self._crc16(command).to_bytes(2, 'big')
         return b''.join([preamble, command, crc])
 

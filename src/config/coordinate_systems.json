@@ -4,11 +4,6 @@
             "name": "Аппаратная",
             "x_offset": 0.0,
             "y_offset": 0.0
-        },
-        {
-            "name": "MA_BZ",
-            "x_offset": 7.1,
-            "y_offset": 31.2
         }
     ]
 }

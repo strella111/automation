@@ -24,6 +24,8 @@ from ui.dialogs.pna_file_dialog import PnaFileDialog
 from config.settings_manager import get_ui_settings
 from utils.excel_module import load_beam_pattern_results
 from PyQt5.QtWidgets import QFileDialog
+from core.common.coordinate_system import CoordinateSystemManager
+from ui.dialogs.add_coord_syst_dialog import AddCoordinateSystemDialog
 
 
 class BeamMeasurementWorker(QThread):
@@ -92,6 +94,8 @@ class BeamPatternWidget(BaseMeasurementWidget):
         self._update_pending = False  # Флаг: есть ли отложенное обновление
 
         self._ui_settings = get_ui_settings('beam_pattern')
+        self.coord_system_manager = CoordinateSystemManager("config/coordinate_systems.json")
+        self.coord_system = None
 
         self.update_gui_signal.connect(self.on_measurement_update)
         
@@ -288,49 +292,78 @@ class BeamPatternWidget(BaseMeasurementWidget):
         self.meas_tab_layout.setSpacing(15)
         self.meas_tab_layout.setContentsMargins(15, 15, 15, 15)
 
+        coord_group = QtWidgets.QGroupBox('Система координат')
+        coord_layout = QtWidgets.QFormLayout(coord_group)
+        coord_layout.setContentsMargins(15, 15, 15, 15)
+
+        coord_selection_layout = QtWidgets.QHBoxLayout()
+        coord_selection_layout.setSpacing(5)
+        coord_selection_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.coord_system_combo = QtWidgets.QComboBox()
+        self.coord_system_combo.addItems(self.coord_system_manager.get_system_names())
+        self.coord_system_combo.setMinimumWidth(200)
+        self.coord_system_combo.currentTextChanged.connect(self.update_coord_buttons_state)
+        coord_selection_layout.addWidget(self.coord_system_combo, 1)
+
+        self.add_coord_system_btn = QtWidgets.QPushButton('+')
+        self.add_coord_system_btn.setFixedSize(24, 22)
+        self.add_coord_system_btn.setToolTip('Добавить новую систему координат')
+        self.add_coord_system_btn.clicked.connect(self.add_coordinate_system)
+        coord_selection_layout.addWidget(self.add_coord_system_btn, 0, QtCore.Qt.AlignVCenter)
+
+        self.remove_coord_system_btn = QtWidgets.QPushButton('−')
+        self.remove_coord_system_btn.setFixedSize(24, 22)
+        self.remove_coord_system_btn.setToolTip('Удалить выбранную систему координат')
+        self.remove_coord_system_btn.clicked.connect(self.remove_coordinate_system)
+        coord_selection_layout.addWidget(self.remove_coord_system_btn, 0, QtCore.Qt.AlignVCenter)
+        
+        coord_layout.addRow('Система координат:', coord_selection_layout)
+        self.meas_tab_layout.addWidget(coord_group)
+
         scan_group = QtWidgets.QGroupBox('Параметры планарного сканирования')
         scan_layout = QtWidgets.QFormLayout(scan_group)
         
         self.left_x = QtWidgets.QDoubleSpinBox()
         self.left_x.setRange(-1000, 1000)
         self.left_x.setDecimals(2)
-        self.left_x.setValue(13.92)
-        self.left_x.setSuffix(' мм')
+        self.left_x.setValue(1.39)
+        self.left_x.setSuffix(' см')
         scan_layout.addRow('Левая граница X:', self.left_x)
         
         self.right_x = QtWidgets.QDoubleSpinBox()
         self.right_x.setRange(-1000, 1000)
         self.right_x.setDecimals(2)
-        self.right_x.setValue(546.68)
-        self.right_x.setSuffix(' мм')
+        self.right_x.setValue(54.67)
+        self.right_x.setSuffix(' см')
         scan_layout.addRow('Правая граница X:', self.right_x)
         
         self.up_y = QtWidgets.QDoubleSpinBox()
         self.up_y.setRange(-1000, 1000)
         self.up_y.setDecimals(2)
-        self.up_y.setValue(-1.11)
-        self.up_y.setSuffix(' мм')
+        self.up_y.setValue(-0.11)
+        self.up_y.setSuffix(' см')
         scan_layout.addRow('Верхняя граница Y:', self.up_y)
         
         self.down_y = QtWidgets.QDoubleSpinBox()
         self.down_y.setRange(-1000, 1000)
         self.down_y.setDecimals(2)
-        self.down_y.setValue(-140.97)
-        self.down_y.setSuffix(' мм')
+        self.down_y.setValue(-14.10)
+        self.down_y.setSuffix(' см')
         scan_layout.addRow('Нижняя граница Y:', self.down_y)
         
         self.step_x = QtWidgets.QDoubleSpinBox()
         self.step_x.setRange(0.1, 100)
         self.step_x.setDecimals(2)
-        self.step_x.setValue(14.02)
-        self.step_x.setSuffix(' мм')
+        self.step_x.setValue(1.40)
+        self.step_x.setSuffix(' см')
         scan_layout.addRow('Шаг X:', self.step_x)
         
         self.step_y = QtWidgets.QDoubleSpinBox()
         self.step_y.setRange(-100, 100)
         self.step_y.setDecimals(2)
-        self.step_y.setValue(-2.22)
-        self.step_y.setSuffix(' мм')
+        self.step_y.setValue(-0.22)
+        self.step_y.setSuffix(' см')
         scan_layout.addRow('Шаг Y:', self.step_y)
         
         self.meas_tab_layout.addWidget(scan_group)
@@ -609,6 +642,67 @@ class BeamPatternWidget(BaseMeasurementWidget):
         self.start_btn.setEnabled(enabled)
         self.stop_btn.setEnabled(not enabled)
     
+    def add_coordinate_system(self):
+        """Открывает диалог для добавления новой системы координат"""
+        dialog = AddCoordinateSystemDialog(self)
+        
+        if dialog.exec_() == QtWidgets.QDialog.Accepted:
+            name, x_offset, y_offset = dialog.get_values()
+
+            if self.coord_system_manager.add_system(name, x_offset, y_offset):
+                current_text = self.coord_system_combo.currentText()
+                self.coord_system_combo.clear()
+                self.coord_system_combo.addItems(self.coord_system_manager.get_system_names())
+
+                index = self.coord_system_combo.findText(name)
+                if index >= 0:
+                    self.coord_system_combo.setCurrentIndex(index)
+
+                self.update_coord_buttons_state()
+                
+                self.show_info_message("Успех", f"Система координат '{name}' успешно добавлена")
+            else:
+                self.show_error_message("Ошибка", "Не удалось добавить систему координат. Возможно, такое имя уже используется.")
+
+    def remove_coordinate_system(self):
+        """Удаляет выбранную систему координат"""
+        current_name = self.coord_system_combo.currentText()
+        
+        if not current_name:
+            self.show_error_message("Ошибка", "Нет выбранной системы координат для удаления")
+            return
+
+        if len(self.coord_system_manager.get_system_names()) <= 1:
+            self.show_error_message("Ошибка", "Нельзя удалить последнюю систему координат")
+            return
+
+        reply = QMessageBox.question(
+            self, 
+            'Подтверждение удаления',
+            f'Вы уверены, что хотите удалить систему координат "{current_name}"?',
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            if self.coord_system_manager.remove_system(current_name):
+                self.coord_system_combo.clear()
+                self.coord_system_combo.addItems(self.coord_system_manager.get_system_names())
+
+                if self.coord_system_combo.count() > 0:
+                    self.coord_system_combo.setCurrentIndex(0)
+
+                self.update_coord_buttons_state()
+                
+                self.show_info_message("Успех", f"Система координат '{current_name}' успешно удалена")
+            else:
+                self.show_error_message("Ошибка", "Не удалось удалить систему координат")
+
+    def update_coord_buttons_state(self):
+        """Обновляет состояние кнопок управления системами координат"""
+        can_remove = len(self.coord_system_manager.get_system_names()) > 1
+        self.remove_coord_system_btn.setEnabled(can_remove)
+
     def apply_params(self):
         """Сохраняет параметры из вкладок"""
         # PNA
@@ -645,6 +739,10 @@ class BeamPatternWidget(BaseMeasurementWidget):
 
         self.pna_settings['trig_start_lead'] = self.sync_settings['trig_start_lead']
         self.pna_settings['trig_pulse_period'] = self.sync_settings['trig_pulse_period']
+        
+        # Система координат
+        coord_system_name = self.coord_system_combo.currentText()
+        self.coord_system = self.coord_system_manager.get_system_by_name(coord_system_name)
         
         logger.info(f'Параметры применены. Частоты: {len(self.freq_list)} точек от {self.freq_list[0]} до {self.freq_list[-1]} МГц')
 
@@ -818,19 +916,20 @@ class BeamPatternWidget(BaseMeasurementWidget):
                     self.pna_stop_freq.setValue(int(loaded_data['freq_list'][-1]))
                     self.pna_number_of_points.setCurrentText(str(len(loaded_data['freq_list'])))
 
+            # Конвертируем значения из мм в см для отображения в UI
             if loaded_data.get('step_x'):
-                self.step_x.setValue(float(loaded_data['step_x']))
+                self.step_x.setValue(float(loaded_data['step_x']) / 10)  # мм -> см
             if loaded_data.get('step_y'):
-                self.step_y.setValue(float(loaded_data['step_y']))
+                self.step_y.setValue(float(loaded_data['step_y']) / 10)  # мм -> см
 
             if loaded_data.get('left_x') is not None:
-                self.left_x.setValue(float(loaded_data['left_x']))
+                self.left_x.setValue(float(loaded_data['left_x']) / 10)  # мм -> см
             if loaded_data.get('right_x') is not None:
-                self.right_x.setValue(float(loaded_data['right_x']))
+                self.right_x.setValue(float(loaded_data['right_x']) / 10)  # мм -> см
             if loaded_data.get('up_y') is not None:
-                self.up_y.setValue(float(loaded_data['up_y']))
+                self.up_y.setValue(float(loaded_data['up_y']) / 10)  # мм -> см
             if loaded_data.get('down_y') is not None:
-                self.down_y.setValue(float(loaded_data['down_y']))
+                self.down_y.setValue(float(loaded_data['down_y']) / 10)  # мм -> см
 
             if loaded_data.get('pna_settings'):
                 pna_params = loaded_data['pna_settings']
@@ -1027,13 +1126,14 @@ class BeamPatternWidget(BaseMeasurementWidget):
             self.show_error_message("Ошибка", "Не выбраны лучи для измерения!\n\nДобавьте лучи в список и отметьте их галочками.")
             return
 
+        # Конвертируем значения из см в мм для передачи в сканер
         scan_params = {
-            'left_x': self.left_x.value(),
-            'right_x': self.right_x.value(),
-            'up_y': self.up_y.value(),
-            'down_y': self.down_y.value(),
-            'step_x': self.step_x.value(),
-            'step_y': self.step_y.value()
+            'left_x': self.left_x.value() * 10,  # см -> мм
+            'right_x': self.right_x.value() * 10,  # см -> мм
+            'up_y': self.up_y.value() * 10,  # см -> мм
+            'down_y': self.down_y.value() * 10,  # см -> мм
+            'step_x': self.step_x.value() * 10,  # см -> мм
+            'step_y': self.step_y.value() * 10  # см -> мм
         }
 
         self.apply_params()
@@ -1086,6 +1186,10 @@ class BeamPatternWidget(BaseMeasurementWidget):
         self.time_update_timer.start(1000)
 
         self.initialize_view_combos(beams, self.freq_list)
+
+        # Настройка сканера с учетом системы координат
+        if self.psn:
+            self.setup_scanner_common()
 
         measurement = BeamMeasurement(self.afar, self.pna, self.trigger, self.psn, base_save_dir=base_save_dir)
 
@@ -1564,6 +1668,8 @@ class BeamPatternWidget(BaseMeasurementWidget):
         s.setValue('down_y', float(self.down_y.value()))
         s.setValue('step_x', float(self.step_x.value()))
         s.setValue('step_y', float(self.step_y.value()))
+        # Система координат
+        s.setValue('coord_system', self.coord_system_combo.currentText())
         # Log level
         s.setValue('log_level', self.log_level_combo.currentText())
         s.sync()
@@ -1634,6 +1740,13 @@ class BeamPatternWidget(BaseMeasurementWidget):
                     widget.setValue(float(val))
                 except Exception:
                     pass
+        # Система координат
+        if (v := s.value('coord_system')):
+            idx = self.coord_system_combo.findText(v)
+            if idx >= 0:
+                self.coord_system_combo.setCurrentIndex(idx)
+        # Инициализируем состояние кнопок системы координат
+        self.update_coord_buttons_state()
         # Log level
         if (v := s.value('log_level')):
             idx = self.log_level_combo.findText(v)
