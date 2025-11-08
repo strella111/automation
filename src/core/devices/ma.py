@@ -87,6 +87,8 @@ class MA:
         addr = bu_num.to_bytes(length=1, byteorder='big')
         command_id = self.number_of_command.to_bytes(2, byteorder='big')
         self.number_of_command += 1
+        if self.number_of_command > 2 ** 16:
+            self.number_of_command = 1
         command = b''.join([separator, addr, command_code, command_id, data])
         crc = self._crc16(command).to_bytes(2, 'big')
         return b''.join([command, crc])

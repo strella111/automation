@@ -21,6 +21,7 @@ class Afar:
         self.CRC_POLY = 0x1021
         self.CRC_INIT = 0x1d0f
         self.ppm_data = [bytearray(25) for _ in range(40)]
+        self.number_of_command = 1
 
     def connect(self):
         try:
@@ -159,20 +160,23 @@ class Afar:
     def _generate_command(self, bu_num: int, command_code: bytes, data: bytes=b'') -> bytes:
         preamble = b''
         if bu_num == 0:
-            preamble = b'\x00\00\x00'
+            preamble = b'\x00\xhtff\x00'
         if 1 <= bu_num <= 8:
-            preamble = b'\x01\x10\xef'
+            preamble = b'\x00\x10\xef'
         elif 9 <= bu_num <= 16:
-            preamble = b'\x01\x12\xed'
+            preamble = b'\x00\x12\xed'
         elif 17 <= bu_num <= 24:
-            preamble = b'\x01\x14\xeb'
+            preamble = b'\x00\x14\xeb'
         elif 25 <= bu_num <= 32:
-            preamble = b'\x01\x16\xe9'
+            preamble = b'\x00\x16\xe9'
         elif 33 <= bu_num <= 40:
-            preamble = b'\x01\x18\xe7'
+            preamble = b'\x00\x18\xe7'
         separator = b'\xaa'
         addr = bu_num.to_bytes(length=1, byteorder='big')
-        command_id = b'\x00\x00'
+        command_id = self.number_of_command.to_bytes(2, byteorder='big')
+        self.number_of_command += 1
+        if self.number_of_command > 2 ** 16:
+            self.number_of_command = 1
         data_bytes = bytes(data) if isinstance(data, bytearray) else data
         command = b''.join([separator, addr, command_code, command_id, data_bytes])
         crc = self._crc16(command).to_bytes(2, 'big')
