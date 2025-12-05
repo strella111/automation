@@ -55,100 +55,21 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.direction_combo.addItems(['Горизонтальная', 'Вертикальная'])
         self.ma_tab_layout.addRow('Поляризация:', self.direction_combo)
 
-
         self.param_tabs.addTab(self.ma_tab, 'Модуль антенный')
-
-        self.pna_tab = QtWidgets.QWidget()
-        self.pna_tab_layout = QtWidgets.QFormLayout(self.pna_tab)
-
-        self.s_param_combo = QtWidgets.QComboBox()
-        self.s_param_combo.addItems(['S21', 'S12', 'S11', 'S22'])
-        self.pna_tab_layout.addRow('S-параметр:', self.s_param_combo)
-
-        self.pna_power = QtWidgets.QDoubleSpinBox()
-        self.pna_power.setRange(-20, 18)
-        self.pna_power.setSingleStep(1)
-        self.pna_power.setDecimals(0)
-        self.pna_power.setValue(0)
-        self.pna_tab_layout.addRow('Выходная мощность (дБм):', self.pna_power)
-
-        self.pna_start_freq = QtWidgets.QSpinBox()
-        self.pna_start_freq.setRange(1, 50000)
-        self.pna_start_freq.setSingleStep(50)
-        self.pna_start_freq.setValue(9300)
-        self.pna_start_freq.setSuffix(' МГц')
-        self.pna_tab_layout.addRow('Нач. частота:', self.pna_start_freq)
-
-        self.pna_stop_freq = QtWidgets.QSpinBox()
-        self.pna_stop_freq.setRange(1, 50000)
-        self.pna_stop_freq.setSingleStep(50)
-        self.pna_stop_freq.setValue(9800)
-        self.pna_stop_freq.setSuffix(' МГц')
-        self.pna_tab_layout.addRow('Кон. частота:', self.pna_stop_freq)
-
-        self.pna_number_of_points = QtWidgets.QComboBox()
-        self.pna_number_of_points.addItems(['3', '11', '21','33', '51', '101', '201'])
-        self.pna_number_of_points.setCurrentText('11')
-        self.pna_tab_layout.addRow('Кол-во точек:', self.pna_number_of_points)
-
-        self.pulse_mode_combo = QtWidgets.QComboBox()
-        self.pulse_mode_combo.addItems(['Standard', 'Off'])
-        self.pna_tab_layout.addRow('Импульсный режим', self.pulse_mode_combo)
-
-        self.pulse_width = QtWidgets.QDoubleSpinBox()
-        self.pulse_width.setDecimals(3)
-        self.pulse_width.setRange(5, 50)
-        self.pulse_width.setSingleStep(1)
-        self.pulse_width.setValue(20)
-        self.pulse_width.setSuffix(' мкс')
-        self.pna_tab_layout.addRow('Ширина импульса', self.pulse_width)
-
-        self.pulse_period = QtWidgets.QDoubleSpinBox()
-        self.pulse_width.setDecimals(3)
-        self.pulse_period.setRange(20, 20000)
-        self.pulse_period.setValue(2000)
-        self.pulse_period.setSingleStep(10)
-        self.pulse_period.setSuffix(' мкс')
-        self.pna_tab_layout.addRow('Период импульса', self.pulse_period)
-
-        self.pulse_source = QtWidgets.QComboBox()
-        self.pulse_source.addItems(['External', 'Internal'])
-        self.pna_tab_layout.addRow('Источник импульса', self.pulse_source)
-
-        self.trig_polarity = QtWidgets.QComboBox()
-        self.trig_polarity.addItems(['Positive', 'Negative'])
-        self.pna_tab_layout.addRow('Полярность сигнала', self.trig_polarity)
-
-
-        settings_layout = QtWidgets.QHBoxLayout()
-        settings_layout.setSpacing(4)
-        self.settings_file_edit = QtWidgets.QLineEdit()
-        self.settings_file_edit.setReadOnly(True)
-        self.settings_file_edit.setPlaceholderText('Выберите файл настроек...')
-        self.settings_file_edit.setFixedHeight(32)
-
-        self.load_file_btn = QtWidgets.QPushButton()
-        self.load_file_btn.setProperty("iconButton", True)
-        self.load_file_btn.setFixedSize(32, 28)
-        self.load_file_btn.setToolTip('Выбрать файл настроек')
-
-        style = self.style()
-        folder_icon = style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
-        self.load_file_btn.setIcon(folder_icon)
-        self.load_file_btn.setIconSize(QSize(16, 16))
-        self.load_file_btn.setFixedHeight(32)
+        self.pna_tab, self.pna_tab_layout = self.build_pna_form(
+            points_options=['3', '11', '21', '33', '51', '101', '201'],
+            default_points='11',
+            include_pulse=True,
+            include_file=True,
+            include_pulse_source=True,
+            include_trig_polarity=True,
+        )
         self.load_file_btn.clicked.connect(self.open_file_dialog)
-
-        settings_layout.addWidget(self.settings_file_edit, 1)
-        settings_layout.addWidget(self.load_file_btn, 0)
-
-        self.pna_tab_layout.addRow('Файл настроек:', settings_layout)
         self.param_tabs.addTab(self.pna_tab, 'Анализатор')
 
         # --- Вкладка устройства синхронизации (E5818) ---
         self.trig_tab = QtWidgets.QWidget()
         self.trig_tab_layout = QtWidgets.QFormLayout(self.trig_tab)
-
 
         self.trig_ttl_channel = QtWidgets.QComboBox()
         self.trig_ttl_channel.addItems(['TTL1', 'TTL2'])
@@ -173,7 +94,6 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.trig_pulse_period.setSuffix(' мкс')
         self.trig_pulse_period.setValue(500.000)
         self.trig_tab_layout.addRow('Период импульса:', self.trig_pulse_period)
-
 
         self.trig_min_alarm_guard = QtWidgets.QDoubleSpinBox()
         self.trig_min_alarm_guard.setRange(0.0, 10e6)
@@ -214,7 +134,6 @@ class StendCheckMaWidget(BaseMeasurementWidget):
 
         criteria_layout.addWidget(QtWidgets.QLabel("Мин. Амплитуда:"), 1, 0)
 
-
         # Порог по абсолютной амплитуде (минимально допустимая), отдельно для RX/TX
         self.abs_amp_min_rx = QtWidgets.QDoubleSpinBox()
         self.abs_amp_min_rx.setRange(-200.0, 200.0)
@@ -231,8 +150,6 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.abs_amp_min_tx.setValue(-5.00)
         self.abs_amp_min_tx.setSuffix(' дБ')
         criteria_layout.addWidget(self.abs_amp_min_tx, 1, 2)
-
-
 
         self.meas_tab_layout.addWidget(criteria_group)
 
@@ -329,7 +246,6 @@ class StendCheckMaWidget(BaseMeasurementWidget):
 
         self.meas_tab_layout.addWidget(ps_group)
 
-
         self.meas_tab_layout.addStretch()
 
         self.param_tabs.addTab(self.meas_tab, 'Настройки измерения')
@@ -338,8 +254,8 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.apply_btn, control_layout = self.create_control_buttons()
         if self.apply_btn:
             self.left_layout.addWidget(self.apply_btn)
-        self.left_layout.addLayout(control_layout)
-        self.left_layout.addStretch()
+            self.left_layout.addLayout(control_layout)
+            self.left_layout.addStretch()
 
         self.results_table = QtWidgets.QTableWidget()
         self.results_table.setColumnCount(15)
@@ -370,7 +286,6 @@ class StendCheckMaWidget(BaseMeasurementWidget):
                 item = QtWidgets.QTableWidgetItem("")
                 item.setTextAlignment(QtCore.Qt.AlignCenter)
                 self.results_table.setItem(row, col, item)
-
 
         self.delay_table = QtWidgets.QTableWidget()
         self.delay_table.setColumnCount(5)
@@ -454,10 +369,8 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         # Настройки UI (персистентность)
         self._ui_settings = get_ui_settings('check_stend_ma')
         self.load_ui_settings()
-        
-        # Подключаем автосохранение уровня логирования
-        self.log_level_combo.currentTextChanged.connect(lambda: self._ui_settings.setValue('log_level', self.log_level_combo.currentText()))
 
+        self.log_level_combo.currentTextChanged.connect(lambda: self._ui_settings.setValue('log_level', self.log_level_combo.currentText()))
 
 
     @QtCore.pyqtSlot()
@@ -538,7 +451,6 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.start_btn.setEnabled(enabled)
         self.stop_btn.setEnabled(not enabled)
         self.pause_btn.setEnabled(not enabled)
-
 
     @QtCore.pyqtSlot(dict)
     def update_delay_table_from_lz(self, lz_results: dict):
@@ -821,7 +733,6 @@ class StendCheckMaWidget(BaseMeasurementWidget):
             if idx >= 0:
                 self.log_level_combo.setCurrentIndex(idx)
 
-
     def start_check(self):
         """Запускает процесс проверки"""
         # Проверяем подключение всех устройств: MA, PNA и устройства синхронизации
@@ -960,8 +871,6 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         finally:
             self.check_finished_signal.emit()
 
-
-
     def show_ppm_details_graphics(self, ppm_num, global_pos):
         menu = QtWidgets.QMenu()
 
@@ -1050,91 +959,11 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         """Обновляет данные для нижнего прямоугольника (Линии задержки)"""
         self.bottom_rect_data = data
 
-
-
     def _accumulate_lz_data(self, lz_chunk: dict):
         try:
             for k, v in lz_chunk.items():
                 self._stend_lz_data[k] = v
         except Exception:
             pass
-
-
-
-    def open_file_dialog(self):
-        """Открытие диалога выбора файла настроек PNA"""
-        try:
-            if not self.pna or not self.pna.connection:
-                QtWidgets.QMessageBox.warning(self, 'Предупреждение', 'Сначала подключитесь к PNA')
-                return
-
-            files_path = self.device_settings.get('pna_files_path', 'C:\\Users\\Public\\Documents\\Network Analyzer\\')
-
-            dialog = PnaFileDialog(self.pna, files_path, self)
-
-            if dialog.exec_() == QtWidgets.QDialog.Accepted:
-                selected_file = dialog.selected_file
-                if selected_file:
-                    self.settings_file_edit.setText(selected_file)
-                    self.apply_parsed_settings()
-
-                    logger.info(f'Выбран файл настроек PNA: {selected_file}')
-
-        except Exception as e:
-            error_msg = f'Ошибка при выборе файла настроек: {e}'
-            QtWidgets.QMessageBox.critical(self, 'Ошибка', error_msg)
-            logger.error(error_msg)
-
-    # def apply_parsed_settings(self):
-    #     """Применение параметров PNA настроек к интерфейсу"""
-    #     try:
-    #         s_param = self.pna.get_s_param()
-    #         logger.info(f'S_PARAM={s_param}')
-    #         if s_param:
-    #             index = self.s_param_combo.findText(s_param)
-    #             if index >= 0:
-    #                 self.s_param_combo.setCurrentIndex(index)
-    #
-    #         power1 = self.pna.get_power(1)
-    #         power2 = self.pna.get_power(2)
-    #
-    #         if s_param.lower() == 's12':
-    #             self.pna_power.setValue(power2)
-    #         else:
-    #             self.pna_power.setValue(power1)
-    #
-    #         freq_start = self.pna.get_start_freq()
-    #         if freq_start:
-    #             self.pna_start_freq.setValue(int(freq_start / 10 ** 6))
-    #
-    #         freq_stop = self.pna.get_stop_freq()
-    #         if freq_stop:
-    #             self.pna_stop_freq.setValue(int(freq_stop / 10 ** 6))
-    #
-    #         points = self.pna.get_amount_of_points()
-    #         if points:
-    #             index = self.pna_number_of_points.findText(str(int(points)))
-    #             if index >= 0:
-    #                 self.pna_number_of_points.setCurrentIndex(index)
-    #
-    #         pulse_mode = self.pna.get_pulse_mode()
-    #         if pulse_mode:
-    #             index = self.pulse_mode_combo.findText(pulse_mode)
-    #             if index >= 0:
-    #                 self.pulse_mode_combo.setCurrentIndex(index)
-    #
-    #         pna_pulse_width = self.pna.get_pulse_width()
-    #         if pna_pulse_width:
-    #             self.pulse_width.setValue(float(pna_pulse_width) * 10 ** 6)
-    #
-    #         pna_pulse_period = self.pna.get_period()
-    #         if pna_pulse_period:
-    #             self.pulse_period.setValue(float(pna_pulse_period) * 10 ** 6)
-    #
-    #
-    #
-    #     except Exception as e:
-    #         logger.error(f'Ошибка при применении настроек к интерфейсу: {e}')
-
 
 

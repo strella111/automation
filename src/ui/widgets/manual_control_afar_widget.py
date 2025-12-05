@@ -393,9 +393,6 @@ class ManualControlAfarWindow(QtWidgets.QMainWindow):
                 logger.warning('Нет активного подключения сканера. Система координат не применена.')
 
 
-        
-
-        
     def set_device_settings(self, settings):
         """Устанавливает настройки устройств"""
         self.device_settings = settings

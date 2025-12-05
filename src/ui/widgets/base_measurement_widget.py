@@ -1,15 +1,15 @@
 import time
 
 from PyQt5 import QtWidgets, QtCore, QtGui
-from PyQt5.QtGui import QTextCursor
-from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtWidgets import QMessageBox, QStyle
 from loguru import logger
 import threading
 import os
-from core.devices.trigger_box import E5818Config
 
-from core.workers.device_connection_worker import DeviceConnectionWorker
+from core.devices.trigger_box import E5818Config
 from ui.components.log_handler import QTextEditLogHandler
+from core.workers.device_connection_worker import DeviceConnectionWorker
+from ui.dialogs.pna_file_dialog import PnaFileDialog
 
 
 class BaseMeasurementWidget(QtWidgets.QWidget):
@@ -121,6 +121,144 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
             control_layout.addWidget(self.start_btn)
         
         return apply_btn, control_layout
+
+    def build_pna_form(
+        self,
+        points_options=None,
+        default_points=None,
+        include_pulse=True,
+        include_file=True,
+        include_pulse_source=True,
+        include_trig_polarity=True,
+        start_default=9300,
+        stop_default=9800,
+        power_default=0,
+    ):
+        """
+        Фабрика вкладки PNA. Создает форму и сохраняет контролы в атрибутах:
+        s_param_combo, pna_power, pna_start_freq, pna_stop_freq,
+        pna_number_of_points, pulse_mode_combo, pulse_width, pulse_period,
+        settings_file_edit, load_file_btn.
+        Возвращает (pna_tab, pna_tab_layout).
+        """
+        if points_options is None:
+            points_options = ['3', '11', '21', '33', '51', '101', '201']
+        if default_points is None:
+            default_points = '11'
+
+        pna_tab = QtWidgets.QWidget()
+        pna_tab_layout = QtWidgets.QFormLayout(pna_tab)
+
+        self.s_param_combo = QtWidgets.QComboBox()
+        self.s_param_combo.addItems(['S21', 'S12', 'S11', 'S22'])
+        pna_tab_layout.addRow('S-параметр:', self.s_param_combo)
+
+        self.pna_power = QtWidgets.QDoubleSpinBox()
+        self.pna_power.setRange(-20, 18)
+        self.pna_power.setSingleStep(1)
+        self.pna_power.setDecimals(0)
+        self.pna_power.setValue(power_default)
+        pna_tab_layout.addRow('Выходная мощность (дБм):', self.pna_power)
+
+        self.pna_start_freq = QtWidgets.QSpinBox()
+        self.pna_start_freq.setRange(1, 50000)
+        self.pna_start_freq.setSingleStep(50)
+        self.pna_start_freq.setValue(start_default)
+        self.pna_start_freq.setSuffix(' МГц')
+        pna_tab_layout.addRow('Нач. частота:', self.pna_start_freq)
+
+        self.pna_stop_freq = QtWidgets.QSpinBox()
+        self.pna_stop_freq.setRange(1, 50000)
+        self.pna_stop_freq.setSingleStep(50)
+        self.pna_stop_freq.setValue(stop_default)
+        self.pna_stop_freq.setSuffix(' МГц')
+        pna_tab_layout.addRow('Кон. частота:', self.pna_stop_freq)
+
+        self.pna_number_of_points = QtWidgets.QComboBox()
+        self.pna_number_of_points.addItems(points_options)
+        if default_points in points_options:
+            self.pna_number_of_points.setCurrentText(default_points)
+        pna_tab_layout.addRow('Кол-во точек:', self.pna_number_of_points)
+
+        if include_pulse:
+            self.pulse_mode_combo = QtWidgets.QComboBox()
+            self.pulse_mode_combo.addItems(['Standard', 'Off'])
+            pna_tab_layout.addRow('Импульсный режим', self.pulse_mode_combo)
+
+            self.pulse_width = QtWidgets.QDoubleSpinBox()
+            self.pulse_width.setDecimals(3)
+            self.pulse_width.setRange(5, 50)
+            self.pulse_width.setSingleStep(1)
+            self.pulse_width.setValue(20)
+            self.pulse_width.setSuffix(' мкс')
+            pna_tab_layout.addRow('Ширина импульса', self.pulse_width)
+
+            self.pulse_period = QtWidgets.QDoubleSpinBox()
+            self.pulse_period.setDecimals(3)
+            self.pulse_period.setRange(20, 20000)
+            self.pulse_period.setValue(2000)
+            self.pulse_period.setSingleStep(10)
+            self.pulse_period.setSuffix(' мкс')
+            pna_tab_layout.addRow('Период импульса', self.pulse_period)
+
+        if include_pulse_source:
+            self.pulse_source = QtWidgets.QComboBox()
+            self.pulse_source.addItems(['External', 'Internal'])
+            pna_tab_layout.addRow('Источник импульса', self.pulse_source)
+
+        if include_trig_polarity:
+            self.trig_polarity = QtWidgets.QComboBox()
+            self.trig_polarity.addItems(['Positive', 'Negative'])
+            pna_tab_layout.addRow('Полярность сигнала', self.trig_polarity)
+
+        if include_file:
+            settings_layout = QtWidgets.QHBoxLayout()
+            settings_layout.setSpacing(4)
+            self.settings_file_edit = QtWidgets.QLineEdit()
+            self.settings_file_edit.setReadOnly(True)
+            self.settings_file_edit.setPlaceholderText('Выберите файл настроек...')
+            self.settings_file_edit.setFixedHeight(32)
+
+            self.load_file_btn = QtWidgets.QPushButton()
+            self.load_file_btn.setProperty("iconButton", True)
+            self.load_file_btn.setFixedSize(32, 28)
+            self.load_file_btn.setToolTip('Выбрать файл настроек')
+
+            style = self.style()
+            folder_icon = style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
+            self.load_file_btn.setIcon(folder_icon)
+            self.load_file_btn.setIconSize(QtCore.QSize(16, 16))
+            self.load_file_btn.setFixedHeight(32)
+
+            settings_layout.addWidget(self.settings_file_edit, 1)
+            settings_layout.addWidget(self.load_file_btn, 0)
+
+            pna_tab_layout.addRow('Файл настроек:', settings_layout)
+
+        return pna_tab, pna_tab_layout
+
+    def open_file_dialog(self):
+        """Открытие диалога выбора файла настроек PNA"""
+        try:
+            if not self.pna or not hasattr(self.pna, 'connection'):
+                QtWidgets.QMessageBox.warning(self, 'Предупреждение', 'Сначала подключитесь к PNA')
+                return
+
+            files_path = self.device_settings.get('pna_files_path', 'C:\\Users\\Public\\Documents\\Network Analyzer\\')
+
+            dialog = PnaFileDialog(self.pna, files_path, self)
+
+            if dialog.exec_() == QtWidgets.QDialog.Accepted:
+                selected_file = dialog.selected_file
+                if selected_file:
+                    self.settings_file_edit.setText(selected_file)
+                    self.apply_parsed_settings()
+                    logger.info(f'Выбран файл настроек PNA: {selected_file}')
+
+        except Exception as e:
+            error_msg = f'Ошибка при выборе файла настроек: {e}'
+            QtWidgets.QMessageBox.critical(self, 'Ошибка', error_msg)
+            logger.error(error_msg)
     
     def set_button_connection_state(self, button: QtWidgets.QPushButton, connected: bool):
         """Устанавливает состояние кнопки подключения"""
@@ -257,7 +395,6 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
                 self.show_error_message("Ошибка отключения PSN", f"Не удалось отключить PSN: {str(e)}")
                 return
 
-        # Проверяем, не идет ли уже подключение
         if self._psn_connection_thread and self._psn_connection_thread.isRunning():
             logger.info("Подключение к PSN уже выполняется...")
             return
@@ -702,7 +839,6 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
         parent_layout.addWidget(console_container)
         
         # Создаем обработчик логов
-        from ui.components.log_handler import QTextEditLogHandler
         log_handler = QTextEditLogHandler(console)
         
         # Подключаем изменение уровня логов

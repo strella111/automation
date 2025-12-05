@@ -533,8 +533,6 @@ def load_beam_pattern_results(save_dir: str) -> Optional[dict]:
         } или None при ошибке
     """
     try:
-        from openpyxl import load_workbook
-        
         if not os.path.exists(save_dir):
             logger.error(f"Папка не найдена: {save_dir}")
             return None
