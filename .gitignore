@@ -27,3 +27,9 @@ Output/
 backend.py
 
 src/check_data_collector/
+
+trigger_box.py
+
+*.xlsx
+src/TODOLIST.txt
+src/hadamard_calibration_ppm32.py

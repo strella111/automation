@@ -68,6 +68,60 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
         self.error_signal.connect(self.show_error_message)
         self.buttons_enabled_signal.connect(self.set_buttons_enabled)
     
+    def build_connect_group(self, button_specs):
+        """
+        Создает группу кнопок подключения устройств.
+        
+        Args:
+            button_specs: iterable of tuples (attr_name, label)
+                          attr_name — префикс для имени поля кнопки, например 'pna' -> self.pna_connect_btn
+        Returns:
+            QtWidgets.QGroupBox с вертикальным layout.
+        """
+        group = QtWidgets.QGroupBox('Подключение устройств')
+        layout = QtWidgets.QVBoxLayout(group)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+        
+        for attr_name, label in button_specs:
+            row_widget = QtWidgets.QWidget()
+            row_layout = QtWidgets.QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            
+            btn = QtWidgets.QPushButton(label)
+            btn.setMinimumHeight(40)
+            row_layout.addWidget(btn)
+            layout.addWidget(row_widget)
+            
+            setattr(self, f"{attr_name}_connect_btn", btn)
+            # Инициализируем красным состоянием «не подключено»
+            self.set_button_connection_state(btn, False)
+        
+        return group
+    
+    def create_control_buttons(self, include_apply=True, include_start=True, include_stop=True, include_pause=True):
+        """
+        Создает стандартные кнопки управления измерением.
+        Возвращает (apply_btn | None, control_layout)
+        """
+        apply_btn = None
+        if include_apply:
+            apply_btn = QtWidgets.QPushButton('Применить параметры')
+        
+        control_layout = QtWidgets.QHBoxLayout()
+        
+        if include_pause:
+            self.pause_btn = QtWidgets.QPushButton('Пауза')
+            control_layout.addWidget(self.pause_btn)
+        if include_stop:
+            self.stop_btn = QtWidgets.QPushButton('Стоп')
+            control_layout.addWidget(self.stop_btn)
+        if include_start:
+            self.start_btn = QtWidgets.QPushButton('Старт')
+            control_layout.addWidget(self.start_btn)
+        
+        return apply_btn, control_layout
+    
     def set_button_connection_state(self, button: QtWidgets.QPushButton, connected: bool):
         """Устанавливает состояние кнопки подключения"""
         if connected:

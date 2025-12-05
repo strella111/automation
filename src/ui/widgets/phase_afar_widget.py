@@ -40,36 +40,12 @@ class PhaseAfarWidget(BaseMeasurementWidget):
         self.right_layout = QtWidgets.QVBoxLayout(self.right_panel)
         self.layout.addWidget(self.right_panel, stretch=3)
 
-        self.connect_group = QtWidgets.QGroupBox('Подключение устройств')
-        self.connect_layout = QtWidgets.QVBoxLayout(self.connect_group)
-        self.connect_layout.setContentsMargins(10, 10, 10, 10)
-        self.connect_layout.setSpacing(10)
-
-        pna_widget = QtWidgets.QWidget()
-        pna_layout = QtWidgets.QHBoxLayout(pna_widget)
-        pna_layout.setContentsMargins(0, 0, 0, 0)
-        self.pna_connect_btn = QtWidgets.QPushButton('Анализатор')
-        self.pna_connect_btn.setMinimumHeight(40)
-        pna_layout.addWidget(self.pna_connect_btn)
-        self.connect_layout.addWidget(pna_widget)
-
-        psn_widget = QtWidgets.QWidget()
-        psn_layout = QtWidgets.QHBoxLayout(psn_widget)
-        psn_layout.setContentsMargins(0, 0, 0, 0)
-        self.psn_connect_btn = QtWidgets.QPushButton('Сканер')
-        self.psn_connect_btn.setMinimumHeight(40)
-        psn_layout.addWidget(self.psn_connect_btn)
-        self.connect_layout.addWidget(psn_widget)
-
-        afar_widget = QtWidgets.QWidget()
-        afar_layout = QtWidgets.QHBoxLayout(afar_widget)
-        afar_layout.setContentsMargins(0, 0, 0, 0)
-        self.afar_connect_btn = QtWidgets.QPushButton('АФАР')
-        self.afar_connect_btn.setMinimumHeight(40)
-        afar_layout.addWidget(self.afar_connect_btn)
-        self.connect_layout.addWidget(afar_widget)
-
-        self.left_layout.addWidget(self.connect_group)
+        connect_group = self.build_connect_group([
+            ('pna', 'Анализатор'),
+            ('psn', 'Сканер'),
+            ('afar', 'АФАР'),
+        ])
+        self.left_layout.addWidget(connect_group)
 
         # Настройки измерений
         self.param_tabs = QtWidgets.QTabWidget()
@@ -344,16 +320,10 @@ class PhaseAfarWidget(BaseMeasurementWidget):
         self.param_tabs.addTab(self.meas_tab, 'Настройки измерения')
         self.left_layout.addWidget(self.param_tabs, 1)
 
-        self.apply_btn = QtWidgets.QPushButton('Применить параметры')
-        self.left_layout.addWidget(self.apply_btn)
-        self.btns_layout = QtWidgets.QHBoxLayout()
-        self.pause_btn = QtWidgets.QPushButton('Пауза')
-        self.stop_btn = QtWidgets.QPushButton('Стоп')
-        self.start_btn = QtWidgets.QPushButton('Старт')
-        self.btns_layout.addWidget(self.pause_btn)
-        self.btns_layout.addWidget(self.stop_btn)
-        self.btns_layout.addWidget(self.start_btn)
-        self.left_layout.addLayout(self.btns_layout)
+        self.apply_btn, control_layout = self.create_control_buttons()
+        if self.apply_btn:
+            self.left_layout.addWidget(self.apply_btn)
+        self.left_layout.addLayout(control_layout)
         self.left_layout.addStretch()
 
         self.plot_tabs = QtWidgets.QTabWidget()
