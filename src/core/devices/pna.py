@@ -240,8 +240,9 @@ class PNA:
             return amps, phases
 
         else:
-            amps = [random.uniform(0, 15) for _ in range(self.count_freqs_point)]
-            phases = [random.uniform(-180, 180) for _ in range(self.count_freqs_point)]
+            self.count_freqs_point = 11
+            amps = [random.uniform(0, 15) for _ in range(int(self.count_freqs_point))]
+            phases = [random.uniform(-180, 180) for _ in range(int(self.count_freqs_point))]
             return amps, phases
 
     def get_fdata(self):
@@ -253,7 +254,7 @@ class PNA:
             return [float(x) for x in response_list]
 
         else:
-            return [random.uniform(-20, 30) for _ in range(self.count_freqs_point)]
+            return [random.uniform(-20, 30) for _ in range(int(self.count_freqs_point))]
 
     def get_mean_value_from_fdata(self):
         data = self.get_fdata()

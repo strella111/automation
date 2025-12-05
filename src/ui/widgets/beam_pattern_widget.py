@@ -1,6 +1,6 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
 from PyQt5.QtCore import QThread, pyqtSignal
-from PyQt5.QtWidgets import QStyle, QMessageBox
+from PyQt5.QtWidgets import QStyle, QMessageBox, QProgressDialog
 from PyQt5.QtCore import QSize
 import os
 import pyqtgraph as pg
@@ -9,12 +9,32 @@ from loguru import logger
 
 from ui.widgets.base_measurement_widget import BaseMeasurementWidget
 from core.measurements.beam_pattern.beam_measurement import BeamMeasurement
-from ui.dialogs.pna_file_dialog import PnaFileDialog
 from config.settings_manager import get_ui_settings
 from utils.excel_module import load_beam_pattern_results
 from PyQt5.QtWidgets import QFileDialog
 from core.common.coordinate_system import CoordinateSystemManager
 from ui.dialogs.add_coord_syst_dialog import AddCoordinateSystemDialog
+
+
+class LoadRescanWorker(QThread):
+    """Рабочий поток для загрузки данных досканирования"""
+    finished_signal = pyqtSignal(dict)  # Загруженные данные
+    error_signal = pyqtSignal(str)  # Ошибка
+    
+    def __init__(self, folder_path: str):
+        super().__init__()
+        self.folder_path = folder_path
+    
+    def run(self):
+        try:
+            loaded_data = load_beam_pattern_results(self.folder_path)
+            if not loaded_data:
+                self.error_signal.emit("Не удалось загрузить данные из выбранной папки.")
+                return
+            self.finished_signal.emit(loaded_data)
+        except Exception as e:
+            logger.error(f"Ошибка при загрузке данных в потоке: {e}", exc_info=True)
+            self.error_signal.emit(f"Не удалось загрузить данные: {str(e)}")
 
 
 class BeamMeasurementWorker(QThread):
@@ -77,6 +97,7 @@ class BeamPatternWidget(BaseMeasurementWidget):
         self.trigger = None
 
         self._measurement_thread = None
+        self._load_rescan_thread = None  # Поток для загрузки данных досканирования
 
         self._is_updating_plots = False  # Флаг: идет ли сейчас отрисовка
         self._pending_data_update = None  # Последние данные, ожидающие отрисовки
@@ -119,32 +140,8 @@ class BeamPatternWidget(BaseMeasurementWidget):
             include_pulse_source=True,
             include_trig_polarity=True,
         )
-        self.load_file_btn.clicked.connect(self.open_file_dialog)
-        self.param_tabs.addTab(self.pna_tab, 'Анализатор')
 
-        settings_layout = QtWidgets.QHBoxLayout()
-        settings_layout.setSpacing(4)
-        self.settings_file_edit = QtWidgets.QLineEdit()
-        self.settings_file_edit.setReadOnly(True)
-        self.settings_file_edit.setPlaceholderText('Выберите файл настроек...')
-        self.settings_file_edit.setFixedHeight(32)
-        
-        self.load_file_btn = QtWidgets.QPushButton()
-        self.load_file_btn.setProperty("iconButton", True)
-        self.load_file_btn.setFixedSize(32, 28)
-        self.load_file_btn.setToolTip('Выбрать файл настроек')
-        
-        style = self.style()
-        folder_icon = style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
-        self.load_file_btn.setIcon(folder_icon)
-        self.load_file_btn.setIconSize(QSize(16, 16))
-        self.load_file_btn.setFixedHeight(32)
         self.load_file_btn.clicked.connect(self.open_file_dialog)
-        
-        settings_layout.addWidget(self.settings_file_edit, 1)
-        settings_layout.addWidget(self.load_file_btn, 0)
-        
-        self.pna_tab_layout.addRow('Файл настроек:', settings_layout)
         self.param_tabs.addTab(self.pna_tab, 'Анализатор')
 
         self.trig_tab = QtWidgets.QWidget()
@@ -717,22 +714,108 @@ class BeamPatternWidget(BaseMeasurementWidget):
         if not folder_path:
             return
 
+        # Показываем диалог загрузки
+        progress_dialog = QProgressDialog(
+            "Загрузка данных для досканирования...\nПожалуйста, подождите.",
+            "Отмена",
+            0,
+            0,
+            self
+        )
+        progress_dialog.setWindowTitle("Загрузка данных")
+        progress_dialog.setWindowModality(QtCore.Qt.WindowModal)
+        progress_dialog.setMinimumDuration(0)  # Показываем сразу
+        progress_dialog.setCancelButton(None)  # Убираем кнопку отмены (загрузка должна завершиться)
+        progress_dialog.setRange(0, 0)  # Неопределенный прогресс
+        progress_dialog.show()
+        
+        # Обновляем интерфейс, чтобы диалог отобразился
+        QtWidgets.QApplication.processEvents()
+
+        # Создаем и запускаем поток загрузки
+        self._load_rescan_thread = LoadRescanWorker(folder_path)
+        self._load_rescan_thread.finished_signal.connect(
+            lambda data: self._on_rescan_data_loaded(data, folder_path, progress_dialog)
+        )
+        self._load_rescan_thread.error_signal.connect(
+            lambda error: self._on_rescan_load_error(error, progress_dialog)
+        )
+        self._load_rescan_thread.start()
+    
+    def _on_rescan_data_loaded(self, loaded_data: dict, folder_path: str, progress_dialog: QProgressDialog):
+        """Обработчик успешной загрузки данных досканирования"""
         try:
-            loaded_data = load_beam_pattern_results(folder_path)
-            if not loaded_data:
-                self.show_error_message("Ошибка", "Не удалось загрузить данные из выбранной папки.")
-                return
+            # Обновляем текст диалога для обработки данных
+            progress_dialog.setLabelText("Очистка старых данных...\nПожалуйста, подождите.")
+            QtWidgets.QApplication.processEvents()
+            
+            # Очищаем старые данные и графики
+            self.measurement_data.clear()
+            self.amp_plot.clear()
+            self.phase_plot.clear()
+            self.amp_rect_items.clear()
+            self.phase_rect_items.clear()
+            
+            # Обновляем UI
+            QtWidgets.QApplication.processEvents()
+            
+            progress_dialog.setLabelText("Обработка данных...\nПожалуйста, подождите.")
+            QtWidgets.QApplication.processEvents()
             
             logger.info(f"Загружены данные для досканирования из {folder_path}")
 
+            # Сохраняем данные
             self.rescan_data = loaded_data
             self.rescan_save_dir = folder_path
-
+            
+            # Обновляем UI для отображения прогресса
+            QtWidgets.QApplication.processEvents()
+            
+            # Восстанавливаем параметры UI
+            progress_dialog.setLabelText("Восстановление параметров...\nПожалуйста, подождите.")
+            QtWidgets.QApplication.processEvents()
             self._restore_params_from_loaded_data(loaded_data)
-
-            self.measurement_data = loaded_data['data'].copy()
-
+            
+            # Обновляем UI
+            QtWidgets.QApplication.processEvents()
+            
+            # Используем ссылку на данные вместо глубокого копирования для ускорения
+            # Данные из загруженного файла не изменяются, поэтому можно использовать ссылку
+            progress_dialog.setLabelText("Подготовка данных...\nПожалуйста, подождите.")
+            QtWidgets.QApplication.processEvents()
+            # Просто используем ссылку - это намного быстрее, чем глубокое копирование
+            self.measurement_data = loaded_data['data']
+            
+            # Обновляем UI
+            QtWidgets.QApplication.processEvents()
+            
+            # Инициализируем комбобоксы
+            progress_dialog.setLabelText("Инициализация интерфейса...\nПожалуйста, подождите.")
+            QtWidgets.QApplication.processEvents()
             self.initialize_view_combos(loaded_data['beams'], loaded_data['freq_list'])
+            
+            # Обновляем UI перед отрисовкой графиков
+            QtWidgets.QApplication.processEvents()
+            
+            # Закрываем диалог перед отрисовкой графиков
+            progress_dialog.close()
+            
+            # Отрисовку графиков делаем отложенной на большее время, чтобы интерфейс успел обновиться
+            # Графики отрисуются только когда пользователь переключится на луч/частоту
+            QtCore.QTimer.singleShot(200, lambda: self._finalize_rescan_load(loaded_data))
+            
+        except Exception as e:
+            progress_dialog.close()
+            logger.error(f"Ошибка при обработке загруженных данных: {e}", exc_info=True)
+            self.show_error_message("Ошибка", f"Не удалось обработать загруженные данные: {str(e)}")
+            self._load_rescan_thread = None
+    
+    def _finalize_rescan_load(self, loaded_data: dict):
+        """Завершающая обработка после загрузки данных досканирования"""
+        try:
+            # Отрисовываем графики только для текущего выбранного луча/частоты
+            # Остальные отрисуются по требованию при переключении
+            # Это намного быстрее, чем отрисовывать все данные сразу
             self.update_plots()
             
             logger.info("Параметры и данные восстановлены. Можно нажать 'Старт' для продолжения сканирования.")
@@ -740,10 +823,18 @@ class BeamPatternWidget(BaseMeasurementWidget):
                                   f"Загружены данные для {len(loaded_data['beams'])} лучей, "
                                   f"{len(loaded_data['freq_list'])} частот. "
                                   f"Нажмите 'Старт' для продолжения сканирования.")
-            
         except Exception as e:
-            logger.error(f"Ошибка при загрузке папки для досканирования: {e}", exc_info=True)
-            self.show_error_message("Ошибка загрузки", f"Не удалось загрузить данные: {str(e)}")
+            logger.error(f"Ошибка при финализации загрузки: {e}", exc_info=True)
+            self.show_error_message("Ошибка", f"Не удалось завершить обработку данных: {str(e)}")
+        finally:
+            self._load_rescan_thread = None
+    
+    def _on_rescan_load_error(self, error_msg: str, progress_dialog: QProgressDialog):
+        """Обработчик ошибки загрузки данных досканирования"""
+        progress_dialog.close()
+        logger.error(f"Ошибка при загрузке папки для досканирования: {error_msg}")
+        self.show_error_message("Ошибка загрузки", error_msg)
+        self._load_rescan_thread = None
     
     def _restore_params_from_loaded_data(self, loaded_data: dict):
         """Восстанавливает параметры UI из загруженных данных"""
@@ -1332,25 +1423,13 @@ class BeamPatternWidget(BaseMeasurementWidget):
         amp_min, amp_max = np.nanmin(amp_2d), np.nanmax(amp_2d)
         phase_min, phase_max = np.nanmin(phase_2d), np.nanmax(phase_2d)
         
-        # Цветовая карта для амплитуды (с гарантированной инициализацией)
-        amp_cmap = None
-        try:
-            amp_cmap = pg.colormap.get('viridis', source='matplotlib')
-        except:
-            pass
-        
-        if amp_cmap is None:
-            try:
-                amp_cmap = pg.colormap.get('viridis')
-            except:
-                pass
-        
-        if amp_cmap is None:
-            # Создаем простую карту вручную (гарантированно работает)
-            amp_cmap = pg.ColorMap(
-                pos=np.array([0.0, 0.5, 1.0]),
-                color=np.array([[0, 0, 255, 255], [0, 255, 0, 255], [255, 0, 0, 255]], dtype=np.ubyte)
-            )
+        # Цветовая карта для амплитуды: минимум - синий, центр - желтый, максимум - красный
+        amp_cmap = pg.ColorMap(
+            pos=np.array([0.0, 0.5, 1.0]),
+            color=np.array([[0, 0, 255, 255],    # Синий (минимум)
+                          [255, 255, 0, 255],   # Желтый (центр)
+                          [255, 0, 0, 255]], dtype=np.ubyte)  # Красный (максимум)
+        )
         
         # Цветовая карта для фазы (с гарантированной инициализацией)
         phase_cmap = None
@@ -1388,6 +1467,110 @@ class BeamPatternWidget(BaseMeasurementWidget):
         # Ограничиваем индексы размерами массивов
         max_y_idx = min(len(y_coords), amp_shape[0], phase_shape[0])
         max_x_idx = min(len(x_coords), amp_shape[1], phase_shape[1])
+        
+        # Всегда используем быструю отрисовку через ImageItem для всех данных
+        self._update_plots_fast(amp_2d, phase_2d, x_coords, y_coords, 
+                               max_x_idx, max_y_idx, amp_min, amp_max, 
+                               phase_min, phase_max, amp_cmap, phase_cmap)
+    
+    def _update_plots_fast(self, amp_2d, phase_2d, x_coords, y_coords,
+                           max_x_idx, max_y_idx, amp_min, amp_max,
+                           phase_min, phase_max, amp_cmap, phase_cmap):
+        """Быстрая отрисовка через ImageItem для больших данных"""
+        # Очищаем старые элементы
+        self.amp_plot.clear()
+        self.phase_plot.clear()
+        self.amp_rect_items.clear()
+        self.phase_rect_items.clear()
+        
+        # Обрезаем массивы до нужного размера
+        amp_cropped = amp_2d[:max_y_idx, :max_x_idx]
+        phase_cropped = phase_2d[:max_y_idx, :max_x_idx]
+        
+        # Определяем границы для ImageItem
+        x_min, x_max = min(x_coords[:max_x_idx]), max(x_coords[:max_x_idx])
+        y_min, y_max = min(y_coords[:max_y_idx]), max(y_coords[:max_y_idx])
+        
+        # Вычисляем размеры пикселей
+        if max_x_idx > 1:
+            x_step = (x_max - x_min) / (max_x_idx - 1)
+        else:
+            x_step = 1
+        if max_y_idx > 1:
+            y_step = (y_max - y_min) / (max_y_idx - 1)
+        else:
+            y_step = 1
+        
+        # Нормализуем данные для цветовой карты
+        amp_normalized = (amp_cropped - amp_min) / (amp_max - amp_min) if amp_max != amp_min else np.zeros_like(amp_cropped)
+        phase_normalized = (phase_cropped - phase_min) / (phase_max - phase_min) if phase_max != phase_min else np.zeros_like(phase_cropped)
+        
+        # Заменяем NaN на 0 для нормализованных массивов
+        amp_normalized = np.nan_to_num(amp_normalized, nan=0.0)
+        phase_normalized = np.nan_to_num(phase_normalized, nan=0.0)
+        
+        # Применяем цветовую карту через lookup table
+        try:
+            # Используем lookup table для быстрого преобразования
+            # Создаем lookup table из 256 значений
+            lut_size = 256
+            amp_lut = np.zeros((lut_size, 4), dtype=np.ubyte)
+            phase_lut = np.zeros((lut_size, 4), dtype=np.ubyte)
+            
+            for i in range(lut_size):
+                val = i / (lut_size - 1)
+                # Получаем цвет из colormap
+                try:
+                    amp_color = amp_cmap.map(val, mode='qcolor')
+                    if hasattr(amp_color, 'getRgb'):
+                        r, g, b, a = amp_color.getRgb()
+                        amp_lut[i] = [r, g, b, a]
+                    
+                    phase_color = phase_cmap.map(val, mode='qcolor')
+                    if hasattr(phase_color, 'getRgb'):
+                        r, g, b, a = phase_color.getRgb()
+                        phase_lut[i] = [r, g, b, a]
+                except:
+                    pass
+            
+            # Преобразуем нормализованные значения в индексы lookup table (0-255)
+            amp_indices = np.clip((amp_normalized * (lut_size - 1)).astype(np.uint8), 0, lut_size - 1)
+            phase_indices = np.clip((phase_normalized * (lut_size - 1)).astype(np.uint8), 0, lut_size - 1)
+            
+            # Применяем lookup table
+            amp_rgba = amp_lut[amp_indices]
+            phase_rgba = phase_lut[phase_indices]
+            
+            # Создаем ImageItem для амплитуды
+            # setRect принимает (x, y, width, height), где x,y - левый верхний угол
+            amp_img = pg.ImageItem(image=amp_rgba, axisOrder='row-major')
+            amp_img.setRect(QtCore.QRectF(x_min - x_step/2, y_min - y_step/2, 
+                                         (x_max - x_min) + x_step, (y_max - y_min) + y_step))
+            self.amp_plot.addItem(amp_img)
+            
+            # Создаем ImageItem для фазы
+            phase_img = pg.ImageItem(image=phase_rgba, axisOrder='row-major')
+            phase_img.setRect(QtCore.QRectF(x_min - x_step/2, y_min - y_step/2,
+                                          (x_max - x_min) + x_step, (y_max - y_min) + y_step))
+            self.phase_plot.addItem(phase_img)
+        except Exception as e:
+            logger.warning(f"Не удалось использовать быструю отрисовку: {e}. Используем прямоугольники.", exc_info=True)
+            # Fallback на прямоугольники
+            dx = abs(x_coords[1] - x_coords[0]) if len(x_coords) > 1 else 1
+            dy = abs(y_coords[1] - y_coords[0]) if len(y_coords) > 1 else 1
+            self._update_plots_rectangles(amp_2d, phase_2d, x_coords, y_coords,
+                                         max_x_idx, max_y_idx, dx, dy,
+                                         amp_min, amp_max, phase_min, phase_max,
+                                         amp_cmap, phase_cmap)
+    
+    def _update_plots_rectangles(self, amp_2d, phase_2d, x_coords, y_coords,
+                                max_x_idx, max_y_idx, dx, dy,
+                                amp_min, amp_max, phase_min, phase_max,
+                                amp_cmap, phase_cmap):
+        """Медленная, но точная отрисовка через прямоугольники"""
+        total_points = max_y_idx * max_x_idx
+        update_interval = max(100, total_points // 20)  # Обновляем UI каждые 5% или минимум каждые 100 точек
+        point_count = 0
         
         # Отрисовываем прямоугольники
         for y_idx, y in enumerate(y_coords):
@@ -1436,6 +1619,11 @@ class BeamPatternWidget(BaseMeasurementWidget):
                 phase_color = phase_cmap.map(phase_norm, mode='qcolor')
                 rect_phase.setBrush(pg.mkBrush(phase_color))
                 rect_phase.setPen(pg.mkPen(None))
+                
+                # Периодически обновляем UI для больших объемов данных
+                point_count += 1
+                if point_count % update_interval == 0:
+                    QtWidgets.QApplication.processEvents()
     
     # ========== Навигация между лучами и частотами ==========
     

@@ -103,14 +103,10 @@ class PSN:
             if not self.connection:
                 logger.error('Не обнаружено подключение к PSN при попытке запроса данных')
                 raise WrongInstrumentError('Не обнаружено подключение к PSN')
-            #logger.debug(format_device_log('PSN', '>>', string))
             response = self.connection.query(string)
-            #logger.debug(format_device_log('PSN', '<<', response))
             return response
         else:
             time.sleep(0.01)
-            #logger.debug(format_device_log('PSN', '>>', string))
-            #logger.debug(format_device_log('PSN', '<<', '0'))
             return "0"
 
     def move(self, x: float, y: float) -> None:
@@ -123,15 +119,6 @@ class PSN:
         """
         try:
             logger.info(f'Перемещение сканера в точку ({x}, {y})')
-            # self.write()
-            # res = self.query("AXIS0:STAT:OP?")
-            # if res != "0":
-            #     logger.error("Ошибка в оси X планарного сканера.")
-            #     raise PlanarScannerError(f'Ошибка оси X: Статус {res}')
-            # res = self.query("AXIS1:STAT:OP?")
-            # if res != "0":
-            #     logger.error("Ошибка в оси Y планарного сканера.")
-            #     raise PlanarScannerError(f'Ошибка оси Y: Статус {res}')
 
             axis_x_move_string = "AXIS0:UMOV:ABS " + str(x + self.x_offset)
             axis_y_move_string = "AXIS1:UMOV:ABS " + str(y + self.y_offset)
@@ -139,12 +126,13 @@ class PSN:
             self.write(axis_y_move_string)
 
             stat = False
-            while not stat:
-                cord_x = float(self.query("AXIS0:UPOS?"))
-                cord_y = float(self.query("AXIS1:UPOS?"))
-                if round(cord_x, 2) == round(x + self.x_offset, 2) and round(cord_y, 2) == round(y + self.y_offset, 2):
-                    stat = True
-                    time.sleep(0.05)
+            if self.mode == 0:
+                while not stat:
+                    cord_x = float(self.query("AXIS0:UPOS?"))
+                    cord_y = float(self.query("AXIS1:UPOS?"))
+                    if round(cord_x, 2) == round(x + self.x_offset, 2) and round(cord_y, 2) == round(y + self.y_offset, 2):
+                        stat = True
+                        time.sleep(0.05)
 
 
         except Exception as e:

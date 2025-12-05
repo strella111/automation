@@ -396,8 +396,8 @@ class BeamMeasurement:
                     logger.error(f"Ошибка при финальном сохранении: {e}", exc_info=True)
             
         except Exception as e:
-            logger.error(f"Ошибка во время измерения: {e}", exc_info=True)
-            raise
+            logger.error(f"Ошибка во время измерения: {e.args}", exc_info=True)
+            raise Exception(e)
         
         return self.data
 
