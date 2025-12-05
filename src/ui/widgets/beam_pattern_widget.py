@@ -700,7 +700,7 @@ class BeamPatternWidget(BaseMeasurementWidget):
             self.show_error_message("Ошибка", "Не задана базовая директория для сохранения. Укажите её в настройках.")
             return
 
-        luchi_dir = os.path.join(base_dir, 'luchi')
+        luchi_dir = os.path.join(base_dir, 'beams\scan_beams')
         if not os.path.exists(luchi_dir):
             os.makedirs(luchi_dir, exist_ok=True)
 
