@@ -115,7 +115,7 @@ class PhaseAfarWidget(BaseMeasurementWidget):
         self.pna_tab_layout.addRow('Кон. частота:', self.pna_stop_freq)
 
         self.pna_number_of_points = QtWidgets.QComboBox()
-        self.pna_number_of_points.addItems(['3', '11', '101', '201'])
+        self.pna_number_of_points.addItems(['3', '11', '21', '51', '101', '201', '401'])
         self.pna_number_of_points.setCurrentText('11')
         self.pna_tab_layout.addRow('Кол-во точек:', self.pna_number_of_points)
 
@@ -138,6 +138,14 @@ class PhaseAfarWidget(BaseMeasurementWidget):
         self.pulse_period.setSingleStep(10)
         self.pulse_period.setSuffix(' мкс')
         self.pna_tab_layout.addRow('Период импульса', self.pulse_period)
+
+        self.pulse_source = QtWidgets.QComboBox()
+        self.pulse_source.addItems(['External', 'Internal'])
+        self.pna_tab_layout.addRow('Источник импульса', self.pulse_source)
+
+        self.trig_polarity = QtWidgets.QComboBox()
+        self.trig_polarity.addItems(['Positive', 'Negative'])
+        self.pna_tab_layout.addRow('Полярность сигнала', self.trig_polarity)
 
         settings_layout = QtWidgets.QHBoxLayout()
         settings_layout.setSpacing(4)
@@ -263,7 +271,7 @@ class PhaseAfarWidget(BaseMeasurementWidget):
 
         # Список выбора БУ
         self.bu_list_widget = QtWidgets.QListWidget()
-        self.bu_list_widget.setMaximumHeight(120)
+        self.bu_list_widget.setMinimumHeight(120)
         self.bu_list_widget.setEnabled(False)
         for i in range(1, 41):
             item = QtWidgets.QListWidgetItem(f'БУ №{i}')
@@ -369,10 +377,10 @@ class PhaseAfarWidget(BaseMeasurementWidget):
             pos=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
             color=[(0, 0, 255), (0, 255, 255), (0, 255, 0), (255, 255, 0), (255, 165, 0), (255, 0, 0)]
         )
-        self._amp_levels = (-10.0, 5.0)
-        self._phase_levels = (-180.0, 180.0)
-        self._rect_dx_default = 28.0
-        self._rect_dy_default = 2.2
+        self._amp_levels = (-5, 5.0)
+        self._phase_levels = (-10.0, 10.0)
+        self._rect_dx_default = 28.032
+        self._rect_dy_default = 2.22
         
         self.amp_img_item = pg.ImageItem()
         self.amp_img_item.setVisible(False)
@@ -451,25 +459,25 @@ class PhaseAfarWidget(BaseMeasurementWidget):
         self.all_phase_data = {}  # Словарь: (bu_num, ppm_num) -> phase_value
         self.all_coordinates = {}  # Словарь: (bu_num, ppm_num) -> (x, y)
         self.norm_amplitude_value = None  # Амплитуда нормировочного ППМ
-        
-        # Фиксированные размеры прямоугольников (вычисляются один раз)
+
         self._fixed_dx = None
         self._fixed_dy = None
-        # Текущие размеры для hover
+
         self._dx = self._rect_dx_default
         self._dy = self._rect_dy_default
-        # Фиксированные диапазоны для отображения (чтобы не прыгал масштаб)
+
         self._view_range_set = False
-        
-        # Координаты для одного МА (4x8)
-        self.x_cords = [42, 14, -14, -42]
-        self.y_cords = [-7.7, -5.5, -3.3, -1.1, 1.1, 3.3, 5.5, 7.7]
-        
+
+        # self.x_cords = [-43.216, -15.184, 12.484, 40.88]
+        # self.y_cords = [7.77, 5.55, 3.33, 1.11, -1.11, -3.33, -5.55, -7.77]
+
+        self.x_cords = [-42, -14, 14, 42]
+        self.y_cords = [7.77, 5.55, 3.33, 1.11, -1.1, -3.33, -5.55, -7.77]
+
         # Текущий БУ для отображения
         self.current_bu = 1
         self.bu_progress = {}
-        
-        # Для выделения прямоугольника при наведении
+
         self._highlighted_amp_rect = None
         self._highlighted_phase_rect = None
         
@@ -521,6 +529,7 @@ class PhaseAfarWidget(BaseMeasurementWidget):
 
     def apply_params(self):
         """Сохраняет параметры из вкладок"""
+        self.setup_pna_common()
         # MA
         self.channel = self.channel_combo.currentText()
         self.direction = self.direction_combo.currentText()
@@ -534,6 +543,8 @@ class PhaseAfarWidget(BaseMeasurementWidget):
         self.pna_settings['pulse_mode'] = self.pulse_mode_combo.currentText()
         self.pna_settings['pulse_period'] = self.pulse_period.value() / 10 ** 6
         self.pna_settings['pulse_width'] = self.pulse_width.value() / 10 ** 6
+        self.pna_settings['pulse_source'] = self.pulse_source.currentText().lower()
+        self.pna_settings['polarity_trig'] = 'POS' if self.trig_polarity.currentText().lower().strip() == 'positive' else 'NEG'
 
         coord_system_name = self.coord_system_combo.currentText()
         self.coord_system = self.coord_system_manager.get_system_by_name(coord_system_name)
@@ -594,12 +605,10 @@ class PhaseAfarWidget(BaseMeasurementWidget):
             self.pause_btn.setText('Продолжить')
 
     def _run_phase_afar_real(self):
-        logger.info('Начало выполнения процесса фазировки АФАР (40 МА)')
+        logger.info('Начало выполнения фазировки АФАР')
         try:
-            # Настройка сканера
             self.setup_scanner_common()
 
-            # Настройка PNA
             self.setup_pna_common()
             
             chanel = Channel.Receiver if self.channel_combo.currentText() == 'Приемник' else Channel.Transmitter
@@ -607,28 +616,23 @@ class PhaseAfarWidget(BaseMeasurementWidget):
             logger.info(f'Используем канал: {chanel.value}, поляризация: {direction.value}')
             
             def point_callback(i, j, x, y, amp, phase, bu_number):
-                # Вычисляем номер ППМ
                 ppm_num = i * 8 + j + 1
-                
-                # Сохраняем исходную амплитуду с анализатора
+
                 self.all_amp_data_raw[(bu_number, ppm_num)] = amp
                 self.all_phase_data[(bu_number, ppm_num)] = phase
                 self.all_coordinates[(bu_number, ppm_num)] = (x, y)
-                
-                # Вычисляем отображаемую амплитуду (с учетом текущего состояния чекбокса)
+
                 if self.normalize_amplitude_checkbox.isChecked() and self.norm_amplitude_value is not None:
                     amp_display = amp - self.norm_amplitude_value
                 else:
                     amp_display = amp
                 self.all_amp_data[(bu_number, ppm_num)] = amp_display
-                
-                # Логируем для отладки
+
                 logger.debug(f"ППМ БУ №{bu_number}, ППМ №{ppm_num}: координаты ({x:.2f}, {y:.2f}), амплитуда {amp:.2f}, фаза {phase:.2f}")
                 
                 self.update_gui_signal.emit(i, j, x, y, bu_number)
             
             def norm_callback(norm_amp):
-                # Callback для получения амплитуды нормировки из потока измерения
                 self.norm_amplitude_signal.emit(norm_amp)
             
             phase_afar = PhaseAfar(
@@ -638,8 +642,7 @@ class PhaseAfarWidget(BaseMeasurementWidget):
                 point_callback=point_callback,
                 norm_callback=norm_callback
             )
-            
-            # Устанавливаем параметры нормировки из интерфейса
+
             phase_afar.ppm_norm_number = self.norm_ppm_spin.value()
             phase_afar.bu_norm_number = self.norm_bu_spin.value()
             phase_afar.turn_off_vips = self.turn_off_vips_checkbox.isChecked()
@@ -657,8 +660,7 @@ class PhaseAfarWidget(BaseMeasurementWidget):
                 return
             
             logger.info(f'Выбрано БУ для фазировки: {selected_bu_numbers}')
-            
-            # Запускаем фазировку выбранных БУ
+
             phase_afar.start(chanel=chanel, direction=direction, selected_bu_numbers=selected_bu_numbers)
             
             logger.info('Фазировка завершена')
@@ -1138,50 +1140,55 @@ class PhaseAfarWidget(BaseMeasurementWidget):
             QtWidgets.QMessageBox.critical(self, 'Ошибка', error_msg)
             logger.error(error_msg)
 
-    def apply_parsed_settings(self):
-        """Применение параметров PNA настроек к интерфейсу"""
-        try:
-            s_param = self.pna.get_s_param()
-            logger.info(f'S_PARAM={s_param}')
-            if s_param:
-                index = self.s_param_combo.findText(s_param)
-                if index >= 0:
-                    self.s_param_combo.setCurrentIndex(index)
-
-            power = self.pna.get_power()
-            if power:
-                self.pna_power.setValue(power)
-
-            freq_start = self.pna.get_start_freq()
-            if freq_start:
-                self.pna_start_freq.setValue(int(freq_start/10**6))
-
-            freq_stop = self.pna.get_stop_freq()
-            if freq_stop:
-                self.pna_stop_freq.setValue(int(freq_stop/10**6))
-
-            points = self.pna.get_amount_of_points()
-            if points:
-                index = self.pna_number_of_points.findText(str(int(points)))
-                if index >= 0:
-                    self.pna_number_of_points.setCurrentIndex(index)
-
-            pulse_mode = self.pna.get_pulse_mode()
-            if pulse_mode:
-                index = self.pulse_mode_combo.findText(pulse_mode)
-                if index >= 0:
-                    self.pulse_mode_combo.setCurrentIndex(index)
-
-            pna_pulse_width = self.pna.get_pulse_width()
-            if pna_pulse_width:
-                self.pulse_width.setValue(float(pna_pulse_width) * 10 ** 6)
-
-            pna_pulse_period = self.pna.get_period()
-            if pna_pulse_period:
-                self.pulse_period.setValue(float(pna_pulse_period) * 10 ** 6)
-
-        except Exception as e:
-            logger.error(f'Ошибка при применении настроек к интерфейсу: {e}')
+    # def apply_parsed_settings(self):
+    #     """Применение параметров PNA настроек к интерфейсу"""
+    #     try:
+    #         s_param = self.pna.get_s_param()
+    #         logger.info(f'S_PARAM={s_param}')
+    #         if s_param:
+    #             index = self.s_param_combo.findText(s_param)
+    #             if index >= 0:
+    #                 self.s_param_combo.setCurrentIndex(index)
+    #
+    #         power1 = self.pna.get_power(1)
+    #         power2 = self.pna.get_power(2)
+    #
+    #         if s_param.lower() == 's12':
+    #             self.pna_power.setValue(power2)
+    #         else:
+    #             self.pna_power.setValue(power1)
+    #
+    #
+    #         freq_start = self.pna.get_start_freq()
+    #         if freq_start:
+    #             self.pna_start_freq.setValue(int(freq_start/10**6))
+    #
+    #         freq_stop = self.pna.get_stop_freq()
+    #         if freq_stop:
+    #             self.pna_stop_freq.setValue(int(freq_stop/10**6))
+    #
+    #         points = self.pna.get_amount_of_points()
+    #         if points:
+    #             index = self.pna_number_of_points.findText(str(int(points)))
+    #             if index >= 0:
+    #                 self.pna_number_of_points.setCurrentIndex(index)
+    #
+    #         pulse_mode = self.pna.get_pulse_mode()
+    #         if pulse_mode:
+    #             index = self.pulse_mode_combo.findText(pulse_mode)
+    #             if index >= 0:
+    #                 self.pulse_mode_combo.setCurrentIndex(index)
+    #
+    #         pna_pulse_width = self.pna.get_pulse_width()
+    #         if pna_pulse_width:
+    #             self.pulse_width.setValue(float(pna_pulse_width) * 10 ** 6)
+    #
+    #         pna_pulse_period = self.pna.get_period()
+    #         if pna_pulse_period:
+    #             self.pulse_period.setValue(float(pna_pulse_period) * 10 ** 6)
+    #
+    #     except Exception as e:
+    #         logger.error(f'Ошибка при применении настроек к интерфейсу: {e}')
 
     def save_ui_settings(self):
         """Сохраняет состояние контролов UI в QSettings."""

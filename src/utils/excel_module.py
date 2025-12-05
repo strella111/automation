@@ -4,17 +4,17 @@ import json
 from openpyxl import load_workbook, Workbook
 
 import csv
-import os
 from pathlib import Path
 import os
 import numpy as np
-import shutil
+
 try:
     from PyQt5 import QtCore
     from config.settings_manager import get_main_settings
 except Exception:
     QtCore = None
     get_main_settings = None
+
 from typing import List, Optional
 from loguru import logger
 from core.common.enums import Channel, Direction
@@ -53,8 +53,8 @@ class CalibrationCSV:
         self.columns = [
             "Передатчик_Горизонтальная",
             "Передатчик_Вертикальная",
-            "Приемник_Горизонтальная",
-            "Приемник_Вертикальная"
+            "Приемник_Вертикальная",
+            "Приемник_Горизонтальная"
         ]
 
         self._initialize_csv_if_needed()
@@ -63,16 +63,15 @@ class CalibrationCSV:
         """Создает CSV файл с нулевыми значениями если файл не существует
         
         Структура файла:
-        - 17 блоков (ЛЗ 0-15 + резерв)
+        - 16 блоков (ЛЗ 0-15)
         - Каждый блок: 32 ППМ × 4 столбца = 128 строк
-        - Итого: 17 × 128 = 2176 строк
         """
         if not self.csv_file.exists():
-            logger.info(f"Создание нового CSV файла: {self.csv_file}")
+            logger.info(f"Создание нового `CSV` файла: {self.csv_file}")
 
             data = []
-            # 17 блоков × 32 ППМ = 544 строки, каждая с 4 столбцами
-            for block in range(17):  # ЛЗ 0-15 + резерв
+            # 16 блоков × 32 ППМ
+            for block in range(16):  # ЛЗ 0-15
                 for ppm in range(32):  # 32 ППМ в каждом блоке
                     row = [0, 0, 0, 0]
                     data.append(row)
@@ -109,17 +108,15 @@ class CalibrationCSV:
         """
         Сохраняет результаты фазировки в соответствующий столбец CSV файла
         
-        Файл содержит 17 блоков:
+        Файл содержит 16 блоков:
         - Блок 0 (ЛЗ=0): базовая калибровка ФВ
         - Блоки 1-15 (ЛЗ=1-15): базовая калибровка + дискреты ЛЗ
-        - Блок 16: резерв (нули)
 
         Args:
             channel: Канал (передатчик/приемник)
             direction: Поляризация (вертикальная/горизонтальная)
             phase_results: Список дискретов фазовращателей для 32 ППМ (базовая калибровка)
-            delay_line_discretes: Список из 16 значений дискретов для ЛЗ 0-15 
-                                 (если None - копируем базовую калибровку во все блоки)
+            delay_line_discretes: Список из 16 значений дискретов для ЛЗ 0-15
         """
         if len(phase_results) != 32:
             logger.error(f"Ожидается 32 значения, получено {len(phase_results)}")
@@ -130,12 +127,11 @@ class CalibrationCSV:
 
         logger.info(f"Сохранение результатов фазировки в столбец '{column_name}' файла {self.csv_file}")
         if delay_line_discretes:
-            logger.info(f"Фазировка ЛЗ включена, сохранение 17 блоков с коррекцией ЛЗ")
+            logger.info(f"Фазировка ЛЗ включена, сохранение 16 блоков с коррекцией ЛЗ")
         else:
             logger.info(f"Фазировка ЛЗ выключена, копирование базовой калибровки во все блоки")
 
         try:
-            # Читаем существующие данные (2176 строк)
             existing_data = []
             try:
                 with open(self.csv_file, 'r', newline='', encoding='utf-8') as f:
@@ -154,33 +150,23 @@ class CalibrationCSV:
             except FileNotFoundError:
                 pass
 
-            # Убеждаемся что есть 17 блоков × 32 ППМ = 544 строки
-            while len(existing_data) < 544:
-                existing_data.append([0, 0, 0, 0])
 
-            # Блок 0 (ЛЗ=0): ВСЕГДА обновляем базовую калибровку
             for ppm_index in range(32):
                 row_index = ppm_index
                 existing_data[row_index][column_index] = phase_results[ppm_index]
-            
-            # Блоки 1-16: обновляем ТОЛЬКО если есть данные ЛЗ
+
             if delay_line_discretes and len(delay_line_discretes) == 16:
-                for block in range(1, 17):
+                for block in range(1, 16):
                     for ppm_index in range(32):
                         row_index = block * 32 + ppm_index
                         
                         if block <= 15:
-                            # Блоки 1-15 (ЛЗ=1-15): базовая калибровка + дискреты ЛЗ
-                            # block 1 -> ЛЗ=1 -> delay_line_discretes[1]
                             value = phase_results[ppm_index] + delay_line_discretes[block]
-                            # Ограничиваем диапазон 0-63
-                            value = max(0, min(63, value))
+                            if value > 63:
+                                value -= 64
                             existing_data[row_index][column_index] = value
-                        else:
-                            # Блок 16: резерв - нули
-                            existing_data[row_index][column_index] = 0
 
-            # Записываем обратно в файл
+
             with open(self.csv_file, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f, delimiter=';')
                 writer.writerows(existing_data)
@@ -392,7 +378,7 @@ def save_beam_pattern_results(base_dir: str, beams: List[int], freq_list: List[f
         else:
             # Создаем новую папку с датой
             now_datetime = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-            luchi_base_dir = os.path.join(base_dir, 'luchi')
+            luchi_base_dir = os.path.join(base_dir, 'beams/scan_beams')
             final_save_dir = os.path.join(luchi_base_dir, now_datetime)
             logger.info(f"Создание новой папки: {final_save_dir}")
         
@@ -552,8 +538,7 @@ def load_beam_pattern_results(save_dir: str) -> Optional[dict]:
         if not os.path.exists(save_dir):
             logger.error(f"Папка не найдена: {save_dir}")
             return None
-        
-        # Загружаем параметры сканирования из JSON (если есть)
+
         params_file = os.path.join(save_dir, 'scan_params.json')
         loaded_params = None
         if os.path.exists(params_file):

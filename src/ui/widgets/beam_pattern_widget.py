@@ -217,6 +217,14 @@ class BeamPatternWidget(BaseMeasurementWidget):
         self.pulse_period.setSuffix(' мкс')
         self.pna_tab_layout.addRow('Период импульса', self.pulse_period)
 
+        self.pulse_source = QtWidgets.QComboBox()
+        self.pulse_source.addItems(['External', 'Internal'])
+        self.pna_tab_layout.addRow('Источник импульса', self.pulse_source)
+
+        self.trig_polarity = QtWidgets.QComboBox()
+        self.trig_polarity.addItems(['Positive', 'Negative'])
+        self.pna_tab_layout.addRow('Полярность сигнала', self.trig_polarity)
+
         settings_layout = QtWidgets.QHBoxLayout()
         settings_layout.setSpacing(4)
         self.settings_file_edit = QtWidgets.QLineEdit()
@@ -326,42 +334,42 @@ class BeamPatternWidget(BaseMeasurementWidget):
         
         self.left_x = QtWidgets.QDoubleSpinBox()
         self.left_x.setRange(-1000, 1000)
-        self.left_x.setDecimals(2)
+        self.left_x.setDecimals(4)
         self.left_x.setValue(1.39)
         self.left_x.setSuffix(' см')
         scan_layout.addRow('Левая граница X:', self.left_x)
         
         self.right_x = QtWidgets.QDoubleSpinBox()
         self.right_x.setRange(-1000, 1000)
-        self.right_x.setDecimals(2)
+        self.right_x.setDecimals(4)
         self.right_x.setValue(54.67)
         self.right_x.setSuffix(' см')
         scan_layout.addRow('Правая граница X:', self.right_x)
         
         self.up_y = QtWidgets.QDoubleSpinBox()
         self.up_y.setRange(-1000, 1000)
-        self.up_y.setDecimals(2)
+        self.up_y.setDecimals(4)
         self.up_y.setValue(-0.11)
         self.up_y.setSuffix(' см')
         scan_layout.addRow('Верхняя граница Y:', self.up_y)
         
         self.down_y = QtWidgets.QDoubleSpinBox()
         self.down_y.setRange(-1000, 1000)
-        self.down_y.setDecimals(2)
+        self.down_y.setDecimals(4)
         self.down_y.setValue(-14.10)
         self.down_y.setSuffix(' см')
         scan_layout.addRow('Нижняя граница Y:', self.down_y)
         
         self.step_x = QtWidgets.QDoubleSpinBox()
         self.step_x.setRange(0.1, 100)
-        self.step_x.setDecimals(2)
+        self.step_x.setDecimals(4)
         self.step_x.setValue(1.40)
         self.step_x.setSuffix(' см')
         scan_layout.addRow('Шаг X:', self.step_x)
         
         self.step_y = QtWidgets.QDoubleSpinBox()
         self.step_y.setRange(-100, 100)
-        self.step_y.setDecimals(2)
+        self.step_y.setDecimals(4)
         self.step_y.setValue(-0.22)
         self.step_y.setSuffix(' см')
         scan_layout.addRow('Шаг Y:', self.step_y)
@@ -370,7 +378,6 @@ class BeamPatternWidget(BaseMeasurementWidget):
 
         self.create_beam_selector()
 
-        
         self.meas_tab_layout.addStretch()
         self.param_tabs.addTab(self.meas_tab, 'Настройки измерения')
         
@@ -705,6 +712,7 @@ class BeamPatternWidget(BaseMeasurementWidget):
 
     def apply_params(self):
         """Сохраняет параметры из вкладок"""
+        self.setup_pna_common()
         # PNA
         self.pna_settings['s_param'] = self.s_param_combo.currentText()
         self.pna_settings['power'] = self.pna_power.value()
@@ -715,6 +723,8 @@ class BeamPatternWidget(BaseMeasurementWidget):
         self.pna_settings['pulse_mode'] = self.pulse_mode_combo.currentText()
         self.pna_settings['pulse_period'] = self.pulse_period.value() / 10 ** 6
         self.pna_settings['pulse_width'] = self.pulse_width.value() / 10 ** 6
+        self.pna_settings['pulse_source'] = self.pulse_source.currentText().lower()
+        self.pna_settings['polarity_trig'] = 'POS' if self.trig_polarity.currentText().lower().strip() == 'positive' else 'NEG'
         
         # Вычисляем частоты из начальной/конечной + количество точек
         freq_start = self.pna_settings['freq_start']
@@ -775,37 +785,42 @@ class BeamPatternWidget(BaseMeasurementWidget):
             QtWidgets.QMessageBox.critical(self, 'Ошибка', error_msg)
             logger.error(error_msg)
     
-    def apply_parsed_settings(self):
-        """Применение параметров PNA настроек к интерфейсу"""
-        try:
-            if not hasattr(self.pna, 'get_s_param'):
-                return
-            
-            s_param = self.pna.get_s_param()
-            if s_param:
-                index = self.s_param_combo.findText(s_param)
-                if index >= 0:
-                    self.s_param_combo.setCurrentIndex(index)
-            
-            power = self.pna.get_power()
-            if power:
-                self.pna_power.setValue(power)
-            
-            freq_start = self.pna.get_start_freq()
-            if freq_start:
-                self.pna_start_freq.setValue(int(freq_start/10**6))
-            
-            freq_stop = self.pna.get_stop_freq()
-            if freq_stop:
-                self.pna_stop_freq.setValue(int(freq_stop/10**6))
-            
-            points = self.pna.get_amount_of_points()
-            if points:
-                index = self.pna_number_of_points.findText(str(int(points)))
-                if index >= 0:
-                    self.pna_number_of_points.setCurrentIndex(index)
-        except Exception as e:
-            logger.error(f'Ошибка при применении настроек к интерфейсу: {e}')
+    # def apply_parsed_settings(self):
+    #     """Применение параметров PNA настроек к интерфейсу"""
+    #     try:
+    #         if not hasattr(self.pna, 'get_s_param'):
+    #             return
+    #
+    #         s_param = self.pna.get_s_param()
+    #         if s_param:
+    #             index = self.s_param_combo.findText(s_param)
+    #             if index >= 0:
+    #                 self.s_param_combo.setCurrentIndex(index)
+    #
+    #         power1 = self.pna.get_power(1)
+    #         power2 = self.pna.get_power(2)
+    #
+    #         if s_param.lower() == 's12':
+    #             self.pna_power.setValue(power2)
+    #         else:
+    #             self.pna_power.setValue(power1)
+    #
+    #
+    #         freq_start = self.pna.get_start_freq()
+    #         if freq_start:
+    #             self.pna_start_freq.setValue(int(freq_start/10**6))
+    #
+    #         freq_stop = self.pna.get_stop_freq()
+    #         if freq_stop:
+    #             self.pna_stop_freq.setValue(int(freq_stop/10**6))
+    #
+    #         points = self.pna.get_amount_of_points()
+    #         if points:
+    #             index = self.pna_number_of_points.findText(str(int(points)))
+    #             if index >= 0:
+    #                 self.pna_number_of_points.setCurrentIndex(index)
+    #     except Exception as e:
+    #         logger.error(f'Ошибка при применении настроек к интерфейсу: {e}')
 
     
     def add_beam(self):
@@ -918,18 +933,18 @@ class BeamPatternWidget(BaseMeasurementWidget):
 
             # Конвертируем значения из мм в см для отображения в UI
             if loaded_data.get('step_x'):
-                self.step_x.setValue(float(loaded_data['step_x']) / 10)  # мм -> см
+                self.step_x.setValue(float(loaded_data['step_x']))
             if loaded_data.get('step_y'):
-                self.step_y.setValue(float(loaded_data['step_y']) / 10)  # мм -> см
+                self.step_y.setValue(float(loaded_data['step_y']))
 
             if loaded_data.get('left_x') is not None:
-                self.left_x.setValue(float(loaded_data['left_x']) / 10)  # мм -> см
+                self.left_x.setValue(float(loaded_data['left_x']))
             if loaded_data.get('right_x') is not None:
-                self.right_x.setValue(float(loaded_data['right_x']) / 10)  # мм -> см
+                self.right_x.setValue(float(loaded_data['right_x']))
             if loaded_data.get('up_y') is not None:
-                self.up_y.setValue(float(loaded_data['up_y']) / 10)  # мм -> см
+                self.up_y.setValue(float(loaded_data['up_y']))
             if loaded_data.get('down_y') is not None:
-                self.down_y.setValue(float(loaded_data['down_y']) / 10)  # мм -> см
+                self.down_y.setValue(float(loaded_data['down_y']))
 
             if loaded_data.get('pna_settings'):
                 pna_params = loaded_data['pna_settings']
@@ -954,9 +969,9 @@ class BeamPatternWidget(BaseMeasurementWidget):
                     if idx >= 0:
                         self.pulse_mode_combo.setCurrentIndex(idx)
                 if 'pulse_period' in pna_params:
-                    self.pulse_period.setValue(float(pna_params['pulse_period']) * 1e6)  # сек -> мкс
+                    self.pulse_period.setValue(float(pna_params['pulse_period']) * 1e6)
                 if 'pulse_width' in pna_params:
-                    self.pulse_width.setValue(float(pna_params['pulse_width']) * 1e6)  # сек -> мкс
+                    self.pulse_width.setValue(float(pna_params['pulse_width']) * 1e6)
 
             if loaded_data.get('sync_settings'):
                 sync_params = loaded_data['sync_settings']
@@ -1128,12 +1143,12 @@ class BeamPatternWidget(BaseMeasurementWidget):
 
         # Конвертируем значения из см в мм для передачи в сканер
         scan_params = {
-            'left_x': self.left_x.value() * 10,  # см -> мм
-            'right_x': self.right_x.value() * 10,  # см -> мм
-            'up_y': self.up_y.value() * 10,  # см -> мм
-            'down_y': self.down_y.value() * 10,  # см -> мм
-            'step_x': self.step_x.value() * 10,  # см -> мм
-            'step_y': self.step_y.value() * 10  # см -> мм
+            'left_x': self.left_x.value(),
+            'right_x': self.right_x.value(),
+            'up_y': self.up_y.value(),
+            'down_y': self.down_y.value(),
+            'step_x': self.step_x.value() ,
+            'step_y': self.step_y.value()
         }
 
         self.apply_params()
@@ -1146,7 +1161,7 @@ class BeamPatternWidget(BaseMeasurementWidget):
         logger.info(f"Начало измерения: {len(beams)} лучей, {len(self.freq_list)} частот")
         logger.info(f"Частоты: {self.freq_list} МГц")
         logger.info(f"Параметры сканирования: X=[{scan_params['left_x']:.2f}, {scan_params['right_x']:.2f}], Y=[{scan_params['up_y']:.2f}, {scan_params['down_y']:.2f}]")
-        logger.info(f"Шаги: step_x={scan_params['step_x']:.2f}, step_y={scan_params['step_y']:.2f}")
+        logger.info(f"Шаги: step_x={scan_params['step_x']:.4f}, step_y={scan_params['step_y']:.4f}")
         
         # Проверяем, есть ли загруженные данные для досканирования
         if self.rescan_data and self.rescan_save_dir:
@@ -1169,15 +1184,6 @@ class BeamPatternWidget(BaseMeasurementWidget):
         self.amp_rect_items.clear()
         self.phase_rect_items.clear()
 
-        left_x = scan_params['left_x']
-        right_x = scan_params['right_x']
-        up_y = scan_params['up_y']
-        down_y = scan_params['down_y']
-        step_x = scan_params['step_x']
-        step_y = scan_params['step_y']
-        
-        n_x = int(round((right_x - left_x + step_x) // step_x))
-        n_y = int(round((down_y - up_y + step_y) / step_y))
 
         self.measurement_start_time = QtCore.QDateTime.currentDateTime()
         self.last_progress_time = None

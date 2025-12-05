@@ -140,6 +140,14 @@ class StendCheckAfarWidget(BaseMeasurementWidget):
         self.pulse_period.setSuffix(' мкс')
         self.pna_tab_layout.addRow('Период импульса', self.pulse_period)
 
+        self.pulse_source = QtWidgets.QComboBox()
+        self.pulse_source.addItems(['External', 'Internal'])
+        self.pna_tab_layout.addRow('Источник импульса', self.pulse_source)
+
+        self.trig_polarity = QtWidgets.QComboBox()
+        self.trig_polarity.addItems(['Positive', 'Negative'])
+        self.pna_tab_layout.addRow('Полярность сигнала', self.trig_polarity)
+
 
         settings_layout = QtWidgets.QHBoxLayout()
         settings_layout.setSpacing(4)
@@ -268,6 +276,7 @@ class StendCheckAfarWidget(BaseMeasurementWidget):
         self.check_lz_checkbox = QtWidgets.QCheckBox('Проверять ЛЗ')
         self.check_lz_checkbox.setChecked(True)  # По умолчанию включено
         check_mode_layout.addWidget(self.check_lz_checkbox)
+
         
         self.meas_tab_layout.addWidget(check_mode_group)
 
@@ -620,6 +629,7 @@ class StendCheckAfarWidget(BaseMeasurementWidget):
             }
         }
 
+
         self.ppm_data = {}
         self.check_completed = False  # Флаг завершения основной проверки
         self.measurement_start_time = None  # Время начала измерения
@@ -891,6 +901,9 @@ class StendCheckAfarWidget(BaseMeasurementWidget):
                     amp_val = values[idx] if idx < len(values) else 0.0
                     phase_rel = values[idx + 1] if idx + 1 < len(values) else 0.0
 
+                    if phase_rel < 0:
+                        phase_rel += 360
+
                     abs_min = get_abs_amp_min()
                     amp_ok = (amp_val >= abs_min)
                     self.results_table.setItem(row, col, self.create_status_table_item(f"{amp_val:.2f}", amp_ok))
@@ -942,8 +955,7 @@ class StendCheckAfarWidget(BaseMeasurementWidget):
             idx = (ppm_index - 1) * 2
             if idx < len(self.bu_data[bu_num]['fv_data'][angle]):
                 self.bu_data[bu_num]['fv_data'][angle][idx] = amp_abs
-                phase_normalized = self._normalize_phase(phase_rel)
-                self.bu_data[bu_num]['fv_data'][angle][idx + 1] = phase_normalized
+                self.bu_data[bu_num]['fv_data'][angle][idx + 1] = phase_rel
 
             current_bu = self.bu_combo.currentData()
             if current_bu != bu_num:
@@ -961,15 +973,14 @@ class StendCheckAfarWidget(BaseMeasurementWidget):
             abs_min = float(self.abs_amp_min_rx.value()) if self.channel_combo.currentText() == 'Приемник' else float(self.abs_amp_min_tx.value())
             amp_ok = (amp_abs >= abs_min)
             self.results_table.setItem(row, base_col, self.create_status_table_item(f"{amp_abs:.2f}", amp_ok))
-            phase_normalized = self._normalize_phase(phase_rel)
             if angle == 0.0:
-                self.results_table.setItem(row, base_col + 1, self.create_centered_table_item(f"{phase_normalized:.1f}"))
+                self.results_table.setItem(row, base_col + 1, self.create_centered_table_item(f"{phase_rel:.1f}"))
             else:
                 tol = self.check_criteria.get('phase_shifter_tolerances', {}).get(angle)
                 if tol is None:
                     tol = self.check_criteria.get('phase_shifter_tolerances', {}).get(float(angle))
-                ok = (tol['min'] <= phase_normalized - angle <= tol['max']) if tol else (-2.0 <= phase_normalized - angle <= 2.0)
-                self.results_table.setItem(row, base_col + 1, self.create_status_table_item(f"{phase_normalized:.1f}", ok))
+                ok = (tol['min'] <= phase_rel - angle <= tol['max']) if tol else (-2.0 <= phase_rel - angle <= 2.0)
+                self.results_table.setItem(row, base_col + 1, self.create_status_table_item(f"{phase_rel:.1f}", ok))
 
             try:
                 self.results_table.viewport().update()
@@ -980,6 +991,7 @@ class StendCheckAfarWidget(BaseMeasurementWidget):
 
     def apply_params(self):
         """Сохраняет параметры из вкладок"""
+        self.setup_pna_common()
         # АФАР
         self.channel = self.channel_combo.currentText()
         self.direction = self.direction_combo.currentText()
@@ -994,6 +1006,8 @@ class StendCheckAfarWidget(BaseMeasurementWidget):
         self.pna_settings['pulse_mode'] = self.pulse_mode_combo.currentText()
         self.pna_settings['pulse_period'] = self.pulse_period.value() / 10 ** 6
         self.pna_settings['pulse_width'] = self.pulse_width.value() / 10 ** 6
+        self.pna_settings['pulse_source'] = self.pulse_source.currentText().lower()
+        self.pna_settings['polarity_trig'] = 'POS' if self.trig_polarity.currentText().lower().strip() == 'positive' else 'NEG'
 
         # Meas - критерии проверки
         self.check_criteria = {
@@ -1005,7 +1019,6 @@ class StendCheckAfarWidget(BaseMeasurementWidget):
                 'min': controls['min'].value(),
                 'max': controls['max'].value()
             }
-
 
 
         logger.info('Параметры успешно применены')
@@ -1068,6 +1081,7 @@ class StendCheckAfarWidget(BaseMeasurementWidget):
         # Текущий выбранный БУ в комбобоксе
         s.setValue('current_bu', self.bu_combo.currentData())
         s.sync()
+
 
     def load_ui_settings(self):
         s = self._ui_settings
@@ -1163,6 +1177,8 @@ class StendCheckAfarWidget(BaseMeasurementWidget):
                 check_lz_loaded = bool(v)
             self.check_lz_checkbox.setChecked(check_lz_loaded)
             logger.debug(f"Загружен режим проверки ЛЗ: {check_lz_loaded} (исходное значение: {v}, тип: {type(v)})")
+
+
         if (v := s.value('bu_selection_mode')) is not None:
             mode_id = int(v)
             button = self.bu_selection_mode.button(mode_id)
@@ -1333,11 +1349,8 @@ class StendCheckAfarWidget(BaseMeasurementWidget):
             except Exception:
                 pass
 
-            try:
-                check.period = float(self.trig_pulse_period.value()) * 1e-6
-                check.lead = float(self.trig_start_lead.value()) * 1e-3
-            except Exception:
-                pass
+            check.period = float(self.trig_pulse_period.value()) * 1e-6
+            check.lead = float(self.trig_start_lead.value()) * 1e-3
 
             check.start(chanel=channel, direction=direction)
 
@@ -1550,52 +1563,57 @@ class StendCheckAfarWidget(BaseMeasurementWidget):
             QtWidgets.QMessageBox.critical(self, 'Ошибка', error_msg)
             logger.error(error_msg)
 
-    def apply_parsed_settings(self):
-        """Применение параметров PNA настроек к интерфейсу"""
-        try:
-            s_param = self.pna.get_s_param()
-            logger.info(f'S_PARAM={s_param}')
-            if s_param:
-                index = self.s_param_combo.findText(s_param)
-                if index >= 0:
-                    self.s_param_combo.setCurrentIndex(index)
-
-            power = self.pna.get_power()
-            if power:
-                self.pna_power.setValue(power)
-
-            freq_start = self.pna.get_start_freq()
-            if freq_start:
-                self.pna_start_freq.setValue(int(freq_start / 10 ** 6))
-
-            freq_stop = self.pna.get_stop_freq()
-            if freq_stop:
-                self.pna_stop_freq.setValue(int(freq_stop / 10 ** 6))
-
-            points = self.pna.get_amount_of_points()
-            if points:
-                index = self.pna_number_of_points.findText(str(int(points)))
-                if index >= 0:
-                    self.pna_number_of_points.setCurrentIndex(index)
-
-            pulse_mode = self.pna.get_pulse_mode()
-            if pulse_mode:
-                index = self.pulse_mode_combo.findText(pulse_mode)
-                if index >= 0:
-                    self.pulse_mode_combo.setCurrentIndex(index)
-
-            pna_pulse_width = self.pna.get_pulse_width()
-            if pna_pulse_width:
-                self.pulse_width.setValue(float(pna_pulse_width) * 10 ** 6)
-
-            pna_pulse_period = self.pna.get_period()
-            if pna_pulse_period:
-                self.pulse_period.setValue(float(pna_pulse_period) * 10 ** 6)
-
-
-
-        except Exception as e:
-            logger.error(f'Ошибка при применении настроек к интерфейсу: {e}')
+    # def apply_parsed_settings(self):
+    #     """Применение параметров PNA настроек к интерфейсу"""
+    #     try:
+    #         s_param = self.pna.get_s_param()
+    #         logger.info(f'S_PARAM={s_param}')
+    #         if s_param:
+    #             index = self.s_param_combo.findText(s_param)
+    #             if index >= 0:
+    #                 self.s_param_combo.setCurrentIndex(index)
+    #
+    #         power1 = self.pna.get_power(1)
+    #         power2 = self.pna.get_power(2)
+    #
+    #         if s_param.lower() == 's12':
+    #             self.pna_power.setValue(power2)
+    #         else:
+    #             self.pna_power.setValue(power1)
+    #
+    #
+    #         freq_start = self.pna.get_start_freq()
+    #         if freq_start:
+    #             self.pna_start_freq.setValue(int(freq_start / 10 ** 6))
+    #
+    #         freq_stop = self.pna.get_stop_freq()
+    #         if freq_stop:
+    #             self.pna_stop_freq.setValue(int(freq_stop / 10 ** 6))
+    #
+    #         points = self.pna.get_amount_of_points()
+    #         if points:
+    #             index = self.pna_number_of_points.findText(str(int(points)))
+    #             if index >= 0:
+    #                 self.pna_number_of_points.setCurrentIndex(index)
+    #
+    #         pulse_mode = self.pna.get_pulse_mode()
+    #         if pulse_mode:
+    #             index = self.pulse_mode_combo.findText(pulse_mode)
+    #             if index >= 0:
+    #                 self.pulse_mode_combo.setCurrentIndex(index)
+    #
+    #         pna_pulse_width = self.pna.get_pulse_width()
+    #         if pna_pulse_width:
+    #             self.pulse_width.setValue(float(pna_pulse_width) * 10 ** 6)
+    #
+    #         pna_pulse_period = self.pna.get_period()
+    #         if pna_pulse_period:
+    #             self.pulse_period.setValue(float(pna_pulse_period) * 10 ** 6)
+    #
+    #
+    #
+    #     except Exception as e:
+    #         logger.error(f'Ошибка при применении настроек к интерфейсу: {e}')
 
     def update_table_headers(self):
         """Обновляет заголовки таблицы в зависимости от режима проверки"""

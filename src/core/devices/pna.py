@@ -1,8 +1,11 @@
 import math
 import random
 import socket
+
+from PyQt5.QtCore import QThread
 from loguru import logger
 from utils.logger import format_device_log
+import numpy as np
 
 class PNA:
     """Класс Векторного анализатора цепей KeySight"""
@@ -19,7 +22,7 @@ class PNA:
         self.mode = mode
         self.connection = None
         self.count_freqs_point = 11
-        # TODO Количество частотных точек должны задаваться из настройки ПНА из файла либо из UI
+        self.period = 0.002
 
 
     def connect(self) -> None:
@@ -112,8 +115,8 @@ class PNA:
     def put_and_visualize_trace(self):
         self._send_data("DISP:WIND1:TRACE1:FEED 'My'")
 
-    def get_power(self):
-        self._send_data("SOUR:POW?")
+    def get_power(self, port_number):
+        self._send_data(f"SOUR:POW{port_number}?")
         response = self._read_data()
         return float(response)
 
@@ -217,8 +220,10 @@ class PNA:
         self._send_data(f"SENS:SWE:POIN {points}")
         logger.info(f"Установлено количество точек измерения {points}")
 
-    def get_data(self):
+    def get_data(self, wait = False):
         if self.mode == 0:
+            if wait:
+                QThread.msleep(int(self.period * 1000) * int(self.count_freqs_point) * 2)
             self._send_data(f'CALC:DATA? SDATA')
             response = self._read_data()
             response_list = response.split(',')
@@ -257,32 +262,33 @@ class PNA:
         return mean
 
 
-    def get_mean_value_from_sdata(self):
+    def get_mean_value_from_sdata(self, wait=False):
         if self.mode == 0:
-            self._send_data(f'CALC:DATA? SDATA')
-            response = self._read_data()
-            response_list = response.split(',')
-            amps = []
+            amps, phases_degrees = self.get_data(wait)
 
-            for i in range(0, len(response_list), 2):
-                real = float(response_list[i])
-                imag = float(response_list[i + 1])
-                amp_db = 20 * math.log10(abs(complex(real, imag)))
-                amps.append(amp_db)
-            return sum(amps) / len(amps)
+            mean_amp = sum(amps) / len(amps)
+
+            phases_rad = np.deg2rad(phases_degrees)
+            vectors = np.exp(1j * phases_rad)
+            mean_vector = np.mean(vectors)
+            mean_phase_rad = np.angle(mean_vector)
+            mean_phase_deg = np.rad2deg(mean_phase_rad)
+
+            return mean_amp, mean_phase_deg
 
         else:
             return random.uniform(8, 15)
 
 
-    def get_center_freq_data(self):
-        amps, phases = self.get_data()
+    def get_center_freq_data(self, wait = False):
+        amps, phases = self.get_data(wait)
         amount_freq = len(amps)
         amp, phase = amps[amount_freq//2], phases[amount_freq//2]
         logger.debug(f'Получена фаза и амплитуда на центральной частоте: {amp}дБ, {phase}')
         if phase < 0:
             phase += 360
         return amp, phase
+
 
     def set_output(self, state: bool):
         """Включение/выключение порта на генерацию"""
@@ -360,6 +366,37 @@ class PNA:
         logger.debug(f'Запрошены файлы pna в folder={folder}, найдено: {len(result_list)} файлов')
         logger.debug(f'Список файлов: {result_list}')
         return result_list
+
+
+    def get_pulse_source(self):
+        command = 'SENS1:PATH:CONF:ELEM? "PulseTrigInput"'
+        self._send_data(command)
+        response = self._read_data()
+        return response
+
+    def set_pulse_source_external(self):
+        command = 'SENS1:PATH:CONF:ELEM "PulseTrigInput", "External"'
+        self._send_data(command)
+
+
+    def set_pulse_source_internal(self):
+        command = 'SENS1:PATH:CONF:ELEM "PulseTrigInput", "Internal"'
+        self._send_data(command)
+
+    def set_positive_polarity_trig(self):
+        command = 'SENS1:PULS:TPOL POS'
+        self._send_data(command)
+
+    def set_negative_polarity_trig(self):
+        command = 'SENS1:PULS:TPOL NEG'
+        self._send_data(command)
+
+    def get_polarity_trig(self):
+        command = 'SENS1:PULS:TPOL?'
+        self._send_data(command)
+        response = self._read_data()
+        return response.strip()
+
 
     def normal_current_trace(self):
         command = 'CALC:MATH:MEM'

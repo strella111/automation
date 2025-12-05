@@ -108,9 +108,8 @@ class Afar:
         Args:
             string: Данные
         """
-        # Применяем настраиваемую задержку (если больше 0)
         if self.write_delay_ms > 0:
-            time.sleep(self.write_delay_ms / 1000.0)  # Конвертируем миллисекунды в секунды
+            time.sleep(self.write_delay_ms / 1000.0)
         
         if self.mode == 0:
             if self.connection_type == 'com':
@@ -160,7 +159,7 @@ class Afar:
     def _generate_command(self, bu_num: int, command_code: bytes, data: bytes=b'') -> bytes:
         preamble = b''
         if bu_num == 0:
-            preamble = b'\x00\xhtff\x00'
+            preamble = b'\x00\xff\x00'
         if 1 <= bu_num <= 8:
             preamble = b'\x00\x10\xef'
         elif 9 <= bu_num <= 16:
@@ -197,6 +196,25 @@ class Afar:
 
         index = (ppm_num - 1) * 3 + offset
         data[index] = value
+        data = bytes(data)
+        command = self._generate_command(bu_num=bu_num, command_code=command_code, data=data)
+        self.write(command)
+
+    def set_ppm_att_from_data(self, bu_num, chanel: Channel, direction: Direction, values: list):
+        logger.info(f'БУ№{bu_num}. Установка массива аттенюаторов. Канал - {chanel}, поляризация {direction}')
+        command_code = b'\x09'
+        data = bytearray(99)
+        offset = 0
+        if chanel == Channel.Transmitter:
+            offset = 0
+        elif chanel == chanel.Receiver and direction == Direction.Horizontal:
+            offset = 1
+        elif chanel == chanel.Receiver and direction == Direction.Vertical:
+            offset = 2
+
+        for ppm_index, ppm_att in enumerate(values):
+            index = ppm_index * 3 + offset
+            data[index] = ppm_att
         data = bytes(data)
         command = self._generate_command(bu_num=bu_num, command_code=command_code, data=data)
         self.write(command)
@@ -318,22 +336,90 @@ class Afar:
         command = self._generate_command(bu_num=bu_num, command_code=command_code, data=data)
         self.write(command)
 
+    def switch_ppms_off(self, bu_num: int):
+        command_code = b'\x33'
+        self.ppm_data[bu_num - 1] = bytearray(25)
+        data = self.ppm_data[bu_num - 1]
+        command = self._generate_command(bu_num=bu_num, command_code=command_code, data=data)
+        self.write(command)
+
+
     def set_phase_shifter(self, bu_num: int, ppm_num: int, chanel: Channel, direction: Direction, value: int):
         logger.info(f'БУ№{bu_num}. Включение рабочего значения ФВ№{value}({value*5.625}). Канал - {chanel}, поляризация - {direction}')
         data = bytearray(35)
         chanel_byte = b''
+        'старший бит- 1 это с калибровочным значением'
         if chanel == Channel.Transmitter and direction == Direction.Horizontal:
-            chanel_byte = 0x81
+            chanel_byte = 0x01
         elif chanel == Channel.Transmitter and direction == Direction.Vertical:
-            chanel_byte = 0x82
+            chanel_byte = 0x02
         elif chanel == Channel.Receiver and direction == Direction.Vertical:
-            chanel_byte = 0x88
+            chanel_byte = 0x08
         elif chanel == Channel.Receiver and direction == Direction.Horizontal:
-            chanel_byte = 0x84
+            chanel_byte = 0x04
         data[0] = chanel_byte
         data[ppm_num] = value
         data = bytes(data)
         command_code = b'\x02'
+        command = self._generate_command(bu_num=bu_num, command_code=command_code, data=data)
+        self.write(command)
+        self.write(command)
+
+    def set_phase_shifter_from_data(self, bu_num: int, chanel: Channel, direction: Direction, values: list):
+        logger.info(f'БУ№{bu_num}. Включение ФВ из массива. Канал - {chanel}, поляризация - {direction}')
+        data = bytearray(35)
+        chanel_byte = b''
+        'старший бит- 1 это с калибровочным значением'
+        if chanel == Channel.Transmitter and direction == Direction.Horizontal:
+            chanel_byte = 0x01
+        elif chanel == Channel.Transmitter and direction == Direction.Vertical:
+            chanel_byte = 0x02
+        elif chanel == Channel.Receiver and direction == Direction.Vertical:
+            chanel_byte = 0x08
+        elif chanel == Channel.Receiver and direction == Direction.Horizontal:
+            chanel_byte = 0x84
+        data[0] = chanel_byte
+        for index, value in enumerate(values):
+            data[index + 1] = value
+        data = bytes(data)
+        command_code = b'\x02'
+        command = self._generate_command(bu_num=bu_num, command_code=command_code, data=data)
+        self.write(command)
+
+    def set_beam_calb_mode(self, bu_num: int,
+                           table_num: int,
+                           table_crc,
+                           chanel: Channel,
+                           direction: Direction,
+                           beam_number: int,
+                           amount_strobs: int,
+                           with_calb: bool):
+        logger.info(f'БУ№{bu_num}. Установка режима калибровки для луча №{beam_number} таблицы №{table_num} '
+                    f'количество стробов в тракт - {amount_strobs}')
+
+        data = bytearray()
+
+        chanel_byte = 0x00
+        if chanel == Channel.Transmitter and direction == Direction.Horizontal:
+            chanel_byte = 0x01
+        elif chanel == Channel.Transmitter and direction == Direction.Vertical:
+            chanel_byte = 0x02
+        elif chanel == Channel.Receiver and direction == Direction.Vertical:
+            chanel_byte = 0x08
+        elif chanel == Channel.Receiver and direction == Direction.Horizontal:
+            chanel_byte = 0x04
+
+        if not with_calb:
+            chanel_byte |= 0x80
+        else:
+            chanel_byte &= 0x7F
+
+        data.extend(chanel_byte.to_bytes(1, 'big'))
+        data.extend(table_num.to_bytes(2, 'big'))
+        data.extend(table_crc)
+        data.extend(beam_number.to_bytes(2, 'big'))
+        data.extend(amount_strobs.to_bytes(1, 'big'))
+        command_code = b'\xd9'
         command = self._generate_command(bu_num=bu_num, command_code=command_code, data=data)
         self.write(command)
 
@@ -362,13 +448,13 @@ class Afar:
         data = bytearray(35)
         chanel_byte = b''
         if chanel == Channel.Receiver and direction == Direction.Horizontal:
-            chanel_byte = 0x84
+            chanel_byte = 0x04
         elif chanel == Channel.Receiver and direction == Direction.Vertical:
-            chanel_byte = 0x88
+            chanel_byte = 0x08
         elif chanel == Channel.Transmitter and direction == Direction.Horizontal:
-            chanel_byte = 0x81
+            chanel_byte = 0x01
         elif chanel == Channel.Transmitter and direction == Direction.Vertical:
-            chanel_byte = 0x82
+            chanel_byte = 0x02
         data[0] = chanel_byte
         data[33] = value
         data = bytes(data)
@@ -398,6 +484,7 @@ class Afar:
             chanel_byte = 0x04
         elif chanel == Channel.Receiver and direction == Direction.Vertical:
             chanel_byte = 0x08
+
         data[0] = chanel_byte
         data[1] = delay_number
         data[2] = fv_number
@@ -434,44 +521,37 @@ class Afar:
 
 
     def get_tm(self, bu_num: int):
-        logger.info('БУ№{bu_num}. Запрошена телеметрия МА')
+        logger.info(f'БУ№{bu_num}. Запрошена телеметрия МА')
         command_code = b'\xfa'
         command = self._generate_command(bu_num=bu_num, command_code=command_code)
         self.write(command)
-        time.sleep(0.005)
+        time.sleep(0.1)
         response = self.read()
         if not response:
             logger.error(f"Не поступило ответа на команду КУ-ТМ от БУ№{bu_num}")
             return None
 
-        if len(response) < 107:
-            logger.error(f"Недостаточная длина ответа телеметрии: {len(response)} байт (ожидается минимум 107)")
-            return None
+        bytes_data = response[8:]
 
         data = dict()
         try:
-            data['addr']= int(response[1] & 0x3f)
-            data['command_code'] = response[2]
-            data['command_id'] = response[3:5]
-            data['crc'] = response[-2:]
             for j in range(32):
-                data[f'ppm{j+1}'] = response[5+j:5+j+2]
-
-            data['mdo'] = response[69:72]
-            data['bu'] = response[72]
-            data['vip1'] = response[73:75]
-            data['vip2'] = response[75:77]
-            data['table_beam_number'] = int.from_bytes(response[77:79], byteorder='big')
-            data['crc_of_table_beam_number'] = response[79:83]
-            data['crc_calb_table'] = response[83:87]
-            data['strobs_prd'] = int.from_bytes(response[87:91], byteorder='big')
-            data['strobs_prm'] = int.from_bytes(response[91:95], byteorder='big')
-            data['amount_beams'] = int.from_bytes(response[95:97], byteorder='big')
-            data['beam_number_prd'] = int.from_bytes(response[97:99], byteorder='big')
-            data['beam_number_prm'] = int.from_bytes(response[99:101], byteorder='big')
-            data['configuration_ports'] = response[101]
-            data['crc_voltage_table'] = response[102:106]
-            data['state_bu'] = response[106]
+                data[f'ppm{j+1}'] = bytes_data[j*2:j*2+2]
+            data['mdo'] = bytes_data[64:67]
+            data['bu_temp'] = bytes_data[67]
+            data['vip1'] = bytes_data[68:70]
+            data['vip2'] = bytes_data[70:72]
+            data['table_beam_number'] = int.from_bytes(bytes_data[72:74], byteorder='little')
+            data['crc_of_table_beam_number'] = bytes_data[74:78]
+            data['crc_calb_table'] = bytes_data[78:82]
+            data['strobs_prd'] = int.from_bytes(bytes_data[82:86], byteorder='little')
+            data['strobs_prm'] = int.from_bytes(bytes_data[86:90], byteorder='little')
+            data['amount_beams'] = int.from_bytes(bytes_data[90:92], byteorder='little')
+            data['beam_number_prd'] = int.from_bytes(bytes_data[92:94], byteorder='little')
+            data['beam_number_prm'] = int.from_bytes(bytes_data[94:96], byteorder='little')
+            data['configuration_ports'] = bytes_data[96]
+            data['crc_voltage_table'] = bytes_data[97:101]
+            data['state_bu'] = bytes_data[101]
 
             return data
         except Exception as e:

@@ -1,3 +1,5 @@
+import time
+
 from PyQt5 import QtWidgets, QtCore, QtGui
 from PyQt5.QtGui import QTextCursor
 from PyQt5.QtWidgets import QMessageBox
@@ -265,9 +267,9 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
         ext_debounce_s = float(getattr(self, 'trig_ext_debounce', type('obj', (object,), {'value': lambda: 0.0})()).value())
 
         # Таймаут берем из общих настроек устройств
-        visa_timeout_ms = int(self.device_settings.get('trigger_visa_timeout_ms', 2000))
+        visa_timeout_ms = int(self.device_settings.get('trigger_visa_timeout_ms', 5000))
         # Интервал очистки логов (для предотвращения таймаутов)
-        log_clear_interval = int(self.device_settings.get('trigger_log_clear_interval', 30))
+        log_clear_interval = int(self.device_settings.get('trigger_log_clear_interval', 300))
 
         # Проверяем, не идет ли уже подключение
         if self._trigger_connection_thread and self._trigger_connection_thread.isRunning():
@@ -355,8 +357,7 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
         self._afar_connection_thread.connection_finished.connect(self._on_afar_connection_finished)
         self.device_connection_started.emit('AFAR')
         self._afar_connection_thread.start()
-    
-    # Обработчики завершения подключения к конкретным устройствам
+
     @QtCore.pyqtSlot(str, bool, str, object)
     def _on_ma_connection_finished(self, device_name: str, success: bool, message: str, device_instance):
         """Обработчик завершения подключения к МА"""
@@ -480,33 +481,51 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
                 if settings_file and base_path and not os.path.isabs(settings_file):
                     settings_file = os.path.join(base_path, settings_file)
                 self.pna.load_settings_file(settings_file)
+                time.sleep(1)
             else:
                 self.pna.create_measure(self.pna_settings.get('s_param'))
                 self.pna.turn_window(state=True)
                 self.pna.put_and_visualize_trace()
-            
-            # Базовые настройки частоты и мощности
+
             self.pna.set_freq_start(self.pna_settings.get('freq_start'))
             self.pna.set_freq_stop(self.pna_settings.get('freq_stop'))
             self.pna.set_points(self.pna_settings.get('freq_points'))
-            self.pna.set_power(self.pna_settings.get('power'))
-            
-            # Дополнительные настройки (если есть)
+
+
             if 's_param' in self.pna_settings:
                 self.pna.set_s_param(self.pna_settings.get('s_param'))
+                if self.pna_settings.get('s_param').lower() == 's21':
+                    self.pna.set_power(self.pna_settings.get('power'), port=1)
+                elif self.pna_settings.get('s_param').lower() == 's12':
+                    self.pna.set_power(self.pna_settings.get('power'), port=2)
+                else:
+                    logger.warning('Не установлена мощность порта PNA. Отсутствует s-параметр.')
             
             # Настройки импульсного режима (если есть)
             if 'pulse_mode' in self.pna_settings:
-                if self.pna_settings.get('pulse_mode').lower() == 'STD'.lower():
+                if self.pna_settings.get('pulse_mode').lower() in ('STD'.lower(), 'Standard'.lower()):
                     self.pna.set_standard_pulse()
                 else:
                     self.pna.set_pulse_mode_off()
+
+                if self.pna_settings.get('pulse_source').lower() == 'external':
+                    self.pna.set_pulse_source_external()
+                elif self.pna_settings.get('pulse_source').lower() == 'internal':
+                    self.pna.set_pulse_source_internal()
+
+                if self.pna_settings.get('polarity_trig').lower() == 'positive':
+                    self.pna.set_positive_polarity_trig()
+                elif self.pna_settings.get('polarity_trig').lower() == 'negative':
+                    self.pna.set_negative_polarity_trig()
                 self.pna.set_period(self.pna_settings.get('pulse_period'))
                 self.pna.set_pulse_width(self.pna_settings.get('pulse_width'))
             
             # Включение выхода
+            self.pna.set_ascii_data()
             self.pna.set_output(True)
-            
+            self.pna.period = self.pna.get_period()
+            self.pna.count_freqs_point = self.pna.get_amount_of_points()
+
             # Проверка и установка активного измерения
             meas = self.pna.get_selected_meas()
             if not meas:
@@ -530,12 +549,10 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
             self.psn.preset_axis(0)
             self.psn.preset_axis(1)
 
-            # Установка смещений из системы координат
             x_offset = self.coord_system.x_offset if self.coord_system else 0
             y_offset = self.coord_system.y_offset if self.coord_system else 0
             self.psn.set_offset(x_offset, y_offset)
-            
-            # Настройка скорости и ускорения
+
             speed_x = int(self.device_settings.get('psn_speed_x', 0))
             speed_y = int(self.device_settings.get('psn_speed_y', 0))
             acc_x = int(self.device_settings.get('psn_acc_x', 0))
@@ -645,6 +662,72 @@ class BaseMeasurementWidget(QtWidgets.QWidget):
         clear_console_btn.clicked.connect(console.clear)
         
         return console, log_handler, log_level_combo
+
+    def apply_parsed_settings(self):
+        """Применение параметров PNA настроек к интерфейсу"""
+        try:
+            polarity = self.pna.get_polarity_trig()
+            logger.info(f'Trig polarity={polarity}')
+            if polarity:
+                text = 'Positive' if 'POS' in polarity else 'Negative'
+                index = self.trig_polarity.findText(text)
+                if index >= 0:
+                    self.trig_polarity.setCurrentIndex(index)
+
+            pulse_source = self.pna.get_pulse_source()
+            logger.info(f'Pulse source={pulse_source}')
+            if pulse_source:
+                text = 'Internal' if 'Internal' in pulse_source else 'External'
+                index = self.pulse_source.findText(text)
+                if index >= 0:
+                    self.pulse_source.setCurrentIndex(index)
+
+            s_param = self.pna.get_s_param()
+            logger.info(f'S_PARAM={s_param}')
+            if s_param:
+                index = self.s_param_combo.findText(s_param)
+                if index >= 0:
+                    self.s_param_combo.setCurrentIndex(index)
+
+            power1 = self.pna.get_power(1)
+            power2 = self.pna.get_power(2)
+
+            if s_param.lower() == 's12':
+                self.pna_power.setValue(power2)
+            else:
+                self.pna_power.setValue(power1)
+
+            freq_start = self.pna.get_start_freq()
+            if freq_start:
+                self.pna_start_freq.setValue(int(freq_start/10**6))
+
+            freq_stop = self.pna.get_stop_freq()
+            if freq_stop:
+                self.pna_stop_freq.setValue(int(freq_stop/10**6))
+
+            points = self.pna.get_amount_of_points()
+            if points:
+                index = self.pna_number_of_points.findText(str(int(points)))
+                if index >= 0:
+                    self.pna_number_of_points.setCurrentIndex(index)
+
+            pulse_mode = self.pna.get_pulse_mode()
+            if pulse_mode:
+                index = self.pulse_mode_combo.findText(pulse_mode)
+                if index >= 0:
+                    self.pulse_mode_combo.setCurrentIndex(index)
+
+            pna_pulse_width = self.pna.get_pulse_width()
+            if pna_pulse_width:
+                self.pulse_width.setValue(float(pna_pulse_width) * 10 ** 6)
+
+            pna_pulse_period = self.pna.get_period()
+            if pna_pulse_period:
+                self.pulse_period.setValue(float(pna_pulse_period) * 10 ** 6)
+
+        except Exception as e:
+            logger.error(f'Ошибка при применении настроек к интерфейсу: {e}')
+
 
     def disconnect_all_devices(self):
         """Отключает все подключенные устройства"""

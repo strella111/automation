@@ -10,7 +10,10 @@ from PyQt5.QtCore import QThread
 from loguru import logger
 from typing import List, Dict, Callable, Optional
 import threading
+
+from core import Channel
 from utils.excel_module import save_beam_pattern_results
+from core.devices.trigger_box import E5818
 
 
 class BeamMeasurement:
@@ -32,14 +35,13 @@ class BeamMeasurement:
         """
         self.afar = afar
         self.pna = pna
-        self.trigger = trigger
+        self.trigger: E5818 = trigger
         self.psn = psn
         self.base_save_dir = base_save_dir or ''
-        
-        # Переменные для периодического сохранения
+
         self.last_save_time = time.time()
-        self.save_interval = 300  # Сохранять каждые 300 секунд
-        self.save_dir = None  # Директория для текущего измерения
+        self.save_interval = 180
+        self.save_dir = None
         self.current_scan_params = None  # Параметры текущего сканирования для сохранения
         self.pna_settings = None  # Настройки PNA для сохранения
         self.sync_settings = None  # Настройки синхронизатора для сохранения
@@ -55,43 +57,43 @@ class BeamMeasurement:
         self.period = None
         self.lead = None
         self.number_of_freqs = None
-        
-        # Карта границ БУ по оси X (из luchi.py)
-        self.bu_map = [112.16, 224.32, 336.48, 448.64]
 
-        self.bu_list = [
-            33, 34, 35, 36, 37, 38, 39, 40,
-            25, 26, 27, 28, 29, 30, 31, 32,
-            17, 18, 19, 20, 21, 22, 23, 24,
-            9, 10, 11, 12, 13, 14, 15, 16,
-            1, 2, 3, 4, 5, 6, 7, 8
-        ]
-    
-    def _get_bu_by_coordinates(self, x: float, y_ind: int) -> int:
-        """
-        Определение БУ по координатам
-        
-        Args:
-            x: Координата X в мм
-            y_ind: Индекс по оси Y
-            
-        Returns:
-            int: Номер БУ
-        """
-        if x < self.bu_map[0]:
-            bu_index = y_ind // 8
-        elif self.bu_map[0] < x < self.bu_map[1]:
-            bu_index = y_ind // 8 + 8
-        elif self.bu_map[1] < x < self.bu_map[2]:
-            bu_index = y_ind // 8 + 16
-        elif self.bu_map[2] < x < self.bu_map[3]:
-            bu_index = y_ind // 8 + 24
-        else:
-            bu_index = y_ind // 8 + 32
-        
-        return self.bu_list[bu_index]
 
-    
+    def burst_and_check_ext(self, expected_strobs):
+        self.trigger.burst(period_s=self.period, count=self.number_of_freqs, lead_s=self.lead)
+        QThread.msleep(int((self.lead + self.period * self.number_of_freqs) * 1000))
+        count_retry = 0
+        while True:
+            evt = self.trigger.pop_ext_event()
+            if evt:
+                return
+            count_retry += 1
+            QThread.msleep(5)
+            if count_retry > 5:
+                logger.debug('Произошло больше 5 попыток идентифицировать обратный триггер от PNA.')
+                break
+
+        counter = 0
+        while True:
+            tm = self.afar.get_tm(1)
+            counter += 1
+            logger.debug(f'Запрос для синхронизациии стробов. Ожидается - {expected_strobs}, реально - {tm['strobs_prm']}')
+            if tm['strobs_prm'] == expected_strobs:
+                logger.debug('Синхронизация произведена успешно')
+                return
+            elif (expected_strobs - tm['strobs_prm']) % self.number_of_freqs == 0 and (expected_strobs >  tm['strobs_prm']):
+                logger.debug('Генерация дополнительной пачки стробов')
+                self.trigger.burst(period_s=self.period, count=self.number_of_freqs, lead_s=self.lead)
+                QThread.msleep(int((self.lead + self.period * self.number_of_freqs) * 1000))
+                #TODO Делать возврат на точку, где синхронизация не была нарушена
+            elif tm['strobs_prm'] > expected_strobs:
+                return
+            if counter > 5:
+                raise Exception('Не удалось синхронизировать стробы')
+
+
+
+
     def measure(self, 
                 beams: List[int], 
                 scan_params: Dict,
@@ -101,8 +103,7 @@ class BeamMeasurement:
                 pna_settings: Optional[Dict] = None,
                 sync_settings: Optional[Dict] = None) -> Dict:
         """
-        Главный метод измерения 2D амплитудно-фазового распределения
-        через планарное сканирование
+        Главный метод измерения 2D амплитудно-фазового распределения через планарное сканирование
         
         Args:
             beams: Список номеров лучей
@@ -110,6 +111,8 @@ class BeamMeasurement:
             freq_list: Список частот в МГц [9300, 9550, 9800]
             progress_callback: Функция для обновления прогресса (current, total, message)
             data_callback: Функция для обновления данных в реальном времени
+            pna_settings: Настройки векторного анализатора цепей
+            sync_settings: Настройки синхронзатора (TriggerBox)
         Returns:
             dict: Результаты измерений {beam: {freq: {'x': [...], 'y': [...], 'amp': [[...]], 'phase': [[...]]}}}
         """
@@ -132,16 +135,20 @@ class BeamMeasurement:
         down_y = scan_params['down_y']
         step_x = scan_params['step_x']
         step_y = scan_params['step_y']
-        
-        x_list = np.round(np.linspace(left_x, right_x, int(round((right_x - left_x + step_x) // step_x))), 2)
-        y_list = np.round(np.linspace(up_y, down_y, int(round((down_y - up_y + step_y) / step_y))), 2)
+
+
+        n_x = int(round((right_x - left_x) / step_x)) + 1
+        n_y = int(round((down_y - up_y) / step_y)) + 1
+        x_list = np.round(np.linspace(left_x, right_x, n_x), 4)
+        y_list = np.round(np.linspace(up_y, down_y, n_y), 4)
         
         logger.info(f"Сетка: {len(x_list)}x{len(y_list)} = {len(x_list) * len(y_list)} точек")
         
         start_time = time.time()
+
+        expected_strobs = 0
         
         try:
-            # Инициализируем структуру данных для всех лучей и частот
             for beam_num in beams:
                 if beam_num not in self.data:
                     self.data[beam_num] = {}
@@ -156,7 +163,6 @@ class BeamMeasurement:
                             'phase': phase_2d.tolist()
                         }
                     else:
-                        # Данные уже есть (досканирование) - обновляем только координаты если нужно
                         existing_data = self.data[beam_num][freq]
                         existing_data['x'] = x_list.tolist()
                         existing_data['y'] = y_list.tolist()
@@ -189,7 +195,6 @@ class BeamMeasurement:
                                        is_cycle=False
                                        )
 
-
             if self.data and self.save_dir:
                 params_file = os.path.join(self.save_dir, 'scan_params.json')
                 if os.path.exists(params_file):
@@ -208,8 +213,7 @@ class BeamMeasurement:
                     self.measurement_start_time = time.time()
             else:
                 self.measurement_start_time = time.time()
-            
-            # Подсчитываем количество уже измеренных точек (для правильного расчета времени)
+
             already_measured_points = 0
             if beams and freq_list:
                 first_beam = beams[0]
@@ -267,12 +271,9 @@ class BeamMeasurement:
                         if self._stop_flag.is_set():
                             break
 
-                        self.trigger.burst(period_s=self.period, count=self.number_of_freqs, lead_s=self.lead)
-                        QThread.msleep(int((self.lead + self.period * self.number_of_freqs) * 1000))
-                        while True:
-                            evt = self.trigger.pop_ext_event()
-                            if evt:
-                                break
+                        expected_strobs += self.number_of_freqs
+
+                        self.burst_and_check_ext(expected_strobs)
 
                         amps, phases = self.pna.get_data()
 
@@ -288,7 +289,51 @@ class BeamMeasurement:
 
                             self.data[beam_num][freq]['amp'] = amp_2d.tolist()
                             self.data[beam_num][freq]['phase'] = phase_2d.tolist()
-                    
+
+                    real_strobs = self.afar.get_tm(1)['strobs_prm']
+                    logger.info(f'Ожидаем - {expected_strobs} Пришло - {real_strobs}')
+                    if real_strobs != expected_strobs:
+                        expected_strobs = 0
+                        self.afar.preset_task(bu_num=0)
+                        for idx, beam_num in enumerate(beams):
+                            if idx == len(beams) - 1:
+                                self.afar.set_task(bu_num=0,
+                                                   number_of_beam_prm=beam_num,
+                                                   number_of_beam_prd=beam_num,
+                                                   amount_strobs=points_amount,
+                                                   is_cycle=True
+                                                   )
+                            else:
+                                self.afar.set_task(bu_num=0,
+                                                   number_of_beam_prm=beam_num,
+                                                   number_of_beam_prd=beam_num,
+                                                   amount_strobs=points_amount,
+                                                   is_cycle=False
+                                                   )
+
+                        for beam_num in beams:
+                            if self._stop_flag.is_set():
+                                break
+
+                            expected_strobs += self.number_of_freqs
+
+                            self.burst_and_check_ext(expected_strobs)
+
+                            amps, phases = self.pna.get_data()
+
+                            for freq_idx, freq in enumerate(freq_list):
+                                amp_val = amps[freq_idx]
+                                phase_val = phases[freq_idx]
+
+                                amp_2d = np.array(self.data[beam_num][freq]['amp'])
+                                phase_2d = np.array(self.data[beam_num][freq]['phase'])
+
+                                amp_2d[y_ind, x_ind] = amp_val
+                                phase_2d[y_ind, x_ind] = phase_val
+
+                                self.data[beam_num][freq]['amp'] = amp_2d.tolist()
+                                self.data[beam_num][freq]['phase'] = phase_2d.tolist()
+
 
                     if progress_callback and point_count % 10 == 0:
                         current_time = time.time()
@@ -318,8 +363,6 @@ class BeamMeasurement:
                     self._save_results_periodically(beams, freq_list, x_list, y_list, 
                                                    scan_params['step_x'], scan_params['step_y'])
 
-                    #TODO  проде убрать задержку
-                    time.sleep(0.02)
             
             elapsed_time = time.time() - start_time
             logger.info(f"Измерение завершено за {elapsed_time:.1f} сек")
@@ -363,17 +406,17 @@ class BeamMeasurement:
         """Остановить измерение"""
         logger.info("Запрос остановки измерения")
         self._stop_flag.set()
-        self._pause_flag.set()  # Разблокируем wait()
+        self._pause_flag.set()
     
     def pause(self):
         """Приостановить измерение"""
         logger.info("Измерение приостановлено")
-        self._pause_flag.clear()  # Блокируем wait()
+        self._pause_flag.clear()
     
     def resume(self):
         """Возобновить измерение"""
         logger.info("Измерение возобновлено")
-        self._pause_flag.set()  # Разблокируем wait()
+        self._pause_flag.set()
     
     def get_results(self) -> Dict:
         """Получить текущие результаты"""

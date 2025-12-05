@@ -138,6 +138,14 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.pulse_period.setSuffix(' мкс')
         self.pna_tab_layout.addRow('Период импульса', self.pulse_period)
 
+        self.pulse_source = QtWidgets.QComboBox()
+        self.pulse_source.addItems(['External', 'Internal'])
+        self.pna_tab_layout.addRow('Источник импульса', self.pulse_source)
+
+        self.trig_polarity = QtWidgets.QComboBox()
+        self.trig_polarity.addItems(['Positive', 'Negative'])
+        self.pna_tab_layout.addRow('Полярность сигнала', self.trig_polarity)
+
 
         settings_layout = QtWidgets.QHBoxLayout()
         settings_layout.setSpacing(4)
@@ -695,6 +703,7 @@ class StendCheckMaWidget(BaseMeasurementWidget):
 
     def apply_params(self):
         """Сохраняет параметры из вкладок"""
+        self.setup_pna_common()
         # MA
         self.channel = self.channel_combo.currentText()
         self.direction = self.direction_combo.currentText()
@@ -709,6 +718,8 @@ class StendCheckMaWidget(BaseMeasurementWidget):
         self.pna_settings['pulse_mode'] = self.pulse_mode_combo.currentText()
         self.pna_settings['pulse_period'] = self.pulse_period.value() / 10 ** 6
         self.pna_settings['pulse_width'] = self.pulse_width.value() / 10 ** 6
+        self.pna_settings['pulse_source'] = self.pulse_source.currentText().lower()
+        self.pna_settings['polarity_trig'] = 'POS' if self.trig_polarity.currentText().lower().strip() == 'positive' else 'NEG'
 
         # Meas - критерии проверки
         self.check_criteria = {
@@ -1108,52 +1119,56 @@ class StendCheckMaWidget(BaseMeasurementWidget):
             QtWidgets.QMessageBox.critical(self, 'Ошибка', error_msg)
             logger.error(error_msg)
 
-    def apply_parsed_settings(self):
-        """Применение параметров PNA настроек к интерфейсу"""
-        try:
-            s_param = self.pna.get_s_param()
-            logger.info(f'S_PARAM={s_param}')
-            if s_param:
-                index = self.s_param_combo.findText(s_param)
-                if index >= 0:
-                    self.s_param_combo.setCurrentIndex(index)
-
-            power = self.pna.get_power()
-            if power:
-                self.pna_power.setValue(power)
-
-            freq_start = self.pna.get_start_freq()
-            if freq_start:
-                self.pna_start_freq.setValue(int(freq_start / 10 ** 6))
-
-            freq_stop = self.pna.get_stop_freq()
-            if freq_stop:
-                self.pna_stop_freq.setValue(int(freq_stop / 10 ** 6))
-
-            points = self.pna.get_amount_of_points()
-            if points:
-                index = self.pna_number_of_points.findText(str(int(points)))
-                if index >= 0:
-                    self.pna_number_of_points.setCurrentIndex(index)
-
-            pulse_mode = self.pna.get_pulse_mode()
-            if pulse_mode:
-                index = self.pulse_mode_combo.findText(pulse_mode)
-                if index >= 0:
-                    self.pulse_mode_combo.setCurrentIndex(index)
-
-            pna_pulse_width = self.pna.get_pulse_width()
-            if pna_pulse_width:
-                self.pulse_width.setValue(float(pna_pulse_width) * 10 ** 6)
-
-            pna_pulse_period = self.pna.get_period()
-            if pna_pulse_period:
-                self.pulse_period.setValue(float(pna_pulse_period) * 10 ** 6)
-
-
-
-        except Exception as e:
-            logger.error(f'Ошибка при применении настроек к интерфейсу: {e}')
+    # def apply_parsed_settings(self):
+    #     """Применение параметров PNA настроек к интерфейсу"""
+    #     try:
+    #         s_param = self.pna.get_s_param()
+    #         logger.info(f'S_PARAM={s_param}')
+    #         if s_param:
+    #             index = self.s_param_combo.findText(s_param)
+    #             if index >= 0:
+    #                 self.s_param_combo.setCurrentIndex(index)
+    #
+    #         power1 = self.pna.get_power(1)
+    #         power2 = self.pna.get_power(2)
+    #
+    #         if s_param.lower() == 's12':
+    #             self.pna_power.setValue(power2)
+    #         else:
+    #             self.pna_power.setValue(power1)
+    #
+    #         freq_start = self.pna.get_start_freq()
+    #         if freq_start:
+    #             self.pna_start_freq.setValue(int(freq_start / 10 ** 6))
+    #
+    #         freq_stop = self.pna.get_stop_freq()
+    #         if freq_stop:
+    #             self.pna_stop_freq.setValue(int(freq_stop / 10 ** 6))
+    #
+    #         points = self.pna.get_amount_of_points()
+    #         if points:
+    #             index = self.pna_number_of_points.findText(str(int(points)))
+    #             if index >= 0:
+    #                 self.pna_number_of_points.setCurrentIndex(index)
+    #
+    #         pulse_mode = self.pna.get_pulse_mode()
+    #         if pulse_mode:
+    #             index = self.pulse_mode_combo.findText(pulse_mode)
+    #             if index >= 0:
+    #                 self.pulse_mode_combo.setCurrentIndex(index)
+    #
+    #         pna_pulse_width = self.pna.get_pulse_width()
+    #         if pna_pulse_width:
+    #             self.pulse_width.setValue(float(pna_pulse_width) * 10 ** 6)
+    #
+    #         pna_pulse_period = self.pna.get_period()
+    #         if pna_pulse_period:
+    #             self.pulse_period.setValue(float(pna_pulse_period) * 10 ** 6)
+    #
+    #
+    #
+    #     except Exception as e:
+    #         logger.error(f'Ошибка при применении настроек к интерфейсу: {e}')
 
 
 

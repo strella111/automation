@@ -10,7 +10,7 @@ from config.settings_manager import get_main_settings
 from ...devices.afar import Afar
 from ...devices.pna import PNA
 from core.devices.trigger_box import E5818
-from core.common.enums import Channel, Direction
+from core.common.enums import Channel, Direction, PpmState
 from ...common.exceptions import WrongInstrumentError
 import threading
 from PyQt5.QtCore import QThread
@@ -126,7 +126,7 @@ class CheckAfarStend:
 
     def burst_and_check_external_trigger(self, bu_num: int, ppm_num: int):
         self.gen.burst(period_s=self.period, count=self.number_of_freqs, lead_s=self.lead)
-        QThread.msleep(int((self.lead + self.period*self.number_of_freqs)*1000))
+        QThread.msleep(int((self.lead + self.period*self.number_of_freqs)*1000*2))
         counter = 0
         while True:
             evt = self.gen.pop_ext_event()
@@ -168,10 +168,10 @@ class CheckAfarStend:
         results: Dict[float, List[float]] = {}
         zero_phases: List[float] = []
 
-        # Ограничиваем размер данных для предотвращения накопления памяти
-        max_data_per_fv = self.max_ppm_count * 2  # 2 значения на ППМ (амплитуда, фаза)
+        max_data_per_fv = self.max_ppm_count * 2
         for fv in self.phase_shifts:
             code = int(fv / 5.625)
+            self.afar.preset_task(bu_num=0)
             self.afar.set_calb_mode(bu_num=bu_num,
                                   chanel=chanel,
                                   direction=direction,
@@ -230,6 +230,7 @@ class CheckAfarStend:
     def _check_amp_only(self, bu_num: int, chanel: Channel, direction: Direction) -> List[float]:
         """Проверка только амплитуды ППМ (без циклов по ФВ и ЛЗ)"""
         # Устанавливаем режим калибровки с ФВ=0, ЛЗ=0
+        self.afar.preset_task(bu_num=0)
         self.afar.set_calb_mode(bu_num=bu_num,
                               chanel=chanel,
                               direction=direction,
@@ -285,6 +286,7 @@ class CheckAfarStend:
             lz_to_amps[lz] = []
             lz_to_delays[lz] = []
 
+            self.afar.preset_task(bu_num=0)
             self.afar.set_calb_mode(bu_num=bu_num,
                                   chanel=chanel,
                                   direction=direction,
@@ -314,8 +316,10 @@ class CheckAfarStend:
                     delay_mean = float('nan')
 
                 try:
-                    amp_mean = float(self.pna.get_mean_value_from_sdata())
-                except Exception:
+                    (amp_mean, _) = self.pna.get_mean_value_from_sdata()
+                    amp_mean = float(amp_mean)
+                except Exception as e:
+                    logger.error(e)
                     amp_mean = float('nan')
 
                 # Проверяем размер данных перед добавлением

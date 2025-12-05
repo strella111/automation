@@ -57,7 +57,7 @@ class E5818Config:
     resource: str                        # "TCPIP0::<ip>::inst0::INSTR" или "TEST" для тестового режима
     ttl_channel: int = 1                 # TTL1..2
     ext_channel: int = 1                 # EXT1..2 (0=EXT1, 1=EXT2 внутри лога)
-    visa_timeout_ms: int = 2000
+    visa_timeout_ms: int = 5000
     start_lead_s: float = 0.010          # задержка старта серии (см. README предыдущих сообщений)
     pulse_period_s: float = 0.0005       # >= 100e-6
     min_alarm_guard_s: float = 0.0015    # «микро-буфер» если рассчитанное время старта уже прошло
@@ -104,6 +104,7 @@ class E5818:
 
         # Базовая очистка/инициализация
         self.write("*CLS")
+        self.clear_logs()
         self._enable_and_clear_logs()
         self._drop_all_alarms()
         self._bind_ttl_to_alarm1()
@@ -154,7 +155,6 @@ class E5818:
             raise E5818NotConnected("Нет активного подключения")
         if self.test_mode:
             logger.debug(format_device_log('LXI [TEST]', '>>', cmd))
-            # Возвращаем заглушки для разных команд
             if "*IDN?" in cmd:
                 result = "TEST MODE: E5818A Simulation"
             elif "SYST:ERR" in cmd:
@@ -165,10 +165,13 @@ class E5818:
                 result = "OK"
             logger.debug(format_device_log('LXI [TEST]', '<<', result))
             return result
-        logger.debug(format_device_log('LXI', '>>', cmd))
-        result = self.connection.query(cmd).strip()
-        logger.debug(format_device_log('LXI', '<<', result))
-        return result
+        try:
+            logger.debug(format_device_log('LXI', '>>', cmd))
+            result = self.connection.query(cmd).strip()
+            logger.debug(format_device_log('LXI', '<<', result))
+            return result
+        except Exception as e:
+            logger.error(f'Ошибка запроса данных с LXI. {e}')
 
     def check_error_queue(self) -> Optional[str]:
         """
@@ -232,7 +235,7 @@ class E5818:
         """
         if period_s < 0.0001:
             raise E5818Error("period_s слишком мал (минимум 100 мкс)")
-        if not (1 <= count <= 5000):
+        if not (1 <= count <= 50000):
             raise E5818Error("count вне диапазона (1..5000)")
 
         now = self._get_tai()
@@ -260,7 +263,7 @@ class E5818:
         """Очистить логи EXT/TTL (начать «с чистого листа»)."""
         self._enable_and_clear_logs()
         self._last_ext_ts = None
-        self._operation_counter = 0  # Сбрасываем счетчик при ручной очистке
+        self._operation_counter = 0
         self._log("Logs cleared")
     
     def _auto_clear_logs_if_needed(self):
@@ -288,7 +291,7 @@ class E5818:
         lead = self.cfg.start_lead_s if lead_s is None else float(lead_s)
         self._schedule_alarm_burst_guarded(lead, period_s=0.001, count=1)
         self._log(f"Single pulse scheduled in {lead*1e3:.1f} ms")
-        self._auto_clear_logs_if_needed()  # Периодическая очистка логов
+        self._auto_clear_logs_if_needed()
 
 
     def burst(self, count: int, period_s: Optional[float] = None, lead_s: Optional[float] = None):
@@ -308,7 +311,7 @@ class E5818:
             return
         
         self._schedule_alarm_burst(start_in_s=lead, period_s=per, count=n)
-        self._auto_clear_logs_if_needed()  # Периодическая очистка логов
+        self._auto_clear_logs_if_needed()
 
 
     # -------- SW-handshake helpers --------
@@ -324,8 +327,7 @@ class E5818:
         if raw.upper().startswith("NO EVENT"):
             return None
         parts = [p.strip() for p in raw.split(",")]
-        # Формат: log_sec,log_frac,ts_sec,ts_frac,source(0/1),slope
-        self._auto_clear_logs_if_needed()  # Периодическая очистка логов при чтении событий
+        self._auto_clear_logs_if_needed()
         return {
             "log_sec": int(float(parts[0])),
             "log_frac": float(parts[1]),
@@ -374,7 +376,6 @@ class E5818:
     def _log(self, msg: str):
         if self.cfg.logger:
             self.cfg.logger(msg)
-        # по умолчанию — тихо
 
     # -------------------- Optional helpers --------------------
 

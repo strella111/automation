@@ -38,12 +38,19 @@ class PSN:
                 self.connection = rm.open_resource(self.visa_name)
                 self.connection.read_termination = '\n'
                 self.connection.write_termination = '\n'
+                self.connection.timeout = float('+inf')
                 self.write('*IDN?')
                 response = self.read()
                 if 'RADIOLINE' not in response:
                     raise WrongInstrumentError(
                         'Wrote "ID" Expected "7230" got "{}"'.format(response))
-                logger.info('Произведено подключение к PSN')
+
+                x_pos = self.query('AXIS0:UPOS?')
+                y_pos = self.query('AXIS1:UPOS?')
+
+                logger.info(f'Произведено подключение к PSN. Текущие координаты:x={x_pos}\ty={y_pos}')
+
+                self.connection.timeout = 10 * 10**3
             else:
                 time.sleep(0.2)
                 self.connection = True
@@ -114,14 +121,15 @@ class PSN:
         """
         try:
             logger.info(f'Перемещение сканера в точку ({x}, {y})')
-            res = self.query("AXIS0:STAT:OP?")
-            if res != "0":
-                logger.error("Ошибка в оси X планарного сканера.")
-                raise PlanarScannerError(f'Ошибка оси X: Статус {res}')
-            res = self.query("AXIS1:STAT:OP?")
-            if res != "0":
-                logger.error("Ошибка в оси Y планарного сканера.")
-                raise PlanarScannerError(f'Ошибка оси Y: Статус {res}')
+            # self.write()
+            # res = self.query("AXIS0:STAT:OP?")
+            # if res != "0":
+            #     logger.error("Ошибка в оси X планарного сканера.")
+            #     raise PlanarScannerError(f'Ошибка оси X: Статус {res}')
+            # res = self.query("AXIS1:STAT:OP?")
+            # if res != "0":
+            #     logger.error("Ошибка в оси Y планарного сканера.")
+            #     raise PlanarScannerError(f'Ошибка оси Y: Статус {res}')
 
             axis_x_move_string = "AXIS0:UMOV:ABS " + str(x + self.x_offset)
             axis_y_move_string = "AXIS1:UMOV:ABS " + str(y + self.y_offset)
@@ -130,11 +138,11 @@ class PSN:
 
             stat = False
             while not stat:
-                stat_x = self.query("AXIS0:STAT:OP?")
-                stat_y = self.query("AXIS1:STAT:OP?")
-                if stat_x == '0' and stat_y == '0':
+                cord_x = float(self.query("AXIS0:UPOS?"))
+                cord_y = float(self.query("AXIS1:UPOS?"))
+                if round(cord_x, 2) == round(x + self.x_offset, 2) and round(cord_y, 2) == round(y + self.y_offset, 2):
                     stat = True
-                    time.sleep(0.1)
+                    time.sleep(0.05)
 
 
         except Exception as e:
@@ -155,9 +163,9 @@ class PSN:
         Установить скорость осей сканера в см/сек
         Args:
             axis: Ось (0: x, 1: y)
-            value: Скорость в RPM
+            value: Скорость
         """
-        self.write(f'AXIS{axis}:SPE {value}')
+        self.write(f'AXIS{axis}:USPE {value}')
         logger.info(f'Для AXIS{axis} установлена скорость {value} RPM')
 
     def set_acc(self, axis: int, value: int) -> None:

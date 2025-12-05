@@ -1,5 +1,11 @@
+import os
+import time
+
+import openpyxl
 from loguru import logger
+from pathlib import Path
 from PyQt5.QtCore import QThread
+from config.settings_manager import get_main_settings
 
 from core.devices.afar import Afar
 from core.devices.pna import PNA
@@ -19,6 +25,9 @@ class PhaseAfar:
         self.psn = psn
         self.pna = pna
 
+        self.pna_period = 0.002
+        self.pna_amount_points = 11
+
         self.stop_flag = None
         self.pause_flag = None
         self.point_callback = point_callback
@@ -26,19 +35,33 @@ class PhaseAfar:
 
         self.norm_phase = None
 
-        self.offset_x_list = [0, 14.016, 0, 14.016, 0, 14.016, 0, 14.016,
-                    112.128, 126.144, 112.128, 126.144, 112.128, 126.144, 112.128, 126.144,
-                    224.256, 238.272, 224.256, 238.272, 224.256, 238.272, 224.256, 238.272,
-                    336.384, 350.4, 336.384, 350.4, 336.384, 350.4, 336.384, 350.4,
-                    448.512, 462.528, 448.512, 462.528, 448.512, 462.528, 448.512, 462.528]
+        # self.offset_x_list = [0, 14.016, 0, 14.016, 0, 14.016, 0, 14.016,
+        #             112.128, 126.144, 112.128, 126.144, 112.128, 126.144, 112.128, 126.144,
+        #             224.256, 238.272, 224.256, 238.272, 224.256, 238.272, 224.256, 238.272,
+        #             336.384, 350.4, 336.384, 350.4, 336.384, 350.4, 336.384, 350.4,
+        #             448.512, 462.528, 448.512, 462.528, 448.512, 462.528, 448.512, 462.528]
+
+
+        self.offset_x_list = [14.016, 0, 14.016, 0, 14.016, 0, 14.016, 0,
+                              126.144, 112.128, 126.144, 112.128, 126.144, 112.128, 126.144, 112.128,
+                              238.272, 224.256, 238.272, 224.256, 238.272, 224.256, 238.272, 224.256,
+                              350.4, 336.384, 350.4, 336.384, 350.4, 336.384, 350.4, 336.384,
+                              462.528, 448.512, 462.528, 448.512, 462.528, 448.512, 462.528, 448.512]
+
+
         self.offset_y_list = [0, -17.76, -35.52, -53.28, -71.04, -88.8, -106.56, -124.32,
                     0, -17.76, -35.52, -53.28, -71.04, -88.8, -106.56, -124.32,
                     0, -17.76, -35.52, -53.28, -71.04, -88.8, -106.56, -124.32,
                     0, -17.76, -35.52, -53.28, -71.04, -88.8, -106.56, -124.32,
                     0, -17.76, -35.52, -53.28, -71.04, -88.8, -106.56, -124.32]
 
-        self.x_cords = [42, 14, -14, -42]
-        self.y_cords = [-7.7, -5.5, -3.3, -1.1, 1.1, 3.3, 5.5, 7.7]
+        self.offset_y_list.reverse()
+
+        self.x_cords = [-42, -14, 14, 42]
+        self.y_cords = [7.77, 5.55, 3.33, 1.11, -1.11, -3.33, -5.55, -7.77]
+
+        # self.x_cords = [-43.216, -15.184, 12.848, 40.88]
+        # self.y_cords = [7.77, 5.55, 3.33, 1.11, -1.11, -3.33, -5.55, -7.77]
 
         self.ppm_norm_number = 12
         self.bu_norm_number = 1
@@ -76,39 +99,32 @@ class PhaseAfar:
         try:
             discretes = []
             phase_lz0 = None
-            
-            # Измеряем ЛЗ от 0 до 15
+
             for lz in range(16):
-                # Устанавливаем линию задержки
                 self.afar.set_delay(bu_num=bu_num, chanel=chanel, direction=direction, value=lz)
-                
-                # Измеряем фазу
-                _, phase_lz = self.pna.get_center_freq_data()
-                phase_lz -= self.norm_phase
+                _, phase_lz = self.pna.get_center_freq_data(wait=True)
+
+                if phase_lz < 0:
+                    phase_lz += 360
                 
                 logger.debug(f"БУ №{bu_num}, ППМ №{ppm_num}, ЛЗ={lz}: фаза={phase_lz:.2f}°")
                 
                 if lz == 0:
-                    # Опорная фаза для ЛЗ=0
                     phase_lz0 = phase_lz
-                    discretes.append(0)  # Для ЛЗ=0 дискреты = 0
+                    discretes.append(0)
                 else:
-                    # Вычисляем разницу фаз
                     delta_phase = phase_lz - phase_lz0
-                    
-                    # Нормализуем в диапазон [-180, 180]
-                    while delta_phase > 180:
-                        delta_phase -= 360
-                    while delta_phase < -180:
+
+                    if delta_phase < 0:
                         delta_phase += 360
-                    
-                    # Конвертируем в дискреты (1 дискрет = 5.625°)
-                    discrete_value = round(delta_phase / 5.625)
+
+                    discrete_value = int(delta_phase // 5.625)
+                    logger.info(f'ЛЗ{lz} - дельта {delta_phase}')
                     
                     logger.info(f"БУ №{bu_num}, ЛЗ={lz}: Δфаза={delta_phase:.2f}°, дискреты={discrete_value}")
                     discretes.append(discrete_value)
-            
-            # Возвращаем ЛЗ на 0 после измерений
+                logger.info(f'Список дискретов {discretes}')
+
             self.afar.set_delay(bu_num=bu_num, chanel=chanel, direction=direction, value=0)
             
             logger.info(f"Измерение ЛЗ для БУ №{bu_num} завершено: {discretes}")
@@ -172,7 +188,7 @@ class PhaseAfar:
                                         chanel=chanel,
                                         direction=direction,
                                         value=value)
-            _, phase_first = self.pna.get_center_freq_data()
+            _, phase_first = self.pna.get_center_freq_data(wait=True)
             phase_first -= self.norm_phase
             if self.point_callback:
                 real_x = self.x_cords[i] + self.offset_x_list[bu_num-1]
@@ -183,7 +199,7 @@ class PhaseAfar:
             phase_vals = [0, value]
             phase_list = [initial_phase, phase_first]
             new_value = value
-            max_iterations = 64  # Максимум 64 итерации (все возможные значения фазы)
+            max_iterations = 64
             iteration_count = 0
             
             while iteration_count < max_iterations:
@@ -197,7 +213,7 @@ class PhaseAfar:
                                             chanel=chanel,
                                             direction=direction,
                                             value=new_value)
-                _, phase_iter = self.pna.get_center_freq_data()
+                _, phase_iter = self.pna.get_center_freq_data(wait=True)
                 phase_iter -= self.norm_phase
                 phase_list.append(phase_iter)
                 if self.point_callback:
@@ -237,32 +253,36 @@ class PhaseAfar:
             PlanarScannerError: При ошибке перемещения
         """
         try:
+
+            amp_workbook = openpyxl.Workbook()
+            amp_worksheet = amp_workbook.active
             if selected_bu_numbers is None:
                 bu_numbers = list(range(1, 41))
             else:
                 bu_numbers = selected_bu_numbers
 
+
             vip_bu_numbers = set(bu_numbers)
             if self.bu_norm_number not in vip_bu_numbers:
                 vip_bu_numbers.add(self.bu_norm_number)
+
             
-            logger.info(f"Включение ВИПов для БУ: {sorted(vip_bu_numbers)}")
-            for bu_num in sorted(vip_bu_numbers):
-                no_wait = (self.afar.mode != 0)
-                self.afar.turn_on_vips(bu_num, no_wait=no_wait)
+            # logger.info(f"Включение ВИПов для БУ: {sorted(vip_bu_numbers)}")
+            # for bu_num in sorted(vip_bu_numbers):
+            #     no_wait = (self.afar.mode != 0)
+            #     self.afar.turn_on_vips(bu_num, no_wait=no_wait)
 
             self.phase_results = []
             if not self._check_connections():
                 raise ConnectionError("Не все устройства подключены")
-            try:
-                self.psn.move(self.x_cords[self.ppm_norm_number // 4 - 1],
-                              self.y_cords[self.ppm_norm_number % 8 - 1])
-            except Exception as e:
-                raise PlanarScannerError(f"Ошибка перемещения к нормализующему ППМ: {e}")
 
             self.pna.set_output(True)
             self.pna.set_ascii_data()
             logger.info("Нормировка PNA...")
+
+
+            self.psn.move(self.x_cords[(self.ppm_norm_number - 1) // 8] + self.offset_x_list[self.bu_norm_number - 1],
+                          self.y_cords[(self.ppm_norm_number - 1) % 8] + self.offset_y_list[self.bu_norm_number - 1])
 
             self.afar.switch_ppm(bu_num=self.bu_norm_number,
                                  ppm_num=self.ppm_norm_number,
@@ -276,7 +296,7 @@ class PhaseAfar:
                                         direction=direction,
                                         value=0)
             self.afar.set_delay(bu_num=self.bu_norm_number, chanel=chanel, direction=direction, value=0)
-            self.norm_amplitude, self.norm_phase = self.pna.get_center_freq_data()
+            self.norm_amplitude, self.norm_phase = self.pna.get_center_freq_data(wait=True)
             logger.info(f"Нормировочные значения: амплитуда={self.norm_amplitude:.2f} дБ, фаза={self.norm_phase:.2f}°")
             
             if self.norm_callback:
@@ -293,9 +313,13 @@ class PhaseAfar:
             for bu_number in bu_numbers:
                 logger.info(f"Начинаем фазировку БУ №{bu_number}")
                 self.phase_results = []
-                
-                # Создаем CalibrationCSV для текущего БУ
+
                 self.calibration_csv = CalibrationCSV(bu_number)
+
+                self.afar.set_delay(bu_num=bu_number,
+                                    chanel=chanel,
+                                    direction=direction,
+                                    value=0)
                 
                 for i in range(4):
                     for j in range(8):
@@ -324,24 +348,28 @@ class PhaseAfar:
                         ppm_num = i * 8 + j + 1
                         logger.info(f"Фазировка БУ №{bu_number}, ППМ №{ppm_num}")
 
-                        try:
-                            self.psn.move(self.x_cords[i] + self.offset_x_list[bu_number-1],
-                                          self.y_cords[j] + self.offset_y_list[bu_number-1])
-                        except Exception as e:
-                            raise PlanarScannerError(f"Ошибка перемещения к ППМ {ppm_num}: {e}")
-
                         self.afar.switch_ppm(bu_num=bu_number,
                                              ppm_num=ppm_num,
                                              chanel=chanel,
                                              direction=direction,
                                              state=PpmState.ON)
 
+                        try:
+                            self.psn.move(self.x_cords[i] + self.offset_x_list[bu_number-1],
+                                          self.y_cords[j] + self.offset_y_list[bu_number-1])
+                        except Exception as e:
+                            raise PlanarScannerError(f"Ошибка перемещения к ППМ {ppm_num}: {e}")
+
+
                         self.afar.set_phase_shifter(bu_num=bu_number,
                                                     ppm_num=ppm_num,
                                                     chanel=chanel,
                                                     direction=direction,
                                                     value=0)
-                        amp_zero, phase_zero = self.pna.get_center_freq_data()
+
+                        amp_zero, phase_zero = self.pna.get_center_freq_data(wait=True)
+                        excel_list_amp = [bu_number, ppm_num, chanel.value, direction.value, amp_zero]
+                        amp_worksheet.append(excel_list_amp)
                         phase_zero -= self.norm_phase
                         if phase_zero < 0:
                             phase_zero += 360
@@ -383,6 +411,19 @@ class PhaseAfar:
                                              chanel=chanel,
                                              direction=direction,
                                              state=PpmState.OFF)
+
+                base_dir = None
+                try:
+                    if get_main_settings is not None:
+                        qsettings = get_main_settings()
+                        v = qsettings.value('base_save_dir')
+                        if v:
+                            base_dir = str(v)
+                except Exception:
+                    base_dir = None
+
+                path_name_amp = Path(os.path.join(base_dir, 'phase', f'{chanel.value}.{direction.value}_amp.xlsx'))
+                amp_workbook.save(path_name_amp)
 
                 if self.calibration_csv and len(self.phase_results) == 32:
                     try:

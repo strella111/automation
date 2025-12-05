@@ -455,6 +455,38 @@ class MA:
         command = self._generate_command(bu_num=self.bu_addr, command_code=command_code)
         self._send_command(command)
 
+    def set_beam_calb_mode(self, bu_num: int,
+                           table_num: int,
+                           table_crc, chanel: Channel,
+                           direction: Direction,
+                           beam_number: int,
+                           amount_strobs: int):
+        logger.info(f'БУ№{bu_num}. Установка режима калибровки для луча №{beam_number} таблицы №{table_num} '
+                    f'количество стробов в тракт - {amount_strobs}')
+
+        data = bytearray()
+
+        chanel_byte = 0x00
+        if chanel == Channel.Transmitter and direction == Direction.Horizontal:
+            chanel_byte = 0x81
+        elif chanel == Channel.Transmitter and direction == Direction.Vertical:
+            chanel_byte = 0x82
+        elif chanel == Channel.Receiver and direction == Direction.Vertical:
+            chanel_byte = 0x88
+        elif chanel == Channel.Receiver and direction == Direction.Horizontal:
+            chanel_byte = 0x84
+
+
+
+        data.extend(chanel_byte.to_bytes(1, 'big'))
+        data.extend(table_num.to_bytes(2, 'big'))
+        data.extend(table_crc)
+        data.extend(beam_number.to_bytes(2, 'big'))
+        data.extend(amount_strobs.to_bytes(2, 'big'))
+        command_code = b'\xd9'
+        command = self._generate_command(bu_num=bu_num, command_code=command_code, data=data)
+        self.write(command)
+
     def get_tm(self):
         logger.info('Запрошена телеметрия МА')
         command_code = b'\xfa'

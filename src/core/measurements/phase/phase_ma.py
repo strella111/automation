@@ -86,7 +86,7 @@ class PhaseMaMeas:
                                     chanel=chanel,
                                     direction=direction,
                                     value=value)
-            _, phase_first = self.pna.get_center_freq_data()
+            _, phase_first = self.pna.get_center_freq_data(wait=True)
             phase_first -= self.norm_phase
             if self.point_callback:
                 self.point_callback(i, j, self.x_cords[i], self.y_cords[j], amp, phase_first)
@@ -105,7 +105,7 @@ class PhaseMaMeas:
                                         direction=direction,
                                         chanel=chanel,
                                         value=new_value)
-                _, phase_iter = self.pna.get_center_freq_data()
+                _, phase_iter = self.pna.get_center_freq_data(wait=True)
                 phase_iter -= self.norm_phase
                 phase_list.append(phase_iter)
                 if self.point_callback:
@@ -151,7 +151,7 @@ class PhaseMaMeas:
             self.ma.switch_ppm(self.ppm_norm_number, chanel=chanel, direction=direction, state=PpmState.ON)
             self.ma.set_phase_shifter(self.ppm_norm_number, chanel=chanel, direction=direction, value=0)
             self.ma.set_delay(chanel, direction=direction, value=0)
-            _ , self.norm_phase = self.pna.get_center_freq_data()
+            _ , self.norm_phase = self.pna.get_center_freq_data(wait=True)
             self.ma.switch_ppm(self.ppm_norm_number, chanel=chanel, direction=direction, state=PpmState.OFF)
 
             for i in range(4):
@@ -186,7 +186,7 @@ class PhaseMaMeas:
                         raise PlanarScannerError(f"Ошибка перемещения к ППМ {ppm_num}: {e}")
 
                     self.ma.switch_ppm(ppm_num=ppm_num, chanel=chanel, direction=direction, state=PpmState.ON)
-                    amp_zero, phase_zero = self.pna.get_center_freq_data()
+                    amp_zero, phase_zero = self.pna.get_center_freq_data(wait=True)
                     phase_zero -= self.norm_phase
                     if phase_zero < 0:
                         phase_zero += 360

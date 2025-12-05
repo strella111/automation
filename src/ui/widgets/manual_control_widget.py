@@ -21,7 +21,7 @@ class ManualControlWindow(QtWidgets.QMainWindow):
         self.ma = None
         self.coord_system = None
         self.coord_manager = CoordinateSystemManager()
-        
+
         # Координаты ППМ (такие же как в PhaseMaMeas)
         self.x_cords = [-42, -14, 14, 42]
         self.y_cords = [7.7, 5.5, 3.3, 1.1, -1.1, -3.3, -5.5, -7.7]

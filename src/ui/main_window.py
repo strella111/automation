@@ -1,3 +1,7 @@
+import sys
+import os
+
+from PyQt5.QtGui import QIcon
 from PyQt5 import QtWidgets, QtCore
 from ui.widgets.phase_ma_widget import PhaseMaWidget
 from ui.widgets.check_ma_widget import CheckMaWidget
@@ -7,6 +11,7 @@ from ui.widgets.beam_pattern_widget import BeamPatternWidget
 from ui.widgets.check_stend_afar_widget import StendCheckAfarWidget
 from ui.widgets.manual_control_widget import ManualControlWindow
 from ui.widgets.manual_control_afar_widget import ManualControlAfarWindow
+from ui.widgets.beam_calb_afar_widget import BeamCalbAfarWidget
 from ui.dialogs.settings_dialog import SettingsDialog
 from config.settings_manager import get_main_settings
 from loguru import logger
@@ -15,34 +20,24 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('Automation Tool')
-        
-        # Инициализируем настройки сразу
+
         self.settings = get_main_settings()
-        
-        # Восстанавливаем размер и положение окна
+
         geometry = self.settings.value('window_geometry')
         if geometry:
             self.restoreGeometry(geometry)
         else:
             self.resize(1400, 800)
-        
-        # Восстанавливаем состояние окна (сплиттеры, toolbar и т.д.)
+
         state = self.settings.value('window_state')
         if state:
             self.restoreState(state)
-        
-        # Устанавливаем иконку приложения
-        from PyQt5.QtGui import QIcon
-        import sys
-        import os
+
         if getattr(sys, 'frozen', False):
-            # Если запущено из EXE
             base_path = sys._MEIPASS
         else:
-            # Если запущено из исходников
             base_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        
-        # Пробуем загрузить PNG, если нет - ICO
+
         icon_path_png = os.path.join(base_path, 'icon', 'Logo.png')
         icon_path_ico = os.path.join(base_path, 'icon', 'Logo.ico')
         
@@ -56,8 +51,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.menu_mode = self.menu_bar.addMenu('Режим')
         self.menu_utils = self.menu_bar.addMenu('Утилиты')
         self.menu_params = self.menu_bar.addMenu('Параметры')
-        
-        # Индикатор текущего режима в правом углу меню
+
         self.mode_indicator = QtWidgets.QLabel('Проверка МА (БЭК)')
         self.mode_indicator.setStyleSheet("""
             QLabel {
@@ -86,15 +80,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.phase_afar_widget = PhaseAfarWidget()
         self.beam_pattern_widget = BeamPatternWidget()
         self.check_stend_afar_widget = StendCheckAfarWidget()
+        self.beam_calb_afar_widget = BeamCalbAfarWidget()
         self.central_widget.addWidget(self.phase_ma_widget)
         self.central_widget.addWidget(self.check_ma_widget)
         self.central_widget.addWidget(self.check_stend_ma_widget)
         self.central_widget.addWidget(self.phase_afar_widget)
         self.central_widget.addWidget(self.beam_pattern_widget)
         self.central_widget.addWidget(self.check_stend_afar_widget)
+        self.central_widget.addWidget(self.beam_calb_afar_widget)
 
-        # --- Привязка меню ---
-        # Создаем подменю для МА
         self.ma_submenu = self.menu_mode.addMenu('МА')
         
         self.phase_action = self.ma_submenu.addAction('Фазировка МА в БЭК')
@@ -109,7 +103,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.check_stend_action.setCheckable(True)
         self.check_stend_action.triggered.connect(self.show_check_stend_ma)
 
-        # Создаем подменю для АФАР
         self.afar_submenu = self.menu_mode.addMenu('АФАР')
         
         self.phase_afar_action = self.afar_submenu.addAction('Фазировка АФАР')
@@ -124,7 +117,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.check_stend_afar_action.setCheckable(True)
         self.check_stend_afar_action.triggered.connect(self.show_check_stend_afar)
 
-        # Группа для взаимоисключающих действий
+        self.beam_calb_afar_action = self.afar_submenu.addAction('Измерение лучей через калибровку')
+        self.beam_calb_afar_action.setCheckable(True)
+        self.beam_calb_afar_action.triggered.connect(self.show_beam_calb_afar)
+
         mode_group = QtWidgets.QActionGroup(self)
         mode_group.addAction(self.phase_action)
         mode_group.addAction(self.check_bek_action)
@@ -132,31 +128,27 @@ class MainWindow(QtWidgets.QMainWindow):
         mode_group.addAction(self.phase_afar_action)
         mode_group.addAction(self.beam_pattern_action)
         mode_group.addAction(self.check_stend_afar_action)
+        mode_group.addAction(self.beam_calb_afar_action)
         mode_group.setExclusive(True)
         
         self.menu_params.addAction('Настройки устройств', self.open_settings_dialog)
-        # --- Утилиты ---
+
         self.action_manual_control = self.menu_utils.addAction('Ручное управление')
         self.action_manual_control.triggered.connect(self.open_manual_control)
 
-        # Восстанавливаем состояние интерфейса
         self.restore_ui_state()
-        
-        # Загружаем настройки устройств
+
         self.load_settings()
 
-        # Ссылки на окна ручного управления, чтобы не собирались GC
         self._manual_control_ma_window = None
         self._manual_control_afar_window = None
 
     def restore_ui_state(self):
         """Восстанавливает состояние интерфейса"""
-        # Восстанавливаем размер и позицию окна
         self.restoreGeometry(self.settings.value('window_geometry', b''))
         self.restoreState(self.settings.value('window_state', b''))
-        
-        # Восстанавливаем выбранную вкладку
-        last_mode = self.settings.value('last_mode', 'check')  # По умолчанию - проверка в БЭК
+
+        last_mode = self.settings.value('last_mode', 'check')
         if last_mode == 'phase':
             self.show_phase_ma()
         elif last_mode == 'check_stend':
@@ -167,6 +159,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.show_beam_pattern()
         elif last_mode == 'check_stend_afar':
             self.show_check_stend_afar()
+        elif last_mode == 'beam_calb_afar':
+            self.show_beam_calb_afar()
         else:
             self.show_check_ma()
 
@@ -174,8 +168,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """Сохраняет состояние при закрытии окна"""
         self.settings.setValue('window_geometry', self.saveGeometry())
         self.settings.setValue('window_state', self.saveState())
-        
-        # Сохраняем текущую вкладку
+
         if self.central_widget.currentWidget() == self.phase_ma_widget:
             self.settings.setValue('last_mode', 'phase')
         elif self.central_widget.currentWidget() == self.check_stend_ma_widget:
@@ -186,6 +179,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.settings.setValue('last_mode', 'beam_pattern')
         elif self.central_widget.currentWidget() == self.check_stend_afar_widget:
             self.settings.setValue('last_mode', 'check_stend_afar')
+        elif self.central_widget.currentWidget() == self.beam_calb_afar_widget:
+            self.settings.setValue('last_mode', 'beam_calb_afar')
         else:
             self.settings.setValue('last_mode', 'check')
             
@@ -206,6 +201,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self.central_widget.setCurrentWidget(self.phase_ma_widget)
         self.phase_action.setChecked(True)
         self.mode_indicator.setText('Фазировка МА (БЭК)')
+        self.mode_indicator.setStyleSheet("""
+            QLabel {
+                background-color: #2196F3;
+                color: white;
+                padding: 6px 15px;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 13px;
+                margin-right: 5px;
+            }
+        """)
+
+    def show_beam_calb_afar(self):
+        self._disconnect_current_widget_devices()
+        self.central_widget.setCurrentWidget(self.beam_calb_afar_widget)
+        self.beam_calb_afar_action.setChecked(True)
+        self.mode_indicator.setText('Измерение лучей(КЛБ)')
         self.mode_indicator.setStyleSheet("""
             QLabel {
                 background-color: #2196F3;
@@ -400,27 +412,22 @@ class MainWindow(QtWidgets.QMainWindow):
         """Открывает окно ручного управления в зависимости от текущего режима (МА или АФАР)."""
         try:
             current_widget = self.central_widget.currentWidget()
-            
-            # Определяем, какой режим активен (АФАР или МА)
-            # АФАР режимы: фазировка АФАР, измерение лучей АФАР и измерение через калибровку
+
             is_afar_mode = (current_widget == self.phase_afar_widget or 
                           current_widget == self.beam_pattern_widget or
-                          current_widget == self.check_stend_afar_widget)
+                          current_widget == self.check_stend_afar_widget or
+                            current_widget == self.beam_calb_afar_widget)
             
             if is_afar_mode:
-                # Открываем ручное управление АФАР
                 if self._manual_control_afar_window is None or not self._manual_control_afar_window.isVisible():
                     self._manual_control_afar_window = ManualControlAfarWindow(self)
-                    # Передаём текущие настройки
                     self._manual_control_afar_window.set_device_settings(self._collect_current_settings())
                 self._manual_control_afar_window.show()
                 self._manual_control_afar_window.raise_()
                 self._manual_control_afar_window.activateWindow()
             else:
-                # Открываем ручное управление МА
                 if self._manual_control_ma_window is None or not self._manual_control_ma_window.isVisible():
                     self._manual_control_ma_window = ManualControlWindow(self)
-                    # Передаём текущие настройки
                     self._manual_control_ma_window.set_device_settings(self._collect_current_settings())
                 self._manual_control_ma_window.show()
                 self._manual_control_ma_window.raise_()
@@ -429,13 +436,11 @@ class MainWindow(QtWidgets.QMainWindow):
             logger.error(f'Не удалось открыть окно ручного управления: {e}')
 
     def load_settings(self):
-        # При запуске приложения сразу применяем параметры к обоим виджетам
         settings = {}
-        # Загружаем все сохраненные настройки с значениями по умолчанию
         settings['pna_ip'] = self.settings.value('pna_ip', '')
         settings['pna_port'] = self.settings.value('pna_port', '')
         settings['pna_mode'] = int(self.settings.value('pna_mode', 0))
-        settings['pna_files_path'] = self.settings.value('pna_files_path', 'C:\\Users\\Public\\Documents\\Network Analyzer\\')
+        settings['pna_files_path'] = self.settings.value('pna_files_path', 'D:\\MA_CAL')
         
         settings['psn_ip'] = self.settings.value('psn_ip', '')
         settings['psn_port'] = self.settings.value('psn_port', '')
@@ -458,8 +463,7 @@ class MainWindow(QtWidgets.QMainWindow):
         settings['afar_com_port'] = self.settings.value('afar_com_port', '')
         settings['afar_mode'] = int(self.settings.value('afar_mode', 0))
         settings['afar_write_delay'] = int(self.settings.value('afar_write_delay', 100))  # По умолчанию 100 мс
-        
-        # Путь к файлам измерений
+
         settings['base_save_dir'] = self.settings.value('base_save_dir', '')
         
         logger.info('Настройки загружены из файла настроек')
@@ -471,9 +475,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.phase_afar_widget.set_device_settings(settings)
         self.beam_pattern_widget.set_device_settings(settings)
         self.check_stend_afar_widget.set_device_settings(settings)
+        self.beam_calb_afar_widget.set_device_settings(settings)
 
 if __name__ == '__main__':
-    import sys
     app = QtWidgets.QApplication(sys.argv)
     win = MainWindow()
     win.show()
