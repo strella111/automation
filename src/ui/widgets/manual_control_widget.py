@@ -47,6 +47,7 @@ class ManualControlWindow(QtWidgets.QMainWindow):
         # Выбор системы координат
         self.coord_system_combo = QtWidgets.QComboBox()
         self.update_coordinate_systems()
+        self.coord_system_combo.currentTextChanged.connect(self.on_coord_system_changed)
         settings_layout.addRow("Система координат:", self.coord_system_combo)
 
         # Выбор канала и поляризации для команд МА
@@ -530,6 +531,19 @@ class ManualControlWindow(QtWidgets.QMainWindow):
         for btn in [self.ppm_on_btn, self.ppm_off_btn, self.set_fv_btn, self.set_lz_btn]:
             btn.setEnabled(ma_connected)
 
+    def on_coord_system_changed(self, text):
+        self.coord_system = None
+        for system in self.coord_manager.systems:
+            if system.name == text:
+                self.coord_system = system
+                break
+
+        if self.coord_system:
+            if self.psn:
+                self.psn.set_offset(self.coord_system.x_offset, self.coord_system.y_offset)
+            else:
+                logger.warning('Нет активного подключения сканера. Система координат не применена.')
+
 
 class PpmFieldView(QtWidgets.QGraphicsView):
     """Визуальное представление поля ППМ для ручного выбора"""
@@ -625,3 +639,4 @@ class PpmFieldView(QtWidgets.QGraphicsView):
                         return
                         
         super().mousePressEvent(event)
+

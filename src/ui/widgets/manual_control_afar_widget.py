@@ -75,6 +75,7 @@ class ManualControlAfarWindow(QtWidgets.QMainWindow):
         # Выбор системы координат
         self.coord_system_combo = QtWidgets.QComboBox()
         self.update_coordinate_systems()
+        self.coord_system_combo.currentTextChanged.connect(self.on_coord_system_changed)
         settings_layout.addRow("Система координат:", self.coord_system_combo)
 
         # Выбор канала и поляризации для команд АФАР
@@ -377,13 +378,27 @@ class ManualControlAfarWindow(QtWidgets.QMainWindow):
         self.ppm_number_spin.setValue(ppm_num)
         self.ppm_number_spin.blockSignals(False)
         self.update_coordinates_from_bu_ppm(bu_num, ppm_num)
+
+    def on_coord_system_changed(self, text):
+        self.coord_system = None
+        for system in self.coord_manager.systems:
+            if system.name == text:
+                self.coord_system = system
+                break
+
+        if self.coord_system:
+            if self.psn:
+                self.psn.set_offset(self.coord_system.x_offset, self.coord_system.y_offset)
+            else:
+                logger.warning('Нет активного подключения сканера. Система координат не применена.')
+
+
         
 
         
     def set_device_settings(self, settings):
         """Устанавливает настройки устройств"""
         self.device_settings = settings
-        # Обновляем систему координат
         if settings:
             coord_system_name = settings.get('coordinate_system', 'Аппаратная')
             index = self.coord_system_combo.findText(coord_system_name)

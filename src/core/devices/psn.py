@@ -30,6 +30,8 @@ class PSN:
         self.x_offset = x
         self.y_offset = y
 
+        logger.info(f'Установлена система координат на сканере. Смещение x={x}, y={y}')
+
     def connect(self) -> None:
         """Подключение к сканеру"""
         try:
